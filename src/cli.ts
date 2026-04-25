@@ -69,12 +69,14 @@ function mergeConfigToml(enable: boolean) {
   }
 
   // Register/remove the Supermemory MCP server for explicit memory tools.
-  if (!config.mcp_servers) config.mcp_servers = {};
-  const mcpServers = config.mcp_servers as Record<string, unknown>;
   if (enable) {
-    mcpServers[MCP_SERVER_NAME] = { url: MCP_SERVER_URL };
-  } else {
+    if (!config.mcp_servers) config.mcp_servers = {};
+    (config.mcp_servers as Record<string, unknown>)[MCP_SERVER_NAME] = { url: MCP_SERVER_URL };
+  } else if (config.mcp_servers) {
+    const mcpServers = config.mcp_servers as Record<string, unknown>;
     delete mcpServers[MCP_SERVER_NAME];
+    // Remove the empty section to keep config.toml clean.
+    if (Object.keys(mcpServers).length === 0) delete config.mcp_servers;
   }
 
   writeFileSync(CODEX_CONFIG_TOML, TOML.stringify(config as TOML.JsonMap));
