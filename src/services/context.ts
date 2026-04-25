@@ -1,5 +1,3 @@
-import type { ConversationMessage } from "../types/index.js";
-
 interface SearchResult {
   content?: string;
   memory?: string;
@@ -72,13 +70,4 @@ export function formatContextForPrompt(
   return parts.join("\n\n");
 }
 
-export function formatMessagesForCapture(
-  messages: Array<{ role: string; content: unknown }>
-): ConversationMessage[] {
-  return messages
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-    }));
-}
+
