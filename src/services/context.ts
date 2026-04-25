@@ -1,0 +1,81 @@
+import type { ConversationMessage } from "../types/index.js";
+
+interface SearchResult {
+  content?: string;
+  score?: number;
+  metadata?: Record<string, unknown> | null;
+}
+
+interface SearchResponse {
+  success: boolean;
+  results?: SearchResult[];
+}
+
+interface ProfileShape {
+  static?: string[];
+  dynamic?: string[];
+}
+
+interface ProfileResponse {
+  success: boolean;
+  profile?: ProfileShape | string | null;
+}
+
+function formatProfile(
+  profile: ProfileShape | string | null | undefined,
+  maxItems: number
+): string | null {
+  if (!profile) return null;
+  if (typeof profile === "string") {
+    return profile.trim() || null;
+  }
+  const items = [
+    ...(profile.static ?? []),
+    ...(profile.dynamic ?? []),
+  ]
+    .map((s) => (typeof s === "string" ? s.trim() : ""))
+    .filter((s) => s.length > 0)
+    .slice(0, maxItems);
+  if (items.length === 0) return null;
+  return items.map((s, i) => `${i + 1}. ${s}`).join("\n");
+}
+
+export function formatContextForPrompt(
+  searchResult: SearchResponse,
+  profileResult: ProfileResponse,
+  maxMemories: number,
+  maxProfileItems: number
+): string {
+  const parts: string[] = [];
+
+  if (profileResult.success) {
+    const profileText = formatProfile(profileResult.profile, maxProfileItems);
+    if (profileText) {
+      parts.push(`[User Profile]\n${profileText}`);
+    }
+  }
+
+  if (searchResult.success && searchResult.results && searchResult.results.length > 0) {
+    const memories = searchResult.results
+      .slice(0, maxMemories)
+      .map((r, i) => `${i + 1}. ${r.content ?? ""}`)
+      .filter((m) => m.trim().length > 2)
+      .join("\n");
+    if (memories) {
+      parts.push(`[Relevant Memories]\n${memories}`);
+    }
+  }
+
+  return parts.join("\n\n");
+}
+
+export function formatMessagesForCapture(
+  messages: Array<{ role: string; content: unknown }>
+): ConversationMessage[] {
+  return messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+    }));
+}

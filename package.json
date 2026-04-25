@@ -1,0 +1,41 @@
+{
+  "name": "codex-supermemory",
+  "version": "1.0.0",
+  "description": "Persistent memory for OpenAI Codex CLI — powered by Supermemory",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "codex-supermemory": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "codex",
+    "openai",
+    "supermemory",
+    "memory",
+    "ai",
+    "coding-agent"
+  ],
+  "author": "Supermemory",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/supermemoryai/codex-supermemory"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "supermemory": "4.0.0"
+  },
+  "devDependencies": {
+    "@types/iarna__toml": "^2.0.5",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.3"
+  }
+}
