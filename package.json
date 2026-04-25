@@ -10,7 +10,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/unit.mjs"
+    "test": "npm run build && node --test test/unit.mjs"
   },
   "keywords": [
     "codex",

@@ -33,6 +33,9 @@ const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
 const CAPTURE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
 
+const MCP_SERVER_NAME = "supermemory";
+const MCP_SERVER_URL = "https://mcp.supermemory.ai/mcp";
+
 const SCRIPT_DIR = getScriptDir();
 const DIST_HOOKS_DIR = join(SCRIPT_DIR, "hooks");
 
@@ -41,8 +44,49 @@ function ensureCodexDir() {
   mkdirSync(SUPERMEMORY_HOOKS_DIR, { recursive: true });
 }
 
-const MCP_SERVER_NAME = "supermemory";
-const MCP_SERVER_URL = "https://mcp.supermemory.ai/mcp";
+// Returns the `mcp_servers` table on `config`, creating it if missing.
+function getMcpServers(config: Record<string, unknown>): Record<string, unknown> {
+  if (!config.mcp_servers) config.mcp_servers = {};
+  return config.mcp_servers as Record<string, unknown>;
+}
+
+// Toggle the Supermemory MCP server registration on the parsed config.
+//
+// On enable: only set our entry if one doesn't already exist. This preserves
+//   any user customization (custom URL, bearer_token_env_var, headers, enabled
+//   tools, etc.) — installing twice should not clobber a hand-edited entry.
+// On disable: only remove our entry if it matches the exact installer-managed
+//   shape (`{ url: MCP_SERVER_URL }`). If the user customized the entry we
+//   leave it in place to avoid silently destroying their config.
+function setMcpServer(config: Record<string, unknown>, enable: boolean) {
+  if (enable) {
+    const mcpServers = getMcpServers(config);
+    if (!mcpServers[MCP_SERVER_NAME]) {
+      mcpServers[MCP_SERVER_NAME] = { url: MCP_SERVER_URL };
+    }
+    return;
+  }
+
+  // Disable path
+  if (!config.mcp_servers) return;
+  const mcpServers = config.mcp_servers as Record<string, unknown>;
+  const existing = mcpServers[MCP_SERVER_NAME];
+  if (isInstallerManagedMcpEntry(existing)) {
+    delete mcpServers[MCP_SERVER_NAME];
+  }
+  // Remove the empty section to keep config.toml clean.
+  if (Object.keys(mcpServers).length === 0) delete config.mcp_servers;
+}
+
+// True if `entry` matches the exact shape we install — `{ url: MCP_SERVER_URL }`
+// with no other keys. Used to avoid clobbering user-customized entries on
+// uninstall.
+function isInstallerManagedMcpEntry(entry: unknown): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  const e = entry as Record<string, unknown>;
+  const keys = Object.keys(e);
+  return keys.length === 1 && keys[0] === "url" && e.url === MCP_SERVER_URL;
+}
 
 function mergeConfigToml(enable: boolean) {
   if (!enable && !existsSync(CODEX_CONFIG_TOML)) {
@@ -60,24 +104,20 @@ function mergeConfigToml(enable: boolean) {
     }
   }
 
+  // Toggle the codex_hooks feature flag.
   if (!config.features) config.features = {};
   const features = config.features as Record<string, unknown>;
   if (enable) {
     features.codex_hooks = true;
   } else {
     delete features.codex_hooks;
+    // Drop the empty [features] section to keep config.toml clean (mirrors
+    // the cleanup we do for [mcp_servers]).
+    if (Object.keys(features).length === 0) delete config.features;
   }
 
-  // Register/remove the Supermemory MCP server for explicit memory tools.
-  if (enable) {
-    if (!config.mcp_servers) config.mcp_servers = {};
-    (config.mcp_servers as Record<string, unknown>)[MCP_SERVER_NAME] = { url: MCP_SERVER_URL };
-  } else if (config.mcp_servers) {
-    const mcpServers = config.mcp_servers as Record<string, unknown>;
-    delete mcpServers[MCP_SERVER_NAME];
-    // Remove the empty section to keep config.toml clean.
-    if (Object.keys(mcpServers).length === 0) delete config.mcp_servers;
-  }
+  // Toggle the Supermemory MCP server registration.
+  setMcpServer(config, enable);
 
   writeFileSync(CODEX_CONFIG_TOML, TOML.stringify(config as TOML.JsonMap));
 }
@@ -229,7 +269,7 @@ function install() {
   // Merge config.toml (hooks feature + MCP server)
   mergeConfigToml(true);
   console.log(`✓ Enabled codex_hooks in ${CODEX_CONFIG_TOML}`);
-  console.log(`✓ Registered Supermemory MCP server for explicit memory tools`);
+  console.log(`✓ Registered Supermemory MCP server`);
 
   // Merge hooks.json
   mergeHooksJson(true);
@@ -315,7 +355,7 @@ function status() {
   console.log(`  MCP server:    ${mcpRegistered ? "✓ registered (explicit memory tools)" : "✗ not registered"}`);
   console.log(`  config.toml:   ${configTomlExists ? "✓ exists" : "✗ not found"}`);
 
-  if (!apiKey || !hooksInstalled || !hooksEnabled) {
+  if (!apiKey || !hooksInstalled || !hooksEnabled || !mcpRegistered) {
     console.log("\nRun `npx codex-supermemory install` to set up.");
   } else {
     console.log("\nAll good! Memory is active.");

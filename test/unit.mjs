@@ -5,9 +5,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir } from "node:os";
+import * as TOML from "@iarna/toml";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,29 @@ function makeTmpDir() {
   const dir = join(tmpdir(), `csm-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+// Set up a fake $HOME with an empty .codex/ subdir. Registers an `after` hook
+// on `t` that nukes the temp dir even if the test throws, so failed assertions
+// don't leak directories under /tmp.
+function setupCodexHome(t) {
+  const tmpDir = makeTmpDir();
+  const codexDir = join(tmpDir, ".codex");
+  mkdirSync(codexDir, { recursive: true });
+  const configPath = join(codexDir, "config.toml");
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+  return { tmpDir, codexDir, configPath };
+}
+
+function runCli(cliBin, cmd, tmpDir) {
+  return spawnSync("node", [cliBin, cmd], {
+    env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+    encoding: "utf-8",
+  });
+}
+
+function readToml(path) {
+  return TOML.parse(readFileSync(path, "utf-8"));
 }
 
 // Inline the stripPrivateContent logic (mirrors src/services/privacy.ts exactly)
@@ -146,103 +170,156 @@ describe("hooks.json format", () => {
   });
 });
 
-// ─── config.toml MCP server registration ────────────────────────────────────
+// ─── integration: install/uninstall MCP server registration ─────────────────
+//
+// These tests spawn the built CLI against a fake $HOME and assert on the
+// resulting config.toml. They depend on dist/cli.js — `npm test` runs
+// `npm run build` first, so this should always be present when invoked
+// through npm.
 
-describe("config.toml MCP server registration", () => {
+describe("integration: install/uninstall MCP server registration", () => {
   const cliBin = new URL("../dist/cli.js", import.meta.url).pathname;
 
-  test("install adds mcp_servers.supermemory to config.toml", () => {
-    const tmpDir = makeTmpDir();
-    const codexDir = join(tmpDir, ".codex");
-    mkdirSync(codexDir, { recursive: true });
+  test("install adds mcp_servers.supermemory to config.toml", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
 
-    // Run install with HOME overridden
-    spawnSync("node", [cliBin, "install"], {
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
-      encoding: "utf-8",
-    });
+    runCli(cliBin, "install", tmpDir);
 
-    const configContent = readFileSync(join(codexDir, "config.toml"), "utf-8");
-    assert.ok(configContent.includes("[mcp_servers.supermemory]"), "should have mcp_servers.supermemory section");
-    assert.ok(configContent.includes("mcp.supermemory.ai/mcp"), "should have correct MCP URL");
-
-    rmSync(tmpDir, { recursive: true, force: true });
+    const config = readToml(configPath);
+    assert.ok(config.mcp_servers, "mcp_servers table should exist");
+    assert.deepEqual(
+      config.mcp_servers.supermemory,
+      { url: "https://mcp.supermemory.ai/mcp" },
+      "supermemory entry should have the expected url"
+    );
   });
 
-  test("uninstall removes mcp_servers.supermemory from config.toml", () => {
-    const tmpDir = makeTmpDir();
-    const codexDir = join(tmpDir, ".codex");
-    mkdirSync(codexDir, { recursive: true });
+  test("uninstall removes mcp_servers.supermemory from config.toml", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
 
-    // Install first
-    spawnSync("node", [cliBin, "install"], {
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
-      encoding: "utf-8",
-    });
+    runCli(cliBin, "install", tmpDir);
+    runCli(cliBin, "uninstall", tmpDir);
 
-    // Then uninstall
-    spawnSync("node", [cliBin, "uninstall"], {
-      env: { ...process.env, HOME: tmpDir },
-      encoding: "utf-8",
-    });
-
-    const configContent = readFileSync(join(codexDir, "config.toml"), "utf-8");
-    assert.ok(!configContent.includes("[mcp_servers.supermemory]"), "should NOT have mcp_servers.supermemory after uninstall");
-
-    rmSync(tmpDir, { recursive: true, force: true });
+    const config = readToml(configPath);
+    assert.ok(
+      !config.mcp_servers || !config.mcp_servers.supermemory,
+      "supermemory entry should be gone"
+    );
   });
 
-  test("install preserves existing mcp_servers entries", () => {
-    const tmpDir = makeTmpDir();
-    const codexDir = join(tmpDir, ".codex");
-    mkdirSync(codexDir, { recursive: true });
+  test("install preserves existing mcp_servers entries (and registers supermemory with correct URL)", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
 
-    // Write a config.toml with an existing MCP server
     writeFileSync(
-      join(codexDir, "config.toml"),
+      configPath,
       '[mcp_servers.my-other-tool]\nurl = "https://example.com/mcp"\n'
     );
 
-    // Run install
-    spawnSync("node", [cliBin, "install"], {
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
-      encoding: "utf-8",
-    });
+    runCli(cliBin, "install", tmpDir);
 
-    const configContent = readFileSync(join(codexDir, "config.toml"), "utf-8");
-    assert.ok(configContent.includes("[mcp_servers.supermemory]"), "should have supermemory MCP server");
-    assert.ok(configContent.includes("my-other-tool"), "should preserve existing MCP server");
-    assert.ok(configContent.includes("example.com/mcp"), "should preserve existing MCP URL");
-
-    rmSync(tmpDir, { recursive: true, force: true });
+    const config = readToml(configPath);
+    assert.deepEqual(
+      config.mcp_servers.supermemory,
+      { url: "https://mcp.supermemory.ai/mcp" },
+      "supermemory entry should be present with the expected url"
+    );
+    assert.deepEqual(
+      config.mcp_servers["my-other-tool"],
+      { url: "https://example.com/mcp" },
+      "existing my-other-tool entry should be preserved verbatim"
+    );
   });
 
-  test("uninstall preserves other mcp_servers entries", () => {
-    const tmpDir = makeTmpDir();
-    const codexDir = join(tmpDir, ".codex");
-    mkdirSync(codexDir, { recursive: true });
+  test("uninstall preserves other mcp_servers entries", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
 
-    // Install first (creates supermemory entry)
     writeFileSync(
-      join(codexDir, "config.toml"),
+      configPath,
       '[mcp_servers.my-other-tool]\nurl = "https://example.com/mcp"\n'
     );
-    spawnSync("node", [cliBin, "install"], {
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
-      encoding: "utf-8",
+    runCli(cliBin, "install", tmpDir);
+    runCli(cliBin, "uninstall", tmpDir);
+
+    const config = readToml(configPath);
+    assert.ok(
+      !config.mcp_servers.supermemory,
+      "supermemory entry should be removed"
+    );
+    assert.deepEqual(
+      config.mcp_servers["my-other-tool"],
+      { url: "https://example.com/mcp" },
+      "my-other-tool entry should be preserved"
+    );
+  });
+
+  test("install does NOT clobber a user-customized supermemory entry", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
+
+    // User has manually configured the supermemory MCP entry with custom keys
+    // (e.g. bearer_token_env_var, custom URL). Install should leave it alone.
+    const userConfig = TOML.stringify({
+      mcp_servers: {
+        supermemory: {
+          url: "https://custom.example.com/mcp",
+          bearer_token_env_var: "MY_TOKEN",
+        },
+      },
     });
+    writeFileSync(configPath, userConfig);
 
-    // Then uninstall
-    spawnSync("node", [cliBin, "uninstall"], {
-      env: { ...process.env, HOME: tmpDir },
-      encoding: "utf-8",
+    runCli(cliBin, "install", tmpDir);
+
+    const config = readToml(configPath);
+    assert.deepEqual(
+      config.mcp_servers.supermemory,
+      {
+        url: "https://custom.example.com/mcp",
+        bearer_token_env_var: "MY_TOKEN",
+      },
+      "user-customized supermemory entry must be preserved verbatim"
+    );
+  });
+
+  test("uninstall does NOT remove a user-customized supermemory entry", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
+
+    // Pre-existing user config that doesn't match the installer-managed shape.
+    const userConfig = TOML.stringify({
+      mcp_servers: {
+        supermemory: {
+          url: "https://custom.example.com/mcp",
+          bearer_token_env_var: "MY_TOKEN",
+        },
+      },
     });
+    writeFileSync(configPath, userConfig);
 
-    const configContent = readFileSync(join(codexDir, "config.toml"), "utf-8");
-    assert.ok(!configContent.includes("[mcp_servers.supermemory]"), "should remove supermemory");
-    assert.ok(configContent.includes("my-other-tool"), "should preserve other MCP server");
+    // install is a no-op for this entry (suggestion above), then uninstall
+    // should still leave the customized entry alone.
+    runCli(cliBin, "install", tmpDir);
+    runCli(cliBin, "uninstall", tmpDir);
 
-    rmSync(tmpDir, { recursive: true, force: true });
+    const config = readToml(configPath);
+    assert.deepEqual(
+      config.mcp_servers.supermemory,
+      {
+        url: "https://custom.example.com/mcp",
+        bearer_token_env_var: "MY_TOKEN",
+      },
+      "user-customized supermemory entry must survive uninstall"
+    );
+  });
+
+  test("uninstall drops empty [features] section", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
+
+    runCli(cliBin, "install", tmpDir);
+    runCli(cliBin, "uninstall", tmpDir);
+
+    const raw = readFileSync(configPath, "utf-8");
+    assert.ok(!raw.includes("[features]"), "stale [features] section should be removed on uninstall");
+    const config = readToml(configPath);
+    assert.ok(!config.features, "features table should not exist after uninstall");
   });
 });
 
@@ -336,8 +413,9 @@ describe("capture hook Stop payload", () => {
     assert.equal(result.status, 0);
   });
 
-  test("reads transcript_path JSONL file when it exists (exits 0 without API key)", () => {
+  test("reads transcript_path JSONL file when it exists (exits 0 without API key)", (t) => {
     const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     const transcriptFile = join(tmpDir, "transcript.jsonl");
     writeFileSync(
       transcriptFile,
@@ -357,8 +435,6 @@ describe("capture hook Stop payload", () => {
       encoding: "utf-8",
     });
     assert.equal(result.status, 0);
-
-    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   test("does not crash when transcript_path points to nonexistent file", () => {
