@@ -41,6 +41,9 @@ function ensureCodexDir() {
   mkdirSync(SUPERMEMORY_HOOKS_DIR, { recursive: true });
 }
 
+const MCP_SERVER_NAME = "supermemory";
+const MCP_SERVER_URL = "https://mcp.supermemory.ai/mcp";
+
 function mergeConfigToml(enable: boolean) {
   if (!enable && !existsSync(CODEX_CONFIG_TOML)) {
     // Nothing to disable — file doesn't exist yet.
@@ -63,6 +66,15 @@ function mergeConfigToml(enable: boolean) {
     features.codex_hooks = true;
   } else {
     delete features.codex_hooks;
+  }
+
+  // Register/remove the Supermemory MCP server for explicit memory tools.
+  if (!config.mcp_servers) config.mcp_servers = {};
+  const mcpServers = config.mcp_servers as Record<string, unknown>;
+  if (enable) {
+    mcpServers[MCP_SERVER_NAME] = { url: MCP_SERVER_URL };
+  } else {
+    delete mcpServers[MCP_SERVER_NAME];
   }
 
   writeFileSync(CODEX_CONFIG_TOML, TOML.stringify(config as TOML.JsonMap));
@@ -212,9 +224,10 @@ function install() {
   copyFileSync(captureSrc, CAPTURE_SCRIPT);
   console.log(`✓ Hook scripts installed to ${SUPERMEMORY_HOOKS_DIR}`);
 
-  // Merge config.toml
+  // Merge config.toml (hooks feature + MCP server)
   mergeConfigToml(true);
   console.log(`✓ Enabled codex_hooks in ${CODEX_CONFIG_TOML}`);
+  console.log(`✓ Registered Supermemory MCP server for explicit memory tools`);
 
   // Merge hooks.json
   mergeHooksJson(true);
@@ -222,6 +235,10 @@ function install() {
 
   console.log(`
 Installation complete!
+
+You now have:
+  • Implicit memory — auto-recall on every prompt, auto-capture on session end
+  • Explicit memory — "save this to memory", "recall what I said about X"
 
 Next steps:
   1. Add your API key to your shell profile:
@@ -243,7 +260,7 @@ function uninstall() {
   console.log(`✓ Removed hooks from ${CODEX_HOOKS_JSON}`);
 
   mergeConfigToml(false);
-  console.log(`✓ Disabled codex_hooks in ${CODEX_CONFIG_TOML}`);
+  console.log(`✓ Disabled codex_hooks and removed MCP server from ${CODEX_CONFIG_TOML}`);
 
   if (existsSync(SUPERMEMORY_HOOKS_DIR)) {
     rmSync(SUPERMEMORY_HOOKS_DIR, { recursive: true, force: true });
@@ -278,10 +295,22 @@ function status() {
     }
   }
 
+  let mcpRegistered = false;
+  if (configTomlExists) {
+    try {
+      const config = TOML.parse(readFileSync(CODEX_CONFIG_TOML, "utf-8")) as Record<string, unknown>;
+      const mcpServers = config.mcp_servers as Record<string, unknown> | undefined;
+      mcpRegistered = !!(mcpServers && mcpServers[MCP_SERVER_NAME]);
+    } catch {
+      // ignore
+    }
+  }
+
   console.log("codex-supermemory status:\n");
   console.log(`  API key:       ${apiKey ? "✓ set (SUPERMEMORY_CODEX_API_KEY)" : "✗ not set"}`);
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
-  console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered" : "✗ not registered"}`);
+  console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
+  console.log(`  MCP server:    ${mcpRegistered ? "✓ registered (explicit memory tools)" : "✗ not registered"}`);
   console.log(`  config.toml:   ${configTomlExists ? "✓ exists" : "✗ not found"}`);
 
   if (!apiKey || !hooksInstalled || !hooksEnabled) {

@@ -5,9 +5,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -143,6 +143,106 @@ describe("hooks.json format", () => {
 
     assert.equal(hooks.UserPromptSubmit.length, 1, "empty group should be dropped");
     assert.equal(hooks.UserPromptSubmit[0].matcher, "shell", "matcher-scoped group preserved");
+  });
+});
+
+// ─── config.toml MCP server registration ────────────────────────────────────
+
+describe("config.toml MCP server registration", () => {
+  const cliBin = new URL("../dist/cli.js", import.meta.url).pathname;
+
+  test("install adds mcp_servers.supermemory to config.toml", () => {
+    const tmpDir = makeTmpDir();
+    const codexDir = join(tmpDir, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+
+    // Run install with HOME overridden
+    spawnSync("node", [cliBin, "install"], {
+      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+    });
+
+    const configContent = readFileSync(join(codexDir, "config.toml"), "utf-8");
+    assert.ok(configContent.includes("[mcp_servers.supermemory]"), "should have mcp_servers.supermemory section");
+    assert.ok(configContent.includes("mcp.supermemory.ai/mcp"), "should have correct MCP URL");
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("uninstall removes mcp_servers.supermemory from config.toml", () => {
+    const tmpDir = makeTmpDir();
+    const codexDir = join(tmpDir, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+
+    // Install first
+    spawnSync("node", [cliBin, "install"], {
+      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+    });
+
+    // Then uninstall
+    spawnSync("node", [cliBin, "uninstall"], {
+      env: { ...process.env, HOME: tmpDir },
+      encoding: "utf-8",
+    });
+
+    const configContent = readFileSync(join(codexDir, "config.toml"), "utf-8");
+    assert.ok(!configContent.includes("[mcp_servers.supermemory]"), "should NOT have mcp_servers.supermemory after uninstall");
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("install preserves existing mcp_servers entries", () => {
+    const tmpDir = makeTmpDir();
+    const codexDir = join(tmpDir, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+
+    // Write a config.toml with an existing MCP server
+    writeFileSync(
+      join(codexDir, "config.toml"),
+      '[mcp_servers.my-other-tool]\nurl = "https://example.com/mcp"\n'
+    );
+
+    // Run install
+    spawnSync("node", [cliBin, "install"], {
+      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+    });
+
+    const configContent = readFileSync(join(codexDir, "config.toml"), "utf-8");
+    assert.ok(configContent.includes("[mcp_servers.supermemory]"), "should have supermemory MCP server");
+    assert.ok(configContent.includes("my-other-tool"), "should preserve existing MCP server");
+    assert.ok(configContent.includes("example.com/mcp"), "should preserve existing MCP URL");
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("uninstall preserves other mcp_servers entries", () => {
+    const tmpDir = makeTmpDir();
+    const codexDir = join(tmpDir, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+
+    // Install first (creates supermemory entry)
+    writeFileSync(
+      join(codexDir, "config.toml"),
+      '[mcp_servers.my-other-tool]\nurl = "https://example.com/mcp"\n'
+    );
+    spawnSync("node", [cliBin, "install"], {
+      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+    });
+
+    // Then uninstall
+    spawnSync("node", [cliBin, "uninstall"], {
+      env: { ...process.env, HOME: tmpDir },
+      encoding: "utf-8",
+    });
+
+    const configContent = readFileSync(join(codexDir, "config.toml"), "utf-8");
+    assert.ok(!configContent.includes("[mcp_servers.supermemory]"), "should remove supermemory");
+    assert.ok(configContent.includes("my-other-tool"), "should preserve other MCP server");
+
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 
