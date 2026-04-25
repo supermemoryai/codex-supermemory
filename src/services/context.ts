@@ -2,7 +2,10 @@ import type { ConversationMessage } from "../types/index.js";
 
 interface SearchResult {
   content?: string;
+  memory?: string;
+  chunk?: string;
   score?: number;
+  similarity?: number;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -58,7 +61,7 @@ export function formatContextForPrompt(
   if (searchResult.success && searchResult.results && searchResult.results.length > 0) {
     const memories = searchResult.results
       .slice(0, maxMemories)
-      .map((r, i) => `${i + 1}. ${r.content ?? ""}`)
+      .map((r, i) => `${i + 1}. ${r.memory ?? r.chunk ?? r.content ?? ""}`)
       .filter((m) => m.trim().length > 2)
       .join("\n");
     if (memories) {

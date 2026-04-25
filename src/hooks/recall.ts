@@ -12,6 +12,20 @@ interface CodexHookPayload {
   [key: string]: unknown;
 }
 
+// Output shape required by Codex UserPromptSubmitCommandOutputWire.
+// The Rust struct uses #[serde(rename_all = "camelCase")] so keys are camelCase.
+function exitWithContext(additionalContext: string): never {
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext,
+      },
+    })
+  );
+  process.exit(0);
+}
+
 async function main() {
   // Read stdin
   let rawInput = "";
@@ -22,22 +36,19 @@ async function main() {
   }
 
   if (!isConfigured()) {
-    process.stdout.write(JSON.stringify({ additionalContext: "" }));
-    process.exit(0);
+    exitWithContext("");
   }
 
   let payload: CodexHookPayload = {};
   try {
     payload = JSON.parse(rawInput) as CodexHookPayload;
   } catch {
-    process.stdout.write(JSON.stringify({ additionalContext: "" }));
-    process.exit(0);
+    exitWithContext("");
   }
 
   const query = payload.prompt || payload.input || "";
   if (!query.trim()) {
-    process.stdout.write(JSON.stringify({ additionalContext: "" }));
-    process.exit(0);
+    exitWithContext("");
   }
 
   const cwd = process.cwd();
@@ -64,23 +75,16 @@ async function main() {
     log("recall: done", { contextLength: context.length });
 
     if (context.trim()) {
-      process.stdout.write(
-        JSON.stringify({
-          additionalContext: `[SUPERMEMORY CONTEXT]\n${context}\n[END SUPERMEMORY CONTEXT]`,
-        })
-      );
+      exitWithContext(`[SUPERMEMORY CONTEXT]\n${context}\n[END SUPERMEMORY CONTEXT]`);
     } else {
-      process.stdout.write(JSON.stringify({ additionalContext: "" }));
+      exitWithContext("");
     }
   } catch (error) {
     log("recall: error", { error: String(error) });
-    process.stdout.write(JSON.stringify({ additionalContext: "" }));
+    exitWithContext("");
   }
-
-  process.exit(0);
 }
 
 main().catch(() => {
-  process.stdout.write(JSON.stringify({ additionalContext: "" }));
-  process.exit(0);
+  exitWithContext("");
 });

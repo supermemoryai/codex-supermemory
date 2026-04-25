@@ -42,6 +42,11 @@ function ensureCodexDir() {
 }
 
 function mergeConfigToml(enable: boolean) {
+  if (!enable && !existsSync(CODEX_CONFIG_TOML)) {
+    // Nothing to disable — file doesn't exist yet.
+    return;
+  }
+
   let config: Record<string, unknown> = {};
   if (existsSync(CODEX_CONFIG_TOML)) {
     try {
@@ -70,13 +75,25 @@ interface HookEntry {
   statusMessage?: string;
 }
 
+// Codex hooks.json schema: each event key maps to an array of MatcherGroup objects.
+// See HookEventsToml / MatcherGroup in the Codex source.
+interface MatcherGroup {
+  matcher?: string;
+  hooks: HookEntry[];
+}
+
 interface HooksJson {
-  UserPromptSubmit?: { hooks: HookEntry[] };
-  Stop?: { hooks: HookEntry[] };
-  [key: string]: { hooks: HookEntry[] } | undefined;
+  UserPromptSubmit?: MatcherGroup[];
+  Stop?: MatcherGroup[];
+  [key: string]: MatcherGroup[] | undefined;
 }
 
 function mergeHooksJson(add: boolean) {
+  if (!add && !existsSync(CODEX_HOOKS_JSON)) {
+    // Nothing to remove — file doesn't exist yet.
+    return;
+  }
+
   let hooks: HooksJson = {};
   if (existsSync(CODEX_HOOKS_JSON)) {
     try {
@@ -88,12 +105,15 @@ function mergeHooksJson(add: boolean) {
   }
 
   if (add) {
-    // Add UserPromptSubmit hook (dedup by command)
-    if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = { hooks: [] };
+    // Add UserPromptSubmit hook (dedup by command).
+    // Each event is an array of MatcherGroups; we use a single group with no matcher.
+    if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [{ hooks: [] }];
     const recallCmd = `node ${RECALL_SCRIPT}`;
-    const hasRecall = hooks.UserPromptSubmit.hooks.some((h) => h.command === recallCmd);
+    const hasRecall = hooks.UserPromptSubmit.some((g) =>
+      g.hooks.some((h) => h.command === recallCmd)
+    );
     if (!hasRecall) {
-      hooks.UserPromptSubmit.hooks.push({
+      hooks.UserPromptSubmit[0].hooks.push({
         type: "command",
         command: recallCmd,
         timeout: 30,
@@ -101,12 +121,14 @@ function mergeHooksJson(add: boolean) {
       });
     }
 
-    // Add Stop hook (dedup by command)
-    if (!hooks.Stop) hooks.Stop = { hooks: [] };
+    // Add Stop hook (dedup by command).
+    if (!hooks.Stop) hooks.Stop = [{ hooks: [] }];
     const captureCmd = `node ${CAPTURE_SCRIPT}`;
-    const hasCapture = hooks.Stop.hooks.some((h) => h.command === captureCmd);
+    const hasCapture = hooks.Stop.some((g) =>
+      g.hooks.some((h) => h.command === captureCmd)
+    );
     if (!hasCapture) {
-      hooks.Stop.hooks.push({
+      hooks.Stop[0].hooks.push({
         type: "command",
         command: captureCmd,
         timeout: 60,
@@ -114,16 +136,20 @@ function mergeHooksJson(add: boolean) {
       });
     }
   } else {
-    // Remove our hooks
+    // Remove our hooks from every MatcherGroup, then drop empty groups.
     const recallCmd = `node ${RECALL_SCRIPT}`;
     const captureCmd = `node ${CAPTURE_SCRIPT}`;
     if (hooks.UserPromptSubmit) {
-      hooks.UserPromptSubmit.hooks = hooks.UserPromptSubmit.hooks.filter(
-        (h) => h.command !== recallCmd
-      );
+      hooks.UserPromptSubmit = hooks.UserPromptSubmit
+        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== recallCmd) }))
+        .filter((g) => g.hooks.length > 0);
+      if (hooks.UserPromptSubmit.length === 0) delete hooks.UserPromptSubmit;
     }
     if (hooks.Stop) {
-      hooks.Stop.hooks = hooks.Stop.hooks.filter((h) => h.command !== captureCmd);
+      hooks.Stop = hooks.Stop
+        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== captureCmd) }))
+        .filter((g) => g.hooks.length > 0);
+      if (hooks.Stop.length === 0) delete hooks.Stop;
     }
   }
 
@@ -200,8 +226,9 @@ function status() {
     try {
       const hooks = JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")) as HooksJson;
       const recallCmd = `node ${RECALL_SCRIPT}`;
+      // hooks.json uses array-of-MatcherGroups: UserPromptSubmit is MatcherGroup[]
       hooksEnabled = !!(
-        hooks.UserPromptSubmit?.hooks?.some((h) => h.command === recallCmd)
+        hooks.UserPromptSubmit?.some((g) => g.hooks.some((h) => h.command === recallCmd))
       );
     } catch {
       // ignore
