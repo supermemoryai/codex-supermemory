@@ -27,10 +27,11 @@ function exitWithContext(additionalContext: string): never {
 }
 
 async function main() {
-  // Read stdin
+  // Read stdin via fd 0 — works with both shell pipes and spawnSync piped input.
+  // readFileSync("/dev/stdin") fails when stdin is a pipe (not a tty).
   let rawInput = "";
   try {
-    rawInput = readFileSync("/dev/stdin", "utf-8");
+    rawInput = readFileSync(0, "utf-8");
   } catch {
     process.exit(0);
   }

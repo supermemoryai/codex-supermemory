@@ -1,5 +1,3 @@
-export type MemoryScope = "user" | "project";
-
 export type MemoryType =
   | "project-config"
   | "architecture"

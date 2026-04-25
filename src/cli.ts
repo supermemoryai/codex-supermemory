@@ -106,34 +106,60 @@ function mergeHooksJson(add: boolean) {
 
   if (add) {
     // Add UserPromptSubmit hook (dedup by command).
-    // Each event is an array of MatcherGroups; we use a single group with no matcher.
-    if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [{ hooks: [] }];
+    // Append to an existing global (no-matcher) group if one exists, otherwise
+    // push a new global group. This avoids silently attaching to a matcher-scoped
+    // group that the user may have configured for a specific tool.
+    if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
     const recallCmd = `node ${RECALL_SCRIPT}`;
     const hasRecall = hooks.UserPromptSubmit.some((g) =>
       g.hooks.some((h) => h.command === recallCmd)
     );
     if (!hasRecall) {
-      hooks.UserPromptSubmit[0].hooks.push({
-        type: "command",
-        command: recallCmd,
-        timeout: 30,
-        statusMessage: "Searching memories...",
-      });
+      const globalGroup = hooks.UserPromptSubmit.find((g) => !g.matcher);
+      if (globalGroup) {
+        globalGroup.hooks.push({
+          type: "command",
+          command: recallCmd,
+          timeout: 30,
+          statusMessage: "Searching memories...",
+        });
+      } else {
+        hooks.UserPromptSubmit.push({
+          hooks: [{
+            type: "command",
+            command: recallCmd,
+            timeout: 30,
+            statusMessage: "Searching memories...",
+          }],
+        });
+      }
     }
 
     // Add Stop hook (dedup by command).
-    if (!hooks.Stop) hooks.Stop = [{ hooks: [] }];
+    if (!hooks.Stop) hooks.Stop = [];
     const captureCmd = `node ${CAPTURE_SCRIPT}`;
     const hasCapture = hooks.Stop.some((g) =>
       g.hooks.some((h) => h.command === captureCmd)
     );
     if (!hasCapture) {
-      hooks.Stop[0].hooks.push({
-        type: "command",
-        command: captureCmd,
-        timeout: 60,
-        statusMessage: "Saving to memory...",
-      });
+      const globalGroup = hooks.Stop.find((g) => !g.matcher);
+      if (globalGroup) {
+        globalGroup.hooks.push({
+          type: "command",
+          command: captureCmd,
+          timeout: 60,
+          statusMessage: "Saving to memory...",
+        });
+      } else {
+        hooks.Stop.push({
+          hooks: [{
+            type: "command",
+            command: captureCmd,
+            timeout: 60,
+            statusMessage: "Saving to memory...",
+          }],
+        });
+      }
     }
   } else {
     // Remove our hooks from every MatcherGroup, then drop empty groups.
@@ -226,10 +252,15 @@ function status() {
     try {
       const hooks = JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")) as HooksJson;
       const recallCmd = `node ${RECALL_SCRIPT}`;
-      // hooks.json uses array-of-MatcherGroups: UserPromptSubmit is MatcherGroup[]
-      hooksEnabled = !!(
-        hooks.UserPromptSubmit?.some((g) => g.hooks.some((h) => h.command === recallCmd))
+      const captureCmd = `node ${CAPTURE_SCRIPT}`;
+      // hooks.json uses array-of-MatcherGroups — check both recall and capture are registered.
+      const recallRegistered = hooks.UserPromptSubmit?.some((g) =>
+        g.hooks.some((h) => h.command === recallCmd)
       );
+      const captureRegistered = hooks.Stop?.some((g) =>
+        g.hooks.some((h) => h.command === captureCmd)
+      );
+      hooksEnabled = !!(recallRegistered && captureRegistered);
     } catch {
       // ignore
     }

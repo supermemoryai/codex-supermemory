@@ -36,7 +36,7 @@ function formatProfile(
     ...(profile.static ?? []),
     ...(profile.dynamic ?? []),
   ]
-    .map((s) => (typeof s === "string" ? s.trim() : ""))
+    .map((s) => s.trim())
     .filter((s) => s.length > 0)
     .slice(0, maxItems);
   if (items.length === 0) return null;

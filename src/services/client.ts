@@ -11,12 +11,11 @@ const TIMEOUT_MS = 30000;
 const MAX_CONVERSATION_CHARS = 100_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
-    ),
-  ]);
+  let id: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((_, reject) => {
+    id = setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(id));
 }
 
 export class SupermemoryClient {
@@ -200,5 +199,3 @@ export class SupermemoryClient {
     };
   }
 }
-
-export const supermemoryClient = new SupermemoryClient();

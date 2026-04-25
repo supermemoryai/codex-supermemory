@@ -1,4 +1,4 @@
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CONFIG } from "../config.js";
@@ -11,10 +11,9 @@ function ensureSessionStarted() {
   if (!sessionStarted) {
     sessionStarted = true;
     try {
-      writeFileSync(
+      appendFileSync(
         LOG_FILE,
-        `\n--- Session started: ${new Date().toISOString()} ---\n`,
-        { flag: "a" }
+        `\n--- Session started: ${new Date().toISOString()} ---\n`
       );
     } catch {
       // ignore log errors
