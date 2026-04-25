@@ -104,6 +104,18 @@ function mergeHooksJson(add: boolean) {
     }
   }
 
+  // Normalize event arrays: older hooks.json files (or hand-written configs) may
+  // store the UserPromptSubmit/Stop values as a plain object `{ hooks: [] }` rather
+  // than the array-of-MatcherGroups format that Codex expects.  Convert those to a
+  // single-element array so the rest of the merge logic can work safely.
+  for (const key of ["UserPromptSubmit", "Stop"] as const) {
+    const val = hooks[key];
+    if (val !== undefined && !Array.isArray(val)) {
+      // Wrap the stray object in an array — preserve any hooks it already contains.
+      hooks[key] = [val as unknown as MatcherGroup];
+    }
+  }
+
   if (add) {
     // Add UserPromptSubmit hook (dedup by command).
     // Append to an existing global (no-matcher) group if one exists, otherwise
