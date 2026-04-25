@@ -4,7 +4,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -187,10 +187,14 @@ describe("integration: install/uninstall MCP server registration", () => {
 
     const config = readToml(configPath);
     assert.ok(config.mcp_servers, "mcp_servers table should exist");
-    assert.deepEqual(
-      config.mcp_servers.supermemory,
-      { url: "https://mcp.supermemory.ai/mcp" },
-      "supermemory entry should have the expected url"
+    const entry = config.mcp_servers.supermemory;
+    assert.ok(entry, "supermemory entry should exist");
+    assert.equal(entry.command, "node", "command should be node");
+    assert.ok(Array.isArray(entry.args), "args should be an array");
+    assert.equal(entry.args.length, 1, "args should have exactly one element");
+    assert.ok(
+      entry.args[0].endsWith("/.codex/supermemory/mcp.js"),
+      `args[0] should end with /.codex/supermemory/mcp.js (got ${entry.args[0]})`
     );
   });
 
@@ -207,7 +211,7 @@ describe("integration: install/uninstall MCP server registration", () => {
     );
   });
 
-  test("install preserves existing mcp_servers entries (and registers supermemory with correct URL)", (t) => {
+  test("install preserves existing mcp_servers entries (and registers supermemory with correct shape)", (t) => {
     const { tmpDir, configPath } = setupCodexHome(t);
 
     writeFileSync(
@@ -218,10 +222,14 @@ describe("integration: install/uninstall MCP server registration", () => {
     runCli(cliBin, "install", tmpDir);
 
     const config = readToml(configPath);
-    assert.deepEqual(
-      config.mcp_servers.supermemory,
-      { url: "https://mcp.supermemory.ai/mcp" },
-      "supermemory entry should be present with the expected url"
+    const entry = config.mcp_servers.supermemory;
+    assert.ok(entry, "supermemory entry should be present");
+    assert.equal(entry.command, "node", "command should be node");
+    assert.ok(Array.isArray(entry.args), "args should be an array");
+    assert.equal(entry.args.length, 1, "args should have exactly one element");
+    assert.ok(
+      entry.args[0].endsWith("/.codex/supermemory/mcp.js"),
+      `args[0] should end with /.codex/supermemory/mcp.js (got ${entry.args[0]})`
     );
     assert.deepEqual(
       config.mcp_servers["my-other-tool"],
@@ -320,6 +328,167 @@ describe("integration: install/uninstall MCP server registration", () => {
     assert.ok(!raw.includes("[features]"), "stale [features] section should be removed on uninstall");
     const config = readToml(configPath);
     assert.ok(!config.features, "features table should not exist after uninstall");
+  });
+});
+
+// ─── MCP server stdio ───────────────────────────────────────────────────────
+//
+// These tests spawn the built MCP server (dist/mcp.js) as a child process and
+// communicate over JSON-RPC on stdio, matching how the Codex CLI launches it
+// after install.
+
+describe("MCP server stdio", () => {
+  const mcpBin = new URL("../dist/mcp.js", import.meta.url).pathname;
+
+  test("mcp server starts and exits cleanly when stdin closes", (t) => {
+    return new Promise((resolve, reject) => {
+      const child = spawn("node", [mcpBin], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      });
+      t.after(() => {
+        if (!child.killed) child.kill();
+      });
+
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new Error("mcp server did not exit within 5s of stdin close"));
+      }, 5000);
+
+      child.on("error", reject);
+      child.on("exit", (code, signal) => {
+        clearTimeout(timer);
+        // A clean shutdown: code 0, or terminated by us only if it didn't exit
+        // on its own. The MCP SDK closes when stdin EOFs, so we expect code 0.
+        try {
+          assert.ok(
+            code === 0 || code === null,
+            `expected clean exit, got code=${code} signal=${signal}`
+          );
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      // Close stdin immediately to trigger shutdown.
+      child.stdin.end();
+    });
+  });
+
+  test("mcp server responds to initialize and tools/list", (t) => {
+    return new Promise((resolve, reject) => {
+      const child = spawn("node", [mcpBin], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      });
+      t.after(() => {
+        if (!child.killed) child.kill();
+      });
+
+      let stdoutBuf = "";
+      let stderrBuf = "";
+      const responses = new Map();
+      let done = false;
+
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        child.kill();
+        reject(
+          new Error(
+            `timed out waiting for tools/list response.\nstdout=${stdoutBuf}\nstderr=${stderrBuf}`
+          )
+        );
+      }, 10000);
+
+      child.on("error", (err) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        reject(err);
+      });
+
+      child.stderr.on("data", (chunk) => {
+        stderrBuf += chunk.toString("utf-8");
+      });
+
+      child.stdout.on("data", (chunk) => {
+        stdoutBuf += chunk.toString("utf-8");
+        // Each JSON-RPC message is delimited by a newline on stdio transport.
+        const lines = stdoutBuf.split("\n");
+        stdoutBuf = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          let msg;
+          try {
+            msg = JSON.parse(trimmed);
+          } catch {
+            continue;
+          }
+          if (typeof msg.id !== "undefined") {
+            responses.set(msg.id, msg);
+          }
+          if (responses.has(2) && !done) {
+            done = true;
+            clearTimeout(timer);
+            try {
+              const initResp = responses.get(1);
+              assert.ok(initResp, "should have received initialize response");
+              assert.equal(initResp.jsonrpc, "2.0");
+              assert.ok(initResp.result, "initialize must return a result");
+
+              const listResp = responses.get(2);
+              assert.ok(listResp, "should have received tools/list response");
+              assert.equal(listResp.jsonrpc, "2.0");
+              assert.ok(listResp.result, "tools/list must return a result");
+              assert.ok(
+                Array.isArray(listResp.result.tools),
+                "tools must be an array"
+              );
+              const names = listResp.result.tools.map((t) => t.name).sort();
+              assert.deepEqual(
+                names,
+                ["listProjects", "memory", "recall"],
+                `expected exactly tools memory, recall, listProjects (got ${names.join(",")})`
+              );
+              resolve();
+            } catch (err) {
+              reject(err);
+            } finally {
+              child.stdin.end();
+              child.kill();
+            }
+            return;
+          }
+        }
+      });
+
+      const send = (obj) => {
+        child.stdin.write(JSON.stringify(obj) + "\n");
+      };
+
+      send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1.0.0" },
+        },
+      });
+      send({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+      send({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+      });
+    });
   });
 });
 

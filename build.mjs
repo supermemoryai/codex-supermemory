@@ -29,6 +29,12 @@ await Promise.all([
     outfile: "dist/hooks/capture.js",
     banner: { js: "#!/usr/bin/env node" },
   }),
+  esbuild.build({
+    ...sharedConfig,
+    entryPoints: ["src/mcp.ts"],
+    outfile: "dist/mcp.js",
+    banner: { js: "#!/usr/bin/env node" },
+  }),
 ]);
 
 // The root package.json declares `"type": "module"`, but esbuild emits CommonJS.
@@ -37,7 +43,7 @@ mkdirSync("dist", { recursive: true });
 writeFileSync("dist/package.json", JSON.stringify({ type: "commonjs" }, null, 2));
 
 // Make the executables actually executable.
-for (const file of ["dist/cli.js", "dist/hooks/recall.js", "dist/hooks/capture.js"]) {
+for (const file of ["dist/cli.js", "dist/hooks/recall.js", "dist/hooks/capture.js", "dist/mcp.js"]) {
   try {
     chmodSync(file, 0o755);
   } catch {

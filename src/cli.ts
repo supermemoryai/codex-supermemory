@@ -34,7 +34,7 @@ const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
 const CAPTURE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
 
 const MCP_SERVER_NAME = "supermemory";
-const MCP_SERVER_URL = "https://mcp.supermemory.ai/mcp";
+const MCP_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "mcp.js");
 
 const SCRIPT_DIR = getScriptDir();
 const DIST_HOOKS_DIR = join(SCRIPT_DIR, "hooks");
@@ -53,16 +53,19 @@ function getMcpServers(config: Record<string, unknown>): Record<string, unknown>
 // Toggle the Supermemory MCP server registration on the parsed config.
 //
 // On enable: only set our entry if one doesn't already exist. This preserves
-//   any user customization (custom URL, bearer_token_env_var, headers, enabled
-//   tools, etc.) — installing twice should not clobber a hand-edited entry.
+//   any user customization (custom command, args, env, etc.) — installing
+//   twice should not clobber a hand-edited entry.
 // On disable: only remove our entry if it matches the exact installer-managed
-//   shape (`{ url: MCP_SERVER_URL }`). If the user customized the entry we
-//   leave it in place to avoid silently destroying their config.
+//   shape (`{ command: "node", args: [MCP_SCRIPT] }`). If the user customized
+//   the entry we leave it in place to avoid silently destroying their config.
 function setMcpServer(config: Record<string, unknown>, enable: boolean) {
   if (enable) {
     const mcpServers = getMcpServers(config);
     if (!mcpServers[MCP_SERVER_NAME]) {
-      mcpServers[MCP_SERVER_NAME] = { url: MCP_SERVER_URL };
+      mcpServers[MCP_SERVER_NAME] = {
+        command: "node",
+        args: [MCP_SCRIPT],
+      };
     }
     return;
   }
@@ -78,14 +81,20 @@ function setMcpServer(config: Record<string, unknown>, enable: boolean) {
   if (Object.keys(mcpServers).length === 0) delete config.mcp_servers;
 }
 
-// True if `entry` matches the exact shape we install — `{ url: MCP_SERVER_URL }`
-// with no other keys. Used to avoid clobbering user-customized entries on
-// uninstall.
+// True if `entry` matches the exact shape we install —
+// `{ command: "node", args: [MCP_SCRIPT] }` with no other keys. Used to avoid
+// clobbering user-customized entries on uninstall.
 function isInstallerManagedMcpEntry(entry: unknown): boolean {
   if (!entry || typeof entry !== "object") return false;
   const e = entry as Record<string, unknown>;
   const keys = Object.keys(e);
-  return keys.length === 1 && keys[0] === "url" && e.url === MCP_SERVER_URL;
+  return (
+    keys.length === 2 &&
+    e.command === "node" &&
+    Array.isArray(e.args) &&
+    e.args.length === 1 &&
+    e.args[0] === MCP_SCRIPT
+  );
 }
 
 function mergeConfigToml(enable: boolean) {
@@ -256,15 +265,17 @@ function install() {
   // Copy hook scripts
   const recallSrc = join(DIST_HOOKS_DIR, "recall.js");
   const captureSrc = join(DIST_HOOKS_DIR, "capture.js");
+  const mcpSrc = join(SCRIPT_DIR, "mcp.js");
 
-  if (!existsSync(recallSrc) || !existsSync(captureSrc)) {
+  if (!existsSync(recallSrc) || !existsSync(captureSrc) || !existsSync(mcpSrc)) {
     console.error("Error: Hook scripts not found. Please reinstall the package.");
     process.exit(1);
   }
 
   copyFileSync(recallSrc, RECALL_SCRIPT);
   copyFileSync(captureSrc, CAPTURE_SCRIPT);
-  console.log(`✓ Hook scripts installed to ${SUPERMEMORY_HOOKS_DIR}`);
+  copyFileSync(mcpSrc, MCP_SCRIPT);
+  console.log(`✓ Installed hook scripts and MCP server to ${SUPERMEMORY_HOOKS_DIR}`);
 
   // Merge config.toml (hooks feature + MCP server)
   mergeConfigToml(true);
