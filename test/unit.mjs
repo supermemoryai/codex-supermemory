@@ -5,7 +5,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync, spawn } from "node:child_process";
-import { writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as TOML from "@iarna/toml";
@@ -170,152 +170,46 @@ describe("hooks.json format", () => {
   });
 });
 
-// ─── integration: install/uninstall MCP server registration ─────────────────
+// ─── integration: install/uninstall (skills + hooks) ──────────────────────
 //
 // These tests spawn the built CLI against a fake $HOME and assert on the
-// resulting config.toml. They depend on dist/cli.js — `npm test` runs
+// resulting on-disk state. They depend on dist/cli.js — `npm test` runs
 // `npm run build` first, so this should always be present when invoked
 // through npm.
 
-describe("integration: install/uninstall MCP server registration", () => {
+describe("integration: install/uninstall", () => {
   const cliBin = new URL("../dist/cli.js", import.meta.url).pathname;
 
-  test("install adds mcp_servers.supermemory to config.toml", (t) => {
-    const { tmpDir, configPath } = setupCodexHome(t);
+  test("install copies skill SKILL.md files to ~/.codex/skills/", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
 
     runCli(cliBin, "install", tmpDir);
 
-    const config = readToml(configPath);
-    assert.ok(config.mcp_servers, "mcp_servers table should exist");
-    const entry = config.mcp_servers.supermemory;
-    assert.ok(entry, "supermemory entry should exist");
-    assert.equal(entry.command, "node", "command should be node");
-    assert.ok(Array.isArray(entry.args), "args should be an array");
-    assert.equal(entry.args.length, 1, "args should have exactly one element");
-    assert.ok(
-      entry.args[0].endsWith("/.codex/supermemory/mcp.js"),
-      `args[0] should end with /.codex/supermemory/mcp.js (got ${entry.args[0]})`
-    );
+    const skillsDir = join(codexDir, "skills");
+    for (const skillName of ["super-search", "super-save", "forget"]) {
+      const skillMd = join(skillsDir, skillName, "SKILL.md");
+      assert.ok(existsSync(skillMd), `${skillName}/SKILL.md should exist`);
+      const content = readFileSync(skillMd, "utf-8");
+      assert.ok(
+        content.includes(`name: ${skillName}`),
+        `SKILL.md should contain name: ${skillName}`
+      );
+    }
   });
 
-  test("uninstall removes mcp_servers.supermemory from config.toml", (t) => {
-    const { tmpDir, configPath } = setupCodexHome(t);
+  test("uninstall removes skill directories", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
 
     runCli(cliBin, "install", tmpDir);
     runCli(cliBin, "uninstall", tmpDir);
 
-    const config = readToml(configPath);
-    assert.ok(
-      !config.mcp_servers || !config.mcp_servers.supermemory,
-      "supermemory entry should be gone"
-    );
-  });
-
-  test("install preserves existing mcp_servers entries (and registers supermemory with correct shape)", (t) => {
-    const { tmpDir, configPath } = setupCodexHome(t);
-
-    writeFileSync(
-      configPath,
-      '[mcp_servers.my-other-tool]\nurl = "https://example.com/mcp"\n'
-    );
-
-    runCli(cliBin, "install", tmpDir);
-
-    const config = readToml(configPath);
-    const entry = config.mcp_servers.supermemory;
-    assert.ok(entry, "supermemory entry should be present");
-    assert.equal(entry.command, "node", "command should be node");
-    assert.ok(Array.isArray(entry.args), "args should be an array");
-    assert.equal(entry.args.length, 1, "args should have exactly one element");
-    assert.ok(
-      entry.args[0].endsWith("/.codex/supermemory/mcp.js"),
-      `args[0] should end with /.codex/supermemory/mcp.js (got ${entry.args[0]})`
-    );
-    assert.deepEqual(
-      config.mcp_servers["my-other-tool"],
-      { url: "https://example.com/mcp" },
-      "existing my-other-tool entry should be preserved verbatim"
-    );
-  });
-
-  test("uninstall preserves other mcp_servers entries", (t) => {
-    const { tmpDir, configPath } = setupCodexHome(t);
-
-    writeFileSync(
-      configPath,
-      '[mcp_servers.my-other-tool]\nurl = "https://example.com/mcp"\n'
-    );
-    runCli(cliBin, "install", tmpDir);
-    runCli(cliBin, "uninstall", tmpDir);
-
-    const config = readToml(configPath);
-    assert.ok(
-      !config.mcp_servers.supermemory,
-      "supermemory entry should be removed"
-    );
-    assert.deepEqual(
-      config.mcp_servers["my-other-tool"],
-      { url: "https://example.com/mcp" },
-      "my-other-tool entry should be preserved"
-    );
-  });
-
-  test("install does NOT clobber a user-customized supermemory entry", (t) => {
-    const { tmpDir, configPath } = setupCodexHome(t);
-
-    // User has manually configured the supermemory MCP entry with custom keys
-    // (e.g. bearer_token_env_var, custom URL). Install should leave it alone.
-    const userConfig = TOML.stringify({
-      mcp_servers: {
-        supermemory: {
-          url: "https://custom.example.com/mcp",
-          bearer_token_env_var: "MY_TOKEN",
-        },
-      },
-    });
-    writeFileSync(configPath, userConfig);
-
-    runCli(cliBin, "install", tmpDir);
-
-    const config = readToml(configPath);
-    assert.deepEqual(
-      config.mcp_servers.supermemory,
-      {
-        url: "https://custom.example.com/mcp",
-        bearer_token_env_var: "MY_TOKEN",
-      },
-      "user-customized supermemory entry must be preserved verbatim"
-    );
-  });
-
-  test("uninstall does NOT remove a user-customized supermemory entry", (t) => {
-    const { tmpDir, configPath } = setupCodexHome(t);
-
-    // Pre-existing user config that doesn't match the installer-managed shape.
-    const userConfig = TOML.stringify({
-      mcp_servers: {
-        supermemory: {
-          url: "https://custom.example.com/mcp",
-          bearer_token_env_var: "MY_TOKEN",
-        },
-      },
-    });
-    writeFileSync(configPath, userConfig);
-
-    // install is a no-op for this entry (suggestion above), then uninstall
-    // should still leave the customized entry alone.
-    runCli(cliBin, "install", tmpDir);
-    runCli(cliBin, "uninstall", tmpDir);
-
-    const config = readToml(configPath);
-    assert.deepEqual(
-      config.mcp_servers.supermemory,
-      {
-        url: "https://custom.example.com/mcp",
-        bearer_token_env_var: "MY_TOKEN",
-      },
-      "user-customized supermemory entry must survive uninstall"
-    );
+    const skillsDir = join(codexDir, "skills");
+    for (const skillName of ["super-search", "super-save", "forget"]) {
+      assert.ok(
+        !existsSync(join(skillsDir, skillName)),
+        `${skillName} skill dir should be removed`
+      );
+    }
   });
 
   test("uninstall drops empty [features] section", (t) => {
@@ -331,166 +225,6 @@ describe("integration: install/uninstall MCP server registration", () => {
   });
 });
 
-// ─── MCP server stdio ───────────────────────────────────────────────────────
-//
-// These tests spawn the built MCP server (dist/mcp.js) as a child process and
-// communicate over JSON-RPC on stdio, matching how the Codex CLI launches it
-// after install.
-
-describe("MCP server stdio", () => {
-  const mcpBin = new URL("../dist/mcp.js", import.meta.url).pathname;
-
-  test("mcp server starts and exits cleanly when stdin closes", (t) => {
-    return new Promise((resolve, reject) => {
-      const child = spawn("node", [mcpBin], {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
-      });
-      t.after(() => {
-        if (!child.killed) child.kill();
-      });
-
-      const timer = setTimeout(() => {
-        child.kill();
-        reject(new Error("mcp server did not exit within 5s of stdin close"));
-      }, 5000);
-
-      child.on("error", reject);
-      child.on("exit", (code, signal) => {
-        clearTimeout(timer);
-        // A clean shutdown: code 0, or terminated by us only if it didn't exit
-        // on its own. The MCP SDK closes when stdin EOFs, so we expect code 0.
-        try {
-          assert.ok(
-            code === 0 || code === null,
-            `expected clean exit, got code=${code} signal=${signal}`
-          );
-          resolve();
-        } catch (err) {
-          reject(err);
-        }
-      });
-
-      // Close stdin immediately to trigger shutdown.
-      child.stdin.end();
-    });
-  });
-
-  test("mcp server responds to initialize and tools/list", (t) => {
-    return new Promise((resolve, reject) => {
-      const child = spawn("node", [mcpBin], {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
-      });
-      t.after(() => {
-        if (!child.killed) child.kill();
-      });
-
-      let stdoutBuf = "";
-      let stderrBuf = "";
-      const responses = new Map();
-      let done = false;
-
-      const timer = setTimeout(() => {
-        if (done) return;
-        done = true;
-        child.kill();
-        reject(
-          new Error(
-            `timed out waiting for tools/list response.\nstdout=${stdoutBuf}\nstderr=${stderrBuf}`
-          )
-        );
-      }, 10000);
-
-      child.on("error", (err) => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        reject(err);
-      });
-
-      child.stderr.on("data", (chunk) => {
-        stderrBuf += chunk.toString("utf-8");
-      });
-
-      child.stdout.on("data", (chunk) => {
-        stdoutBuf += chunk.toString("utf-8");
-        // Each JSON-RPC message is delimited by a newline on stdio transport.
-        const lines = stdoutBuf.split("\n");
-        stdoutBuf = lines.pop() ?? "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          let msg;
-          try {
-            msg = JSON.parse(trimmed);
-          } catch {
-            continue;
-          }
-          if (typeof msg.id !== "undefined") {
-            responses.set(msg.id, msg);
-          }
-          if (responses.has(2) && !done) {
-            done = true;
-            clearTimeout(timer);
-            try {
-              const initResp = responses.get(1);
-              assert.ok(initResp, "should have received initialize response");
-              assert.equal(initResp.jsonrpc, "2.0");
-              assert.ok(initResp.result, "initialize must return a result");
-
-              const listResp = responses.get(2);
-              assert.ok(listResp, "should have received tools/list response");
-              assert.equal(listResp.jsonrpc, "2.0");
-              assert.ok(listResp.result, "tools/list must return a result");
-              assert.ok(
-                Array.isArray(listResp.result.tools),
-                "tools must be an array"
-              );
-              const names = listResp.result.tools.map((t) => t.name).sort();
-              assert.deepEqual(
-                names,
-                ["listProjects", "memory", "recall"],
-                `expected exactly tools memory, recall, listProjects (got ${names.join(",")})`
-              );
-              resolve();
-            } catch (err) {
-              reject(err);
-            } finally {
-              child.stdin.end();
-              child.kill();
-            }
-            return;
-          }
-        }
-      });
-
-      const send = (obj) => {
-        child.stdin.write(JSON.stringify(obj) + "\n");
-      };
-
-      send({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-03-26",
-          capabilities: {},
-          clientInfo: { name: "test", version: "1.0.0" },
-        },
-      });
-      send({
-        jsonrpc: "2.0",
-        method: "notifications/initialized",
-      });
-      send({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/list",
-      });
-    });
-  });
-});
 
 // ─── recall hook output envelope ────────────────────────────────────────────
 
@@ -616,5 +350,103 @@ describe("capture hook Stop payload", () => {
       encoding: "utf-8",
     });
     assert.equal(result.status, 0);
+  });
+});
+
+// ─── skill scripts (search/save/forget) ─────────────────────────────────────
+//
+// These scripts (dist/skills/*.js) are entry-points invoked by Codex skills.
+// They reuse SupermemoryClient + tags, so we only smoke-test the CLI shape:
+// argument parsing, the unconfigured-fallback message, and clean exit codes.
+
+describe("skill scripts: search/save/forget", () => {
+  const searchBin = new URL("../dist/skills/search-memory.js", import.meta.url).pathname;
+  const saveBin = new URL("../dist/skills/save-memory.js", import.meta.url).pathname;
+  const forgetBin = new URL("../dist/skills/forget-memory.js", import.meta.url).pathname;
+
+  // Run a script with a fresh empty $HOME (no config file) and an empty
+  // SUPERMEMORY_CODEX_API_KEY so isConfigured() is false. Returns the spawn result.
+  function runSkillUnconfigured(t, bin, args) {
+    const tmpDir = makeTmpDir();
+    mkdirSync(join(tmpDir, ".codex"), { recursive: true });
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    return spawnSync("node", [bin, ...args], {
+      env: { PATH: process.env.PATH, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      encoding: "utf-8",
+    });
+  }
+
+  // Run a script with a (fake) API key but no network. We expect arg-parsing
+  // branches (missing query/content) to short-circuit before any network call.
+  function runSkillNoArgs(t, bin) {
+    const tmpDir = makeTmpDir();
+    mkdirSync(join(tmpDir, ".codex"), { recursive: true });
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    return spawnSync("node", [bin], {
+      env: { PATH: process.env.PATH, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+    });
+  }
+
+  test("search-memory prints not-configured message and exits 0 when no API key", (t) => {
+    const result = runSkillUnconfigured(t, searchBin, ["hello"]);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Supermemory API key not configured/);
+    assert.match(result.stdout, /SUPERMEMORY_CODEX_API_KEY/);
+  });
+
+  test("save-memory prints not-configured message and exits 0 when no API key", (t) => {
+    const result = runSkillUnconfigured(t, saveBin, ["some content"]);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Supermemory API key not configured/);
+  });
+
+  test("forget-memory prints not-configured message and exits 0 when no API key", (t) => {
+    const result = runSkillUnconfigured(t, forgetBin, ["some content"]);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Supermemory API key not configured/);
+  });
+
+  test("search-memory prints usage and exits 0 when no query is given", (t) => {
+    const result = runSkillNoArgs(t, searchBin);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /No search query provided/);
+    assert.match(result.stdout, /node search-memory\.js/);
+  });
+
+  test("save-memory prints usage and exits 0 when no content is given", (t) => {
+    const result = runSkillNoArgs(t, saveBin);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /No content provided/);
+    assert.match(result.stdout, /node save-memory\.js/);
+  });
+
+  test("forget-memory prints usage and exits 0 when no content is given", (t) => {
+    const result = runSkillNoArgs(t, forgetBin);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /No content provided/);
+    assert.match(result.stdout, /node forget-memory\.js/);
+  });
+
+  test("search-memory only treats --user/--project/--both/--no-profile as flags; other args become the query", (t) => {
+    // With a fresh HOME and no API key, every invocation hits the unconfigured
+    // branch — which is fine. The point of this test is to assert that the
+    // script *runs at all* (i.e. arg-parsing doesn't crash) for every flag
+    // permutation we expect users to send.
+    for (const args of [
+      ["--user", "find", "thing"],
+      ["--project", "find", "thing"],
+      ["--both", "find", "thing"],
+      ["--no-profile", "find", "thing"],
+      ["--user", "--no-profile", "find", "thing"],
+    ]) {
+      const result = runSkillUnconfigured(t, searchBin, args);
+      assert.equal(result.status, 0, `flags ${args.join(" ")} should exit 0`);
+      assert.match(
+        result.stdout,
+        /Supermemory API key not configured/,
+        `flags ${args.join(" ")} should hit the unconfigured branch`
+      );
+    }
   });
 });

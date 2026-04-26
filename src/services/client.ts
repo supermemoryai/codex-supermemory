@@ -140,8 +140,11 @@ export class SupermemoryClient {
   async listProjects(): Promise<{ success: true; projects: string[] } | { success: false; error: string; projects: string[] }> {
     log("listProjects: start");
     try {
+      // Honour SUPERMEMORY_BASE_URL so self-hosted instances work the same way the
+      // Supermemory SDK does — it reads that env var as its default base URL.
+      const baseURL = (process.env.SUPERMEMORY_BASE_URL ?? "https://api.supermemory.ai").replace(/\/$/, "");
       const response = await withTimeout(
-        fetch("https://api.supermemory.ai/v3/projects", {
+        fetch(`${baseURL}/v3/projects`, {
           method: "GET",
           headers: {
             Authorization: `Bearer ${SUPERMEMORY_API_KEY}`,
