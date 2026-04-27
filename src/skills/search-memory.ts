@@ -63,13 +63,19 @@ async function main(): Promise<void> {
         client.searchMemories(query, projectTag),
       ]);
 
+      // Surface errors when all searches fail
+      if (!userResult.success && !projectResult.success) {
+        console.log(`Failed to search memories: ${userResult.error}`);
+        return;
+      }
+
       const combinedResults = [
         ...(userResult.success ? userResult.results ?? [] : []),
         ...(projectResult.success ? projectResult.results ?? [] : []),
       ];
 
       searchResult = {
-        success: (userResult.success || projectResult.success) as true,
+        success: true as const,
         results: combinedResults,
         total: combinedResults.length,
         timing: 0,
@@ -77,6 +83,12 @@ async function main(): Promise<void> {
     } else {
       const tag = scope === "user" ? userTag : projectTag;
       searchResult = await client.searchMemories(query, tag);
+
+      // Surface error for single-scope search failure
+      if (!searchResult.success) {
+        console.log(`Failed to search memories: ${searchResult.error}`);
+        return;
+      }
     }
 
     const profileResult = includeProfile

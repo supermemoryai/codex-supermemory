@@ -137,36 +137,6 @@ export class SupermemoryClient {
     }
   }
 
-  async listProjects(): Promise<{ success: true; projects: string[] } | { success: false; error: string; projects: string[] }> {
-    log("listProjects: start");
-    try {
-      // Honour SUPERMEMORY_BASE_URL so self-hosted instances work the same way the
-      // Supermemory SDK does — it reads that env var as its default base URL.
-      const baseURL = (process.env.SUPERMEMORY_BASE_URL ?? "https://api.supermemory.ai").replace(/\/$/, "");
-      const response = await withTimeout(
-        fetch(`${baseURL}/v3/projects`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${SUPERMEMORY_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-        }),
-        TIMEOUT_MS
-      );
-      if (!response.ok) {
-        throw new Error(`Failed to fetch projects: ${response.statusText}`);
-      }
-      const data = (await response.json()) as { projects: Array<{ containerTag: string }> };
-      const projects = (data.projects ?? []).map((p) => p.containerTag);
-      log("listProjects: success", { count: projects.length });
-      return { success: true, projects };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      log("listProjects: error", { error: errorMessage });
-      return { success: false, error: errorMessage, projects: [] };
-    }
-  }
-
   async ingestConversation(
     conversationId: string,
     messages: ConversationMessage[],

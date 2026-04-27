@@ -33,12 +33,13 @@ const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
 const CAPTURE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
-const SUPER_SEARCH_SKILL_DIR = join(CODEX_SKILLS_DIR, "super-search");
-const SUPER_SAVE_SKILL_DIR = join(CODEX_SKILLS_DIR, "super-save");
-const FORGET_SKILL_DIR = join(CODEX_SKILLS_DIR, "forget");
-const SEARCH_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "search-memory.js");
-const SAVE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "save-memory.js");
-const FORGET_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "forget-memory.js");
+
+// Skill metadata — single source of truth for install/uninstall/status.
+const SKILLS = [
+  { name: "super-search", script: "search-memory.js" },
+  { name: "super-save", script: "save-memory.js" },
+  { name: "forget", script: "forget-memory.js" },
+] as const;
 
 const SCRIPT_DIR = getScriptDir();
 const DIST_HOOKS_DIR = join(SCRIPT_DIR, "hooks");
@@ -221,24 +222,20 @@ function install() {
   copyFileSync(recallSrc, RECALL_SCRIPT);
   copyFileSync(captureSrc, CAPTURE_SCRIPT);
 
-  // Copy skill scripts
-  const searchSrc = join(SCRIPT_DIR, "skills", "search-memory.js");
-  const saveSrc = join(SCRIPT_DIR, "skills", "save-memory.js");
-  const forgetSrc = join(SCRIPT_DIR, "skills", "forget-memory.js");
-  copyFileSync(searchSrc, SEARCH_SCRIPT);
-  copyFileSync(saveSrc, SAVE_SCRIPT);
-  copyFileSync(forgetSrc, FORGET_SCRIPT);
-  console.log(`✓ Installed hook and skill scripts to ${SUPERMEMORY_HOOKS_DIR}`);
-
-  // Install skill SKILL.md files
-  for (const skillName of ["super-search", "super-save", "forget"]) {
-    const skillDir = join(CODEX_SKILLS_DIR, skillName);
+  // Copy skill scripts and SKILL.md files
+  for (const { name, script } of SKILLS) {
+    copyFileSync(
+      join(SCRIPT_DIR, "skills", script),
+      join(SUPERMEMORY_HOOKS_DIR, script)
+    );
+    const skillDir = join(CODEX_SKILLS_DIR, name);
     mkdirSync(skillDir, { recursive: true });
     copyFileSync(
-      join(SCRIPT_DIR, "skills", skillName, "SKILL.md"),
+      join(SCRIPT_DIR, "skills", name, "SKILL.md"),
       join(skillDir, "SKILL.md")
     );
   }
+  console.log(`✓ Installed hook and skill scripts to ${SUPERMEMORY_HOOKS_DIR}`);
   console.log(`✓ Installed skills to ${CODEX_SKILLS_DIR}`);
 
   // Merge config.toml (hooks feature flag)
@@ -284,8 +281,8 @@ function uninstall() {
   }
 
   // Remove skill directories
-  for (const skillName of ["super-search", "super-save", "forget"]) {
-    const skillDir = join(CODEX_SKILLS_DIR, skillName);
+  for (const { name } of SKILLS) {
+    const skillDir = join(CODEX_SKILLS_DIR, name);
     if (existsSync(skillDir)) {
       rmSync(skillDir, { recursive: true, force: true });
     }
@@ -320,13 +317,15 @@ function status() {
     }
   }
 
-  const skillsInstalled = existsSync(join(SUPER_SEARCH_SKILL_DIR, "SKILL.md")) && existsSync(join(SUPER_SAVE_SKILL_DIR, "SKILL.md")) && existsSync(join(FORGET_SKILL_DIR, "SKILL.md"));
+  const skillsInstalled = SKILLS.every(({ name }) =>
+    existsSync(join(CODEX_SKILLS_DIR, name, "SKILL.md"))
+  );
 
   console.log("codex-supermemory status:\n");
   console.log(`  API key:       ${apiKey ? "✓ set (SUPERMEMORY_CODEX_API_KEY)" : "✗ not set"}`);
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
   console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
-  console.log(`  Skills:        ${skillsInstalled ? "✓ installed (super-search, super-save, forget)" : "✗ not installed"}`);
+  console.log(`  Skills:        ${skillsInstalled ? `✓ installed (${SKILLS.map(s => s.name).join(", ")})` : "✗ not installed"}`);
   console.log(`  config.toml:   ${configTomlExists ? "✓ exists" : "✗ not found"}`);
 
   if (!apiKey || !hooksInstalled || !hooksEnabled || !skillsInstalled) {

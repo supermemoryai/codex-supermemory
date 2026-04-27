@@ -22,10 +22,10 @@ async function main(): Promise<void> {
 
   try {
     const metadata = {
-      type: "project-knowledge",
+      type: "project-knowledge" as const,
       source: "skill",
       timestamp: new Date().toISOString(),
-    } as unknown as Parameters<typeof client.addMemory>[2];
+    };
 
     const result = await client.addMemory(content, projectTag, metadata);
 

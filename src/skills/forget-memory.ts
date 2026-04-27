@@ -1,6 +1,6 @@
 import { isConfigured } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
-import { getProjectTag } from "../services/tags.js";
+import { getProjectTag, getUserTag } from "../services/tags.js";
 
 async function main(): Promise<void> {
   if (!isConfigured()) {
@@ -21,18 +21,34 @@ async function main(): Promise<void> {
 
   const client = new SupermemoryClient();
   const projectTag = getProjectTag(process.cwd());
+  const userTag = getUserTag();
 
   try {
-    const result = await client.forgetMemory(content, projectTag);
+    // Forget from both project and user scopes since memories may exist in either.
+    const [projectResult, userResult] = await Promise.all([
+      client.forgetMemory(content, projectTag),
+      client.forgetMemory(content, userTag),
+    ]);
 
-    if (result.success) {
-      if (result.id) {
-        console.log(`Memory forgotten (id: ${result.id})`);
-      } else {
-        console.log("Memory forgotten");
-      }
+    const forgotten: string[] = [];
+    const errors: string[] = [];
+
+    if (projectResult.success) {
+      forgotten.push(projectResult.id ? `project (id: ${projectResult.id})` : "project");
     } else {
-      console.log(`Failed to forget memory: ${result.error}`);
+      errors.push(`project: ${projectResult.error}`);
+    }
+
+    if (userResult.success) {
+      forgotten.push(userResult.id ? `user (id: ${userResult.id})` : "user");
+    } else {
+      errors.push(`user: ${userResult.error}`);
+    }
+
+    if (forgotten.length > 0) {
+      console.log(`Memory forgotten from: ${forgotten.join(", ")}`);
+    } else {
+      console.log(`Failed to forget memory: ${errors.join("; ")}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

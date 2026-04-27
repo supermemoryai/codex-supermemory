@@ -4,7 +4,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync, spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -183,7 +183,8 @@ describe("integration: install/uninstall", () => {
   test("install copies skill SKILL.md files to ~/.codex/skills/", (t) => {
     const { tmpDir, codexDir } = setupCodexHome(t);
 
-    runCli(cliBin, "install", tmpDir);
+    const result = runCli(cliBin, "install", tmpDir);
+    assert.equal(result.status, 0, `install should exit 0: ${result.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
     for (const skillName of ["super-search", "super-save", "forget"]) {
@@ -200,8 +201,10 @@ describe("integration: install/uninstall", () => {
   test("uninstall removes skill directories", (t) => {
     const { tmpDir, codexDir } = setupCodexHome(t);
 
-    runCli(cliBin, "install", tmpDir);
-    runCli(cliBin, "uninstall", tmpDir);
+    const installResult = runCli(cliBin, "install", tmpDir);
+    assert.equal(installResult.status, 0, `install should exit 0: ${installResult.stderr}`);
+    const uninstallResult = runCli(cliBin, "uninstall", tmpDir);
+    assert.equal(uninstallResult.status, 0, `uninstall should exit 0: ${uninstallResult.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
     for (const skillName of ["super-search", "super-save", "forget"]) {
@@ -215,8 +218,10 @@ describe("integration: install/uninstall", () => {
   test("uninstall drops empty [features] section", (t) => {
     const { tmpDir, configPath } = setupCodexHome(t);
 
-    runCli(cliBin, "install", tmpDir);
-    runCli(cliBin, "uninstall", tmpDir);
+    const installResult = runCli(cliBin, "install", tmpDir);
+    assert.equal(installResult.status, 0, `install should exit 0: ${installResult.stderr}`);
+    const uninstallResult = runCli(cliBin, "uninstall", tmpDir);
+    assert.equal(uninstallResult.status, 0, `uninstall should exit 0: ${uninstallResult.stderr}`);
 
     const raw = readFileSync(configPath, "utf-8");
     assert.ok(!raw.includes("[features]"), "stale [features] section should be removed on uninstall");
