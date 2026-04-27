@@ -1,5 +1,5 @@
 ---
-name: super-save
+name: supermemory-save
 description: Save important project knowledge to memory. Use when user wants to preserve architectural decisions, significant bug fixes, design patterns, or important implementation details for future reference.
 allowed-tools: Bash(node:*)
 ---

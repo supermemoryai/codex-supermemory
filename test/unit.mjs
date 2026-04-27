@@ -187,7 +187,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(result.status, 0, `install should exit 0: ${result.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["super-search", "super-save", "forget"]) {
+    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget"]) {
       const skillMd = join(skillsDir, skillName, "SKILL.md");
       assert.ok(existsSync(skillMd), `${skillName}/SKILL.md should exist`);
       const content = readFileSync(skillMd, "utf-8");
@@ -207,7 +207,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(uninstallResult.status, 0, `uninstall should exit 0: ${uninstallResult.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["super-search", "super-save", "forget"]) {
+    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget"]) {
       assert.ok(
         !existsSync(join(skillsDir, skillName)),
         `${skillName} skill dir should be removed`

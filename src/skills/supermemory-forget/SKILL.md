@@ -1,5 +1,5 @@
 ---
-name: forget
+name: supermemory-forget
 description: Remove outdated or incorrect information from memory. Use when user says something is no longer true, wants to delete a memory, or information has changed.
 allowed-tools: Bash(node:*)
 ---
@@ -38,4 +38,4 @@ node ~/.codex/supermemory/forget-memory.js "DESCRIPTION_OF_WHAT_TO_FORGET"
 
 ## After Forgetting
 
-Confirm to the user that the memory has been removed. If they mentioned new information to replace it, use the super-save skill to save the updated information.
+Confirm to the user that the memory has been removed. If they mentioned new information to replace it, use the supermemory-save skill to save the updated information.

@@ -36,9 +36,9 @@ const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
 
 // Skill metadata — single source of truth for install/uninstall/status.
 const SKILLS = [
-  { name: "super-search", script: "search-memory.js" },
-  { name: "super-save", script: "save-memory.js" },
-  { name: "forget", script: "forget-memory.js" },
+  { name: "supermemory-search", script: "search-memory.js" },
+  { name: "supermemory-save", script: "save-memory.js" },
+  { name: "supermemory-forget", script: "forget-memory.js" },
 ] as const;
 
 const SCRIPT_DIR = getScriptDir();
@@ -251,7 +251,7 @@ Installation complete!
 
 You now have:
   • Implicit memory — auto-recall on every prompt, auto-capture on session end
-  • Explicit memory — super-search, super-save, and forget skills
+  • Explicit memory — supermemory-search, supermemory-save, and supermemory-forget skills
 
 Next steps:
   1. Add your API key to your shell profile:

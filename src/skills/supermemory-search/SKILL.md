@@ -1,5 +1,5 @@
 ---
-name: super-search
+name: supermemory-search
 description: Search your coding memory. Use when user asks about past work, previous sessions, how something was implemented, what they worked on before, or wants to recall information from earlier sessions.
 allowed-tools: Bash(node:*)
 ---
