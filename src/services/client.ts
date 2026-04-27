@@ -8,6 +8,30 @@ import type {
 } from "../types/index.js";
 
 const TIMEOUT_MS = 30000;
+
+const CODEX_ENTITY_CONTEXT = `Developer coding session transcript. Focus on USER message and intent.
+
+RULES:
+- Extract USER's action/intent, not every detail assistant provides matter
+- Condense assistant responses into what user gained from it
+- Skip granular facts from assistant output
+
+EXTRACT:
+- Research: "researched whisper.cpp for speech recognition"
+- Actions: "built auth flow with JWT", "fixed memory leak in useEffect"
+- Preferences: "prefers Tailwind over CSS modules"
+- Decisions: "chose SQLite for local storage"
+- Learnings: "learned about React Server Components"
+
+EXAMPLES:
+| Transcript | Memory |
+| [role:user] research about the whisper.cpp -> https://github.com/ggml-org/whisper.cpp/blob/master/src/whisper.cpp [user:end]| "<User> starts research about whisper.cpp" |
+| [role:assistant] ## whisper.cpp Architecture Summary \n This is highly relevant for your parakeet.cpp implementation. Here are the key patterns: \n ### Core Architecture \n **Two-level context design:**\n - whisper_context - holds model weights, vocab, hyperparameters (persistent) \n - whisper_state - runtime state, KV caches, backends (can have multiple per context) [assistant:end] | "Assistant did a deep dive on whisper architecture" |
+| [role:user] Can we explain what we are currently doing in this repository? [user:end] | "<Multiple comprehensive memories using assistant reponse>" |
+
+SKIP:
+- Every fact assistant mentions (condense to user's action)
+- Generic assistant explanations user didn't confirm/use`;
 const MAX_CONVERSATION_CHARS = 100_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -100,16 +124,20 @@ export class SupermemoryClient {
   async addMemory(
     content: string,
     containerTag: string,
-    metadata?: { type?: MemoryType; tool?: string; [key: string]: unknown }
+    metadata?: { type?: MemoryType; tool?: string; [key: string]: unknown },
+    entityContext = CODEX_ENTITY_CONTEXT
   ) {
     log("addMemory: start", { containerTag, contentLength: content.length });
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const payload: any = {
+        content,
+        containerTag,
+        metadata: metadata as Record<string, string | number | boolean | string[]>,
+        entityContext,
+      };
       const result = await withTimeout(
-        this.getClient().memories.add({
-          content,
-          containerTag,
-          metadata: metadata as Record<string, string | number | boolean | string[]>,
-        }),
+        this.getClient().memories.add(payload),
         TIMEOUT_MS
       );
       log("addMemory: success", { id: result.id });
@@ -118,6 +146,41 @@ export class SupermemoryClient {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log("addMemory: error", { error: errorMessage });
       return { success: false as const, error: errorMessage };
+    }
+  }
+
+  async deleteMemory(memoryId: string) {
+    log("deleteMemory: start", { memoryId });
+    try {
+      await withTimeout(this.getClient().memories.delete(memoryId), TIMEOUT_MS);
+      log("deleteMemory: success", { memoryId });
+      return { success: true as const };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("deleteMemory: error", { memoryId, error: errorMessage });
+      return { success: false as const, error: errorMessage };
+    }
+  }
+
+  async listMemories(containerTag: string, limit = 20) {
+    log("listMemories: start", { containerTag, limit });
+    try {
+      const result = await withTimeout(
+        this.getClient().memories.list({
+          containerTags: [containerTag],
+          limit,
+          order: "desc",
+          sort: "createdAt",
+          includeContent: true,
+        }),
+        TIMEOUT_MS
+      );
+      log("listMemories: success", { count: result.memories?.length ?? 0 });
+      return { success: true as const, memories: (result.memories ?? []) as Array<{ id: string; summary?: string; content?: string; createdAt?: string }> };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("listMemories: error", { error: errorMessage });
+      return { success: false as const, error: errorMessage, memories: [] };
     }
   }
 

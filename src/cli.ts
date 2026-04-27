@@ -32,6 +32,7 @@ const CODEX_HOOKS_JSON = join(CODEX_DIR, "hooks.json");
 const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
 const CAPTURE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
+const MCP_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "mcp.js");
 
 const SCRIPT_DIR = getScriptDir();
 const DIST_HOOKS_DIR = join(SCRIPT_DIR, "hooks");
@@ -63,6 +64,48 @@ function mergeConfigToml(enable: boolean) {
     features.codex_hooks = true;
   } else {
     delete features.codex_hooks;
+  }
+
+  writeFileSync(CODEX_CONFIG_TOML, TOML.stringify(config as TOML.JsonMap));
+}
+
+function mergeMcpConfig(add: boolean) {
+  if (!add && !existsSync(CODEX_CONFIG_TOML)) {
+    return;
+  }
+
+  let config: Record<string, unknown> = {};
+  if (existsSync(CODEX_CONFIG_TOML)) {
+    try {
+      const content = readFileSync(CODEX_CONFIG_TOML, "utf-8");
+      config = TOML.parse(content) as Record<string, unknown>;
+    } catch {
+      // start fresh
+    }
+  }
+
+  if (!config.mcp_servers) config.mcp_servers = {};
+  const mcpServers = config.mcp_servers as Record<string, unknown>;
+
+  if (add) {
+    // Skip if an entry already exists — don't overwrite user-customised config.
+    if (!mcpServers.supermemory) {
+      // Codex spawns MCP servers as child processes that don't inherit the shell
+      // environment, so we must forward the API key via the env table.
+      const apiKey = process.env.SUPERMEMORY_CODEX_API_KEY;
+      const entry: Record<string, unknown> = { command: "node", args: [MCP_SCRIPT] };
+      if (apiKey) {
+        entry.env = { SUPERMEMORY_CODEX_API_KEY: apiKey };
+      }
+      mcpServers.supermemory = entry;
+    }
+  } else {
+    // Only remove the entry if it still matches what we installed.
+    const entry = mcpServers.supermemory as { command?: string; args?: string[] } | undefined;
+    if (entry?.command === "node" && entry?.args?.[0] === MCP_SCRIPT) {
+      delete mcpServers.supermemory;
+      if (Object.keys(mcpServers).length === 0) delete config.mcp_servers;
+    }
   }
 
   writeFileSync(CODEX_CONFIG_TOML, TOML.stringify(config as TOML.JsonMap));
@@ -212,20 +255,39 @@ function install() {
   copyFileSync(captureSrc, CAPTURE_SCRIPT);
   console.log(`✓ Hook scripts installed to ${SUPERMEMORY_HOOKS_DIR}`);
 
+  // Copy MCP server (optional — skip gracefully if not in dist yet)
+  const mcpSrc = join(SCRIPT_DIR, "mcp.js");
+  if (existsSync(mcpSrc)) {
+    copyFileSync(mcpSrc, MCP_SCRIPT);
+    console.log(`✓ MCP server installed to ${SUPERMEMORY_HOOKS_DIR}`);
+  }
+
   // Merge config.toml
   mergeConfigToml(true);
   console.log(`✓ Enabled codex_hooks in ${CODEX_CONFIG_TOML}`);
+
+  // Register MCP server in config.toml
+  if (existsSync(MCP_SCRIPT)) {
+    mergeMcpConfig(true);
+    console.log(`✓ Registered MCP server in ${CODEX_CONFIG_TOML}`);
+  }
 
   // Merge hooks.json
   mergeHooksJson(true);
   console.log(`✓ Registered hooks in ${CODEX_HOOKS_JSON}`);
 
+  const hasKey = !!process.env.SUPERMEMORY_CODEX_API_KEY;
+  const keyStep = hasKey
+    ? "  1. ✓ API key detected and embedded in MCP server config."
+    : `  1. Set your API key, then re-run install so it is embedded in the MCP config:
+     export SUPERMEMORY_CODEX_API_KEY="sm_..."
+     npx codex-supermemory install
+     (Codex spawns the MCP server without shell environment — the key must be in config.toml)`;
   console.log(`
 Installation complete!
 
 Next steps:
-  1. Add your API key to your shell profile:
-     export SUPERMEMORY_CODEX_API_KEY="sm_..."
+${keyStep}
 
   2. Get your API key at: https://console.supermemory.ai/keys
 
@@ -242,8 +304,9 @@ function uninstall() {
   mergeHooksJson(false);
   console.log(`✓ Removed hooks from ${CODEX_HOOKS_JSON}`);
 
+  mergeMcpConfig(false);
   mergeConfigToml(false);
-  console.log(`✓ Disabled codex_hooks in ${CODEX_CONFIG_TOML}`);
+  console.log(`✓ Disabled codex_hooks and removed MCP server from ${CODEX_CONFIG_TOML}`);
 
   if (existsSync(SUPERMEMORY_HOOKS_DIR)) {
     rmSync(SUPERMEMORY_HOOKS_DIR, { recursive: true, force: true });
@@ -256,6 +319,7 @@ function uninstall() {
 function status() {
   const apiKey = process.env.SUPERMEMORY_CODEX_API_KEY;
   const hooksInstalled = existsSync(RECALL_SCRIPT) && existsSync(CAPTURE_SCRIPT);
+  const mcpInstalled = existsSync(MCP_SCRIPT);
   const hooksJsonExists = existsSync(CODEX_HOOKS_JSON);
   const configTomlExists = existsSync(CODEX_CONFIG_TOML);
 
@@ -278,11 +342,26 @@ function status() {
     }
   }
 
+  let codexHooksEnabled = false;
+  let mcpRegistered = false;
+  if (configTomlExists) {
+    try {
+      const parsed = TOML.parse(readFileSync(CODEX_CONFIG_TOML, "utf-8")) as Record<string, unknown>;
+      const features = parsed.features as Record<string, unknown> | undefined;
+      codexHooksEnabled = features?.codex_hooks === true;
+      const mcpServers = parsed.mcp_servers as Record<string, unknown> | undefined;
+      mcpRegistered = !!(mcpServers?.supermemory);
+    } catch {
+      // ignore
+    }
+  }
+
   console.log("codex-supermemory status:\n");
   console.log(`  API key:       ${apiKey ? "✓ set (SUPERMEMORY_CODEX_API_KEY)" : "✗ not set"}`);
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
   console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered" : "✗ not registered"}`);
-  console.log(`  config.toml:   ${configTomlExists ? "✓ exists" : "✗ not found"}`);
+  console.log(`  config.toml:   ${codexHooksEnabled ? "✓ codex_hooks enabled" : "✗ codex_hooks not enabled"}`);
+  console.log(`  MCP server:    ${mcpInstalled && mcpRegistered ? "✓ registered" : mcpInstalled ? "✗ not registered in config.toml" : "✗ not installed"}`);
 
   if (!apiKey || !hooksInstalled || !hooksEnabled) {
     console.log("\nRun `npx codex-supermemory install` to set up.");

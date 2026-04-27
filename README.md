@@ -81,7 +81,6 @@ Drop this file in to override defaults:
 | `containerTagPrefix`     | `string`  | `"codex"`      | Prefix for auto-generated container tags.                                                    |
 | `userContainerTag`       | `string`  | auto           | Override the user container tag.                                                             |
 | `projectContainerTag`    | `string`  | auto (per-cwd) | Override the project container tag.                                                          |
-| `filterPrompt`           | `string`  | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean` | `false`        | Enable debug logging.                                                                        |
 
 User and project tags are auto-derived from your `git config user.email` and the
