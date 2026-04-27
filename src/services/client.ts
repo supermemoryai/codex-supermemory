@@ -121,6 +121,22 @@ export class SupermemoryClient {
     }
   }
 
+  async forgetMemory(content: string, containerTag: string): Promise<{ success: true; message: string; id?: string } | { success: false; error: string }> {
+    log("forgetMemory: start", { containerTag, contentLength: content.length });
+    try {
+      const result = await withTimeout(
+        this.getClient().memories.forget({ containerTag, content }),
+        TIMEOUT_MS
+      );
+      log("forgetMemory: success", { id: result.id });
+      return { success: true, message: "Memory forgotten", id: result.id };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("forgetMemory: error", { error: errorMessage });
+      return { success: false, error: errorMessage };
+    }
+  }
+
   async ingestConversation(
     conversationId: string,
     messages: ConversationMessage[],

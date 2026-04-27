@@ -4,7 +4,8 @@ export type MemoryType =
   | "error-solution"
   | "preference"
   | "learned-pattern"
-  | "conversation";
+  | "conversation"
+  | "project-knowledge";
 
 export type ConversationRole = "user" | "assistant" | "system" | "tool";
 

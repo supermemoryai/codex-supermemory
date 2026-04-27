@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { mkdirSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdirSync, writeFileSync, chmodSync, copyFileSync } from "node:fs";
 
 const sharedConfig = {
   bundle: true,
@@ -10,26 +10,37 @@ const sharedConfig = {
   sourcemap: false,
 };
 
-await Promise.all([
-  esbuild.build({
-    ...sharedConfig,
-    entryPoints: ["src/cli.ts"],
-    outfile: "dist/cli.js",
-    banner: { js: "#!/usr/bin/env node" },
-  }),
-  esbuild.build({
-    ...sharedConfig,
-    entryPoints: ["src/hooks/recall.ts"],
-    outfile: "dist/hooks/recall.js",
-    banner: { js: "#!/usr/bin/env node" },
-  }),
-  esbuild.build({
-    ...sharedConfig,
-    entryPoints: ["src/hooks/capture.ts"],
-    outfile: "dist/hooks/capture.js",
-    banner: { js: "#!/usr/bin/env node" },
-  }),
-]);
+const entries = [
+  { in: "src/cli.ts", out: "dist/cli.js" },
+  ...["recall", "capture"].map((n) => ({
+    in: `src/hooks/${n}.ts`,
+    out: `dist/hooks/${n}.js`,
+  })),
+  ...["search-memory", "save-memory", "forget-memory"].map((n) => ({
+    in: `src/skills/${n}.ts`,
+    out: `dist/skills/${n}.js`,
+  })),
+];
+
+await Promise.all(
+  entries.map((e) =>
+    esbuild.build({
+      ...sharedConfig,
+      entryPoints: [e.in],
+      outfile: e.out,
+      banner: { js: "#!/usr/bin/env node" },
+    })
+  )
+);
+
+// Copy SKILL.md files to dist
+for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget"]) {
+  mkdirSync(`dist/skills/${skillName}`, { recursive: true });
+  copyFileSync(
+    `src/skills/${skillName}/SKILL.md`,
+    `dist/skills/${skillName}/SKILL.md`
+  );
+}
 
 // The root package.json declares `"type": "module"`, but esbuild emits CommonJS.
 // Drop a CJS marker into dist/ so Node loads the bundles correctly.
@@ -37,9 +48,9 @@ mkdirSync("dist", { recursive: true });
 writeFileSync("dist/package.json", JSON.stringify({ type: "commonjs" }, null, 2));
 
 // Make the executables actually executable.
-for (const file of ["dist/cli.js", "dist/hooks/recall.js", "dist/hooks/capture.js"]) {
+for (const e of entries) {
   try {
-    chmodSync(file, 0o755);
+    chmodSync(e.out, 0o755);
   } catch {
     // ignore
   }

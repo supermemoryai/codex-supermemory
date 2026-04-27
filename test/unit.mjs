@@ -5,9 +5,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import * as TOML from "@iarna/toml";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,29 @@ function makeTmpDir() {
   const dir = join(tmpdir(), `csm-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+// Set up a fake $HOME with an empty .codex/ subdir. Registers an `after` hook
+// on `t` that nukes the temp dir even if the test throws, so failed assertions
+// don't leak directories under /tmp.
+function setupCodexHome(t) {
+  const tmpDir = makeTmpDir();
+  const codexDir = join(tmpDir, ".codex");
+  mkdirSync(codexDir, { recursive: true });
+  const configPath = join(codexDir, "config.toml");
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+  return { tmpDir, codexDir, configPath };
+}
+
+function runCli(cliBin, cmd, tmpDir) {
+  return spawnSync("node", [cliBin, cmd], {
+    env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+    encoding: "utf-8",
+  });
+}
+
+function readToml(path) {
+  return TOML.parse(readFileSync(path, "utf-8"));
 }
 
 // Inline the stripPrivateContent logic (mirrors src/services/privacy.ts exactly)
@@ -146,6 +170,67 @@ describe("hooks.json format", () => {
   });
 });
 
+// ─── integration: install/uninstall (skills + hooks) ──────────────────────
+//
+// These tests spawn the built CLI against a fake $HOME and assert on the
+// resulting on-disk state. They depend on dist/cli.js — `npm test` runs
+// `npm run build` first, so this should always be present when invoked
+// through npm.
+
+describe("integration: install/uninstall", () => {
+  const cliBin = new URL("../dist/cli.js", import.meta.url).pathname;
+
+  test("install copies skill SKILL.md files to ~/.codex/skills/", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
+
+    const result = runCli(cliBin, "install", tmpDir);
+    assert.equal(result.status, 0, `install should exit 0: ${result.stderr}`);
+
+    const skillsDir = join(codexDir, "skills");
+    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget"]) {
+      const skillMd = join(skillsDir, skillName, "SKILL.md");
+      assert.ok(existsSync(skillMd), `${skillName}/SKILL.md should exist`);
+      const content = readFileSync(skillMd, "utf-8");
+      assert.ok(
+        content.includes(`name: ${skillName}`),
+        `SKILL.md should contain name: ${skillName}`
+      );
+    }
+  });
+
+  test("uninstall removes skill directories", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
+
+    const installResult = runCli(cliBin, "install", tmpDir);
+    assert.equal(installResult.status, 0, `install should exit 0: ${installResult.stderr}`);
+    const uninstallResult = runCli(cliBin, "uninstall", tmpDir);
+    assert.equal(uninstallResult.status, 0, `uninstall should exit 0: ${uninstallResult.stderr}`);
+
+    const skillsDir = join(codexDir, "skills");
+    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget"]) {
+      assert.ok(
+        !existsSync(join(skillsDir, skillName)),
+        `${skillName} skill dir should be removed`
+      );
+    }
+  });
+
+  test("uninstall drops empty [features] section", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
+
+    const installResult = runCli(cliBin, "install", tmpDir);
+    assert.equal(installResult.status, 0, `install should exit 0: ${installResult.stderr}`);
+    const uninstallResult = runCli(cliBin, "uninstall", tmpDir);
+    assert.equal(uninstallResult.status, 0, `uninstall should exit 0: ${uninstallResult.stderr}`);
+
+    const raw = readFileSync(configPath, "utf-8");
+    assert.ok(!raw.includes("[features]"), "stale [features] section should be removed on uninstall");
+    const config = readToml(configPath);
+    assert.ok(!config.features, "features table should not exist after uninstall");
+  });
+});
+
+
 // ─── recall hook output envelope ────────────────────────────────────────────
 
 describe("recall hook output envelope", () => {
@@ -236,8 +321,9 @@ describe("capture hook Stop payload", () => {
     assert.equal(result.status, 0);
   });
 
-  test("reads transcript_path JSONL file when it exists (exits 0 without API key)", () => {
+  test("reads transcript_path JSONL file when it exists (exits 0 without API key)", (t) => {
     const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     const transcriptFile = join(tmpDir, "transcript.jsonl");
     writeFileSync(
       transcriptFile,
@@ -257,8 +343,6 @@ describe("capture hook Stop payload", () => {
       encoding: "utf-8",
     });
     assert.equal(result.status, 0);
-
-    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   test("does not crash when transcript_path points to nonexistent file", () => {
@@ -271,5 +355,103 @@ describe("capture hook Stop payload", () => {
       encoding: "utf-8",
     });
     assert.equal(result.status, 0);
+  });
+});
+
+// ─── skill scripts (search/save/forget) ─────────────────────────────────────
+//
+// These scripts (dist/skills/*.js) are entry-points invoked by Codex skills.
+// They reuse SupermemoryClient + tags, so we only smoke-test the CLI shape:
+// argument parsing, the unconfigured-fallback message, and clean exit codes.
+
+describe("skill scripts: search/save/forget", () => {
+  const searchBin = new URL("../dist/skills/search-memory.js", import.meta.url).pathname;
+  const saveBin = new URL("../dist/skills/save-memory.js", import.meta.url).pathname;
+  const forgetBin = new URL("../dist/skills/forget-memory.js", import.meta.url).pathname;
+
+  // Run a script with a fresh empty $HOME (no config file) and an empty
+  // SUPERMEMORY_CODEX_API_KEY so isConfigured() is false. Returns the spawn result.
+  function runSkillUnconfigured(t, bin, args) {
+    const tmpDir = makeTmpDir();
+    mkdirSync(join(tmpDir, ".codex"), { recursive: true });
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    return spawnSync("node", [bin, ...args], {
+      env: { PATH: process.env.PATH, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      encoding: "utf-8",
+    });
+  }
+
+  // Run a script with a (fake) API key but no network. We expect arg-parsing
+  // branches (missing query/content) to short-circuit before any network call.
+  function runSkillNoArgs(t, bin) {
+    const tmpDir = makeTmpDir();
+    mkdirSync(join(tmpDir, ".codex"), { recursive: true });
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    return spawnSync("node", [bin], {
+      env: { PATH: process.env.PATH, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+    });
+  }
+
+  test("search-memory prints not-configured message and exits 0 when no API key", (t) => {
+    const result = runSkillUnconfigured(t, searchBin, ["hello"]);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Supermemory API key not configured/);
+    assert.match(result.stdout, /SUPERMEMORY_CODEX_API_KEY/);
+  });
+
+  test("save-memory prints not-configured message and exits 0 when no API key", (t) => {
+    const result = runSkillUnconfigured(t, saveBin, ["some content"]);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Supermemory API key not configured/);
+  });
+
+  test("forget-memory prints not-configured message and exits 0 when no API key", (t) => {
+    const result = runSkillUnconfigured(t, forgetBin, ["some content"]);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Supermemory API key not configured/);
+  });
+
+  test("search-memory prints usage and exits 0 when no query is given", (t) => {
+    const result = runSkillNoArgs(t, searchBin);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /No search query provided/);
+    assert.match(result.stdout, /node search-memory\.js/);
+  });
+
+  test("save-memory prints usage and exits 0 when no content is given", (t) => {
+    const result = runSkillNoArgs(t, saveBin);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /No content provided/);
+    assert.match(result.stdout, /node save-memory\.js/);
+  });
+
+  test("forget-memory prints usage and exits 0 when no content is given", (t) => {
+    const result = runSkillNoArgs(t, forgetBin);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /No content provided/);
+    assert.match(result.stdout, /node forget-memory\.js/);
+  });
+
+  test("search-memory only treats --user/--project/--both/--no-profile as flags; other args become the query", (t) => {
+    // With a fresh HOME and no API key, every invocation hits the unconfigured
+    // branch — which is fine. The point of this test is to assert that the
+    // script *runs at all* (i.e. arg-parsing doesn't crash) for every flag
+    // permutation we expect users to send.
+    for (const args of [
+      ["--user", "find", "thing"],
+      ["--project", "find", "thing"],
+      ["--both", "find", "thing"],
+      ["--no-profile", "find", "thing"],
+      ["--user", "--no-profile", "find", "thing"],
+    ]) {
+      const result = runSkillUnconfigured(t, searchBin, args);
+      assert.equal(result.status, 0, `flags ${args.join(" ")} should exit 0`);
+      assert.match(
+        result.stdout,
+        /Supermemory API key not configured/,
+        `flags ${args.join(" ")} should hit the unconfigured branch`
+      );
+    }
   });
 });

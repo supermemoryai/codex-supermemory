@@ -32,6 +32,14 @@ const CODEX_HOOKS_JSON = join(CODEX_DIR, "hooks.json");
 const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
 const CAPTURE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
+const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
+
+// Skill metadata — single source of truth for install/uninstall/status.
+const SKILLS = [
+  { name: "supermemory-search", script: "search-memory.js" },
+  { name: "supermemory-save", script: "save-memory.js" },
+  { name: "supermemory-forget", script: "forget-memory.js" },
+] as const;
 
 const SCRIPT_DIR = getScriptDir();
 const DIST_HOOKS_DIR = join(SCRIPT_DIR, "hooks");
@@ -57,12 +65,15 @@ function mergeConfigToml(enable: boolean) {
     }
   }
 
+  // Toggle the codex_hooks feature flag.
   if (!config.features) config.features = {};
   const features = config.features as Record<string, unknown>;
   if (enable) {
     features.codex_hooks = true;
   } else {
     delete features.codex_hooks;
+    // Drop the empty [features] section to keep config.toml clean.
+    if (Object.keys(features).length === 0) delete config.features;
   }
 
   writeFileSync(CODEX_CONFIG_TOML, TOML.stringify(config as TOML.JsonMap));
@@ -210,9 +221,24 @@ function install() {
 
   copyFileSync(recallSrc, RECALL_SCRIPT);
   copyFileSync(captureSrc, CAPTURE_SCRIPT);
-  console.log(`✓ Hook scripts installed to ${SUPERMEMORY_HOOKS_DIR}`);
 
-  // Merge config.toml
+  // Copy skill scripts and SKILL.md files
+  for (const { name, script } of SKILLS) {
+    copyFileSync(
+      join(SCRIPT_DIR, "skills", script),
+      join(SUPERMEMORY_HOOKS_DIR, script)
+    );
+    const skillDir = join(CODEX_SKILLS_DIR, name);
+    mkdirSync(skillDir, { recursive: true });
+    copyFileSync(
+      join(SCRIPT_DIR, "skills", name, "SKILL.md"),
+      join(skillDir, "SKILL.md")
+    );
+  }
+  console.log(`✓ Installed hook and skill scripts to ${SUPERMEMORY_HOOKS_DIR}`);
+  console.log(`✓ Installed skills to ${CODEX_SKILLS_DIR}`);
+
+  // Merge config.toml (hooks feature flag)
   mergeConfigToml(true);
   console.log(`✓ Enabled codex_hooks in ${CODEX_CONFIG_TOML}`);
 
@@ -222,6 +248,10 @@ function install() {
 
   console.log(`
 Installation complete!
+
+You now have:
+  • Implicit memory — auto-recall on every prompt, auto-capture on session end
+  • Explicit memory — supermemory-search, supermemory-save, and supermemory-forget skills
 
 Next steps:
   1. Add your API key to your shell profile:
@@ -249,6 +279,15 @@ function uninstall() {
     rmSync(SUPERMEMORY_HOOKS_DIR, { recursive: true, force: true });
     console.log(`✓ Removed ${SUPERMEMORY_HOOKS_DIR}`);
   }
+
+  // Remove skill directories
+  for (const { name } of SKILLS) {
+    const skillDir = join(CODEX_SKILLS_DIR, name);
+    if (existsSync(skillDir)) {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
+  }
+  console.log(`✓ Removed skills from ${CODEX_SKILLS_DIR}`);
 
   console.log("\ncodex-supermemory uninstalled.");
 }
@@ -278,13 +317,18 @@ function status() {
     }
   }
 
+  const skillsInstalled = SKILLS.every(({ name }) =>
+    existsSync(join(CODEX_SKILLS_DIR, name, "SKILL.md"))
+  );
+
   console.log("codex-supermemory status:\n");
   console.log(`  API key:       ${apiKey ? "✓ set (SUPERMEMORY_CODEX_API_KEY)" : "✗ not set"}`);
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
-  console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered" : "✗ not registered"}`);
+  console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
+  console.log(`  Skills:        ${skillsInstalled ? `✓ installed (${SKILLS.map(s => s.name).join(", ")})` : "✗ not installed"}`);
   console.log(`  config.toml:   ${configTomlExists ? "✓ exists" : "✗ not found"}`);
 
-  if (!apiKey || !hooksInstalled || !hooksEnabled) {
+  if (!apiKey || !hooksInstalled || !hooksEnabled || !skillsInstalled) {
     console.log("\nRun `npx codex-supermemory install` to set up.");
   } else {
     console.log("\nAll good! Memory is active.");
