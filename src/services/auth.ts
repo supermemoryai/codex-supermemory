@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 
 const SUPERMEMORY_DIR = join(homedir(), ".codex", "supermemory");
 const CREDENTIALS_FILE = join(SUPERMEMORY_DIR, "credentials.json");
@@ -51,10 +52,11 @@ export function loadCredentials(): string | undefined {
 }
 
 function saveCredentials(apiKey: string): void {
-  mkdirSync(SUPERMEMORY_DIR, { recursive: true });
+  mkdirSync(SUPERMEMORY_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(
     CREDENTIALS_FILE,
-    JSON.stringify({ apiKey, savedAt: new Date().toISOString() }, null, 2)
+    JSON.stringify({ apiKey, savedAt: new Date().toISOString() }, null, 2),
+    { mode: 0o600 }
   );
 }
 
@@ -72,11 +74,19 @@ function openBrowser(url: string): void {
 export function startAuthFlow(): Promise<string> {
   return new Promise((resolve, reject) => {
     let resolved = false;
+    const stateToken = randomBytes(16).toString("hex");
 
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       const url = new URL(req.url || "/", `http://localhost:${AUTH_PORT}`);
 
       if (url.pathname === "/callback") {
+        const callbackState = url.searchParams.get("state");
+        if (callbackState !== stateToken) {
+          res.writeHead(403, { "Content-Type": "text/html" });
+          res.end(AUTH_ERROR_HTML);
+          return;
+        }
+
         const apiKey =
           url.searchParams.get("apikey") || url.searchParams.get("api_key");
 
@@ -85,6 +95,7 @@ export function startAuthFlow(): Promise<string> {
           res.writeHead(200, { "Content-Type": "text/html" });
           res.end(AUTH_SUCCESS_HTML);
           resolved = true;
+          clearTimeout(timer);
           server.close();
           resolve(apiKey);
         } else {
@@ -99,17 +110,18 @@ export function startAuthFlow(): Promise<string> {
 
     server.listen(AUTH_PORT, "127.0.0.1", () => {
       const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-      const authUrl = `${AUTH_BASE_URL}?callback=${encodeURIComponent(callbackUrl)}&client=codex`;
+      const authUrl = `${AUTH_BASE_URL}?callback=${encodeURIComponent(callbackUrl)}&client=codex&state=${stateToken}`;
       openBrowser(authUrl);
     });
 
     server.on("error", (err) => {
       if (!resolved) {
+        clearTimeout(timer);
         reject(new Error(`Failed to start auth server: ${err.message}`));
       }
     });
 
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (!resolved) {
         server.close();
         reject(new Error("AUTH_TIMEOUT"));
