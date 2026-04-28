@@ -6,6 +6,7 @@ import {
   copyFileSync,
   rmSync,
 } from "node:fs";
+import { loadCredentials } from "./services/auth.js";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -296,7 +297,15 @@ function uninstall() {
 }
 
 function status() {
-  const apiKey = process.env.SUPERMEMORY_CODEX_API_KEY;
+  const envApiKey = process.env.SUPERMEMORY_CODEX_API_KEY;
+  const credentialsApiKey = !envApiKey ? loadCredentials() : undefined;
+  const apiKey = envApiKey || credentialsApiKey;
+  const apiKeySource = envApiKey
+    ? "SUPERMEMORY_CODEX_API_KEY env var"
+    : credentialsApiKey
+    ? "credentials file (~/.codex/supermemory/credentials.json)"
+    : null;
+
   const hooksInstalled = existsSync(RECALL_SCRIPT) && existsSync(CAPTURE_SCRIPT);
   const hooksJsonExists = existsSync(CODEX_HOOKS_JSON);
   const configTomlExists = existsSync(CODEX_CONFIG_TOML);
@@ -325,7 +334,7 @@ function status() {
   );
 
   console.log("codex-supermemory status:\n");
-  console.log(`  API key:       ${apiKey ? "✓ set (SUPERMEMORY_CODEX_API_KEY)" : "✗ not set"}`);
+  console.log(`  API key:       ${apiKey ? `✓ set (${apiKeySource})` : "✗ not set"}`);
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
   console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
   console.log(`  Skills:        ${skillsInstalled ? `✓ installed (${SKILLS.map(s => s.name).join(", ")})` : "✗ not installed"}`);

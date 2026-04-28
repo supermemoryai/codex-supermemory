@@ -1,5 +1,5 @@
-import { readFileSync, existsSync, writeFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { isConfigured, CONFIG, reloadApiKey } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
@@ -46,6 +46,7 @@ async function main() {
 
     if (!alreadyAttempted) {
       try {
+        mkdirSync(dirname(AUTH_ATTEMPTED_FILE), { recursive: true });
         writeFileSync(AUTH_ATTEMPTED_FILE, new Date().toISOString());
       } catch {}
 
