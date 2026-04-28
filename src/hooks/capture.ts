@@ -1,10 +1,38 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { isConfigured } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
-import { stripPrivateContent } from "../services/privacy.js";
+import { stripPrivateContent, cleanContent } from "../services/privacy.js";
 import { log } from "../services/logger.js";
 import type { ConversationMessage } from "../types/index.js";
+
+const SESSION_TRACKER =
+  process.env.SUPERMEMORY_SESSION_TRACKER ?? join(homedir(), ".codex-supermemory-sessions.json");
+
+function simpleHash(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  }
+  return h.toString(36);
+}
+
+function loadSessionTracker(): Record<string, string> {
+  try {
+    if (existsSync(SESSION_TRACKER)) {
+      return JSON.parse(readFileSync(SESSION_TRACKER, "utf-8")) as Record<string, string>;
+    }
+  } catch {}
+  return {};
+}
+
+function saveSessionTracker(tracker: Record<string, string>): void {
+  try {
+    writeFileSync(SESSION_TRACKER, JSON.stringify(tracker, null, 2));
+  } catch {}
+}
 
 // Actual fields sent by Codex in the Stop hook payload (StopCommandInput in Codex source).
 // There is no `messages` field — conversation is available via transcript_path.
@@ -46,14 +74,15 @@ function parseTranscript(transcriptPath: string): ConversationMessage[] {
         const role = entry.role ?? entry.message?.role;
         const content = entry.content ?? entry.message?.content;
         if (role && content !== undefined) {
-          const text =
-            typeof content === "string"
-              ? content
-              : JSON.stringify(content);
-          messages.push({
-            role: role as ConversationMessage["role"],
-            content: stripPrivateContent(text),
-          });
+          const raw =
+            typeof content === "string" ? content : JSON.stringify(content);
+          const text = cleanContent(stripPrivateContent(raw));
+          if (text) {
+            messages.push({
+              role: role as ConversationMessage["role"],
+              content: text,
+            });
+          }
         }
       } catch {
         // skip malformed lines
@@ -90,19 +119,27 @@ async function main() {
   const cwd = payload.cwd || process.cwd();
   const tags = getTags(cwd);
 
+  const tracker = loadSessionTracker();
   let messages: ConversationMessage[] = [];
+  let newLamHash: string | undefined;
 
   // Prefer the full transcript file when available.
   if (payload.transcript_path && existsSync(payload.transcript_path)) {
     messages = parseTranscript(payload.transcript_path);
   } else if (payload.last_assistant_message) {
-    // Fallback: capture just the last assistant turn.
-    messages = [
-      {
-        role: "assistant",
-        content: stripPrivateContent(payload.last_assistant_message),
-      },
-    ];
+    // Fallback: no transcript file — capture the last assistant turn.
+    // Use a content hash to avoid re-ingesting the same message on repeated hook calls.
+    const lamKey = `${sessionId}_lam`;
+    const currentHash = simpleHash(payload.last_assistant_message);
+    if (currentHash !== tracker[lamKey]) {
+      messages = [
+        {
+          role: "assistant",
+          content: cleanContent(stripPrivateContent(payload.last_assistant_message)),
+        },
+      ];
+      newLamHash = currentHash;
+    }
   }
 
   if (messages.length === 0) {
@@ -121,6 +158,11 @@ async function main() {
       [tags.project, tags.user]
     );
     log("capture: done", { sessionId, success: result.success });
+
+    if (result.success && newLamHash !== undefined) {
+      tracker[`${sessionId}_lam`] = newLamHash;
+      saveSessionTracker(tracker);
+    }
   } catch (error) {
     log("capture: error", { error: String(error) });
   }
