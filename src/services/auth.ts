@@ -1,17 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, hostname, platform, arch } from "node:os";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import type { AddressInfo } from "node:net";
 
 const SUPERMEMORY_DIR = join(homedir(), ".codex", "supermemory");
 const CREDENTIALS_FILE = join(SUPERMEMORY_DIR, "credentials.json");
 
 const AUTH_BASE_URL =
-  process.env.SUPERMEMORY_AUTH_URL || "https://app.supermemory.ai/auth/connect";
-const AUTH_PORT = 19877; // different from claude plugin's 19876
-const AUTH_TIMEOUT = 25_000;
+  process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/agent-connect";
+const AUTH_TIMEOUT = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT) || 60_000;
 
 const AUTH_SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><title>Connected - Supermemory</title><style>
@@ -77,7 +77,7 @@ export function startAuthFlow(): Promise<string> {
     const stateToken = randomBytes(16).toString("hex");
 
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-      const url = new URL(req.url || "/", `http://localhost:${AUTH_PORT}`);
+      const url = new URL(req.url || "/", "http://localhost");
 
       if (url.pathname === "/callback") {
         const callbackState = url.searchParams.get("state");
@@ -108,9 +108,20 @@ export function startAuthFlow(): Promise<string> {
       }
     });
 
-    server.listen(AUTH_PORT, "127.0.0.1", () => {
-      const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-      const authUrl = `${AUTH_BASE_URL}?callback=${encodeURIComponent(callbackUrl)}&client=codex&state=${stateToken}`;
+    // Listen on an ephemeral port to avoid conflicts; embed the state token in
+    // the callback URL so the console redirects it back through the redirect.
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      const callbackUrl = `http://localhost:${port}/callback?state=${stateToken}`;
+      const params = new URLSearchParams({
+        callback: callbackUrl,
+        client: "codex",
+        hostname: hostname(),
+        os: `${platform()}-${arch()}`,
+        cwd: process.cwd(),
+        cli_version: "1.0.0",
+      });
+      const authUrl = `${AUTH_BASE_URL}?${params.toString()}`;
       openBrowser(authUrl);
     });
 

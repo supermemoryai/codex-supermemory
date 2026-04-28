@@ -236,21 +236,18 @@ describe("integration: install/uninstall", () => {
 describe("recall hook output envelope", () => {
   const recallBin = new URL("../dist/hooks/recall.js", import.meta.url).pathname;
 
-  // Helper: run recall hook with an isolated HOME so the .auth-attempted file is
-  // writable. Without this, the recall hook cannot persist the "already attempted"
-  // marker (directory doesn't exist), causing every no-key invocation to spin up a
-  // 25-second browser auth flow and timing out — making tests extremely slow.
+  // Helper: run recall hook with an isolated HOME and a short auth timeout so
+  // the first-invocation browser flow times out in 2s rather than 60s.
   function runRecallUnconfigured(t, input) {
     const tmpDir = makeTmpDir();
     mkdirSync(join(tmpDir, ".codex", "supermemory"), { recursive: true });
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     return spawnSync("node", [recallBin], {
       input,
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      // Use a 2s auth timeout so the browser flow times out quickly in CI.
+      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "", SUPERMEMORY_AUTH_TIMEOUT: "2000" },
       encoding: "utf-8",
-      // Generous timeout: first invocation writes .auth-attempted then times out
-      // after AUTH_TIMEOUT (25s). Set timeout slightly above that.
-      timeout: 30_000,
+      timeout: 5_000,
     });
   }
 
