@@ -4,10 +4,11 @@ import { getProjectTag } from "../services/tags.js";
 
 async function main(): Promise<void> {
   if (!isConfigured()) {
-    console.log(
-      "Supermemory API key not configured. Set SUPERMEMORY_CODEX_API_KEY environment variable."
+    console.error(
+      "Supermemory is not authenticated.\n" +
+      "Run /supermemory-login to connect, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
     );
-    process.exit(0);
+    process.exit(1);
   }
 
   const content = process.argv.slice(2).join(" ");

@@ -39,6 +39,7 @@ const SKILLS = [
   { name: "supermemory-search", script: "search-memory.js" },
   { name: "supermemory-save", script: "save-memory.js" },
   { name: "supermemory-forget", script: "forget-memory.js" },
+  { name: "supermemory-login", script: "login.js" },
 ] as const;
 
 const SCRIPT_DIR = getScriptDir();
@@ -251,15 +252,17 @@ Installation complete!
 
 You now have:
   • Implicit memory — auto-recall on every prompt, auto-capture on session end
-  • Explicit memory — supermemory-search, supermemory-save, and supermemory-forget skills
+  • Explicit memory — supermemory-search, supermemory-save, supermemory-forget, and supermemory-login skills
 
 Next steps:
-  1. Add your API key to your shell profile:
-     export SUPERMEMORY_CODEX_API_KEY="sm_..."
+  1. Start Codex — on your first prompt, a browser window will open to
+     authenticate with Supermemory automatically.
 
-  2. Get your API key at: https://console.supermemory.ai/keys
+  Or authenticate manually:
+     /supermemory-login      (inside Codex)
+     export SUPERMEMORY_CODEX_API_KEY="sm_..."   (in your shell profile)
 
-  3. Restart Codex CLI to activate memory.
+  2. Get an API key at: https://console.supermemory.ai/keys (if needed)
 
 Optional: Enable debug logging:
   export SUPERMEMORY_DEBUG=true

@@ -1,9 +1,14 @@
-import { readFileSync } from "node:fs";
-import { isConfigured, CONFIG } from "../config.js";
+import { readFileSync, existsSync, writeFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { isConfigured, CONFIG, reloadApiKey } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatContextForPrompt } from "../services/context.js";
 import { log } from "../services/logger.js";
+import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
+
+const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 
 interface CodexHookPayload {
   session_id?: string;
@@ -37,7 +42,37 @@ async function main() {
   }
 
   if (!isConfigured()) {
-    exitWithContext("");
+    const alreadyAttempted = existsSync(AUTH_ATTEMPTED_FILE);
+
+    if (!alreadyAttempted) {
+      try {
+        writeFileSync(AUTH_ATTEMPTED_FILE, new Date().toISOString());
+      } catch {}
+
+      try {
+        log("recall: no API key, starting browser auth flow");
+        await startAuthFlow();
+        reloadApiKey();
+        try { unlinkSync(AUTH_ATTEMPTED_FILE); } catch {}
+        log("recall: auth flow completed");
+      } catch (authErr) {
+        const isTimeout =
+          authErr instanceof Error && authErr.message === "AUTH_TIMEOUT";
+        exitWithContext(
+          "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
+          (isTimeout
+            ? "Authentication timed out. Please complete login in the browser.\n"
+            : "Authentication failed.\n") +
+          `If the browser did not open, visit: ${AUTH_BASE_URL}\n` +
+          "Run /supermemory-login to try again, or set SUPERMEMORY_CODEX_API_KEY manually."
+        );
+      }
+    } else {
+      exitWithContext(
+        "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
+        "Run /supermemory-login to authenticate, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
+      );
+    }
   }
 
   let payload: CodexHookPayload = {};

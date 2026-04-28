@@ -35,10 +35,11 @@ function parseArgs(args: string[]): ParsedArgs {
 
 async function main(): Promise<void> {
   if (!isConfigured()) {
-    console.log(
-      "Supermemory API key not configured. Set SUPERMEMORY_CODEX_API_KEY environment variable."
+    console.error(
+      "Supermemory is not authenticated.\n" +
+      "Run /supermemory-login to connect, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
     );
-    process.exit(0);
+    process.exit(1);
   }
 
   const { scope, includeProfile, query } = parseArgs(process.argv.slice(2));
