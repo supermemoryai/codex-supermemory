@@ -105,6 +105,10 @@ async function main() {
   }
 
   if (!isConfigured()) {
+    process.stderr.write(
+      "[supermemory] Session NOT saved — API key missing. " +
+      "Run: export SUPERMEMORY_CODEX_API_KEY=\"sm_...\"\n"
+    );
     process.exit(0);
   }
 

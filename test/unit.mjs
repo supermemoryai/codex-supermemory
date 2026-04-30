@@ -187,7 +187,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(result.status, 0, `install should exit 0: ${result.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget"]) {
+    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-login"]) {
       const skillMd = join(skillsDir, skillName, "SKILL.md");
       assert.ok(existsSync(skillMd), `${skillName}/SKILL.md should exist`);
       const content = readFileSync(skillMd, "utf-8");
@@ -207,7 +207,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(uninstallResult.status, 0, `uninstall should exit 0: ${uninstallResult.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget"]) {
+    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-login"]) {
       assert.ok(
         !existsSync(join(skillsDir, skillName)),
         `${skillName} skill dir should be removed`
@@ -236,12 +236,23 @@ describe("integration: install/uninstall", () => {
 describe("recall hook output envelope", () => {
   const recallBin = new URL("../dist/hooks/recall.js", import.meta.url).pathname;
 
-  test("outputs hookSpecificOutput envelope when not configured", () => {
-    const result = spawnSync("node", [recallBin], {
-      input: JSON.stringify({ session_id: "s1", prompt: "hello" }),
-      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
+  // Helper: run recall hook with an isolated HOME and a short auth timeout so
+  // the first-invocation browser flow times out in 2s rather than 60s.
+  function runRecallUnconfigured(t, input) {
+    const tmpDir = makeTmpDir();
+    mkdirSync(join(tmpDir, ".codex", "supermemory"), { recursive: true });
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    return spawnSync("node", [recallBin], {
+      input,
+      // Use a 2s auth timeout so the browser flow times out quickly in CI.
+      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "", SUPERMEMORY_AUTH_TIMEOUT: "2000" },
       encoding: "utf-8",
+      timeout: 5_000,
     });
+  }
+
+  test("outputs hookSpecificOutput envelope when not configured", (t) => {
+    const result = runRecallUnconfigured(t, JSON.stringify({ session_id: "s1", prompt: "hello" }));
     const parsed = JSON.parse(result.stdout);
     assert.ok("hookSpecificOutput" in parsed, "must have hookSpecificOutput key");
     assert.equal(parsed.hookSpecificOutput.hookEventName, "UserPromptSubmit");
@@ -269,20 +280,35 @@ describe("recall hook output envelope", () => {
     assert.equal(parsed.hookSpecificOutput.hookEventName, "UserPromptSubmit");
   });
 
-  test("never outputs bare additionalContext at top level (old wrong shape)", () => {
+  test("never outputs bare additionalContext at top level (old wrong shape)", (t) => {
+    // When .auth-attempted already exists (second invocation), the hook exits quickly.
+    // Create it ahead of time so this test doesn't incur the 25s auth timeout.
+    const tmpDir = makeTmpDir();
+    const supermemoryDir = join(tmpDir, ".codex", "supermemory");
+    mkdirSync(supermemoryDir, { recursive: true });
+    writeFileSync(join(supermemoryDir, ".auth-attempted"), new Date().toISOString());
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
     const result = spawnSync("node", [recallBin], {
       input: JSON.stringify({ prompt: "test" }),
-      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
+      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
     const parsed = JSON.parse(result.stdout);
     assert.ok(!("additionalContext" in parsed), "must NOT have top-level additionalContext");
   });
 
-  test("exits with code 0", () => {
+  test("exits with code 0", (t) => {
+    // Pre-create .auth-attempted so the hook returns quickly without the 25s timeout.
+    const tmpDir = makeTmpDir();
+    const supermemoryDir = join(tmpDir, ".codex", "supermemory");
+    mkdirSync(supermemoryDir, { recursive: true });
+    writeFileSync(join(supermemoryDir, ".auth-attempted"), new Date().toISOString());
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
     const result = spawnSync("node", [recallBin], {
       input: JSON.stringify({ prompt: "test" }),
-      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
+      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
     assert.equal(result.status, 0);
@@ -393,23 +419,23 @@ describe("skill scripts: search/save/forget", () => {
     });
   }
 
-  test("search-memory prints not-configured message and exits 0 when no API key", (t) => {
+  test("search-memory prints not-configured message and exits 1 when no API key", (t) => {
     const result = runSkillUnconfigured(t, searchBin, ["hello"]);
-    assert.equal(result.status, 0);
-    assert.match(result.stdout, /Supermemory API key not configured/);
-    assert.match(result.stdout, /SUPERMEMORY_CODEX_API_KEY/);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Supermemory is not authenticated/);
+    assert.match(result.stderr, /supermemory-login/);
   });
 
-  test("save-memory prints not-configured message and exits 0 when no API key", (t) => {
+  test("save-memory prints not-configured message and exits 1 when no API key", (t) => {
     const result = runSkillUnconfigured(t, saveBin, ["some content"]);
-    assert.equal(result.status, 0);
-    assert.match(result.stdout, /Supermemory API key not configured/);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Supermemory is not authenticated/);
   });
 
-  test("forget-memory prints not-configured message and exits 0 when no API key", (t) => {
+  test("forget-memory prints not-configured message and exits 1 when no API key", (t) => {
     const result = runSkillUnconfigured(t, forgetBin, ["some content"]);
-    assert.equal(result.status, 0);
-    assert.match(result.stdout, /Supermemory API key not configured/);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Supermemory is not authenticated/);
   });
 
   test("search-memory prints usage and exits 0 when no query is given", (t) => {
@@ -446,10 +472,10 @@ describe("skill scripts: search/save/forget", () => {
       ["--user", "--no-profile", "find", "thing"],
     ]) {
       const result = runSkillUnconfigured(t, searchBin, args);
-      assert.equal(result.status, 0, `flags ${args.join(" ")} should exit 0`);
+      assert.equal(result.status, 1, `flags ${args.join(" ")} should exit 1 when unconfigured`);
       assert.match(
-        result.stdout,
-        /Supermemory API key not configured/,
+        result.stderr,
+        /Supermemory is not authenticated/,
         `flags ${args.join(" ")} should hit the unconfigured branch`
       );
     }

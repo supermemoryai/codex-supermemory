@@ -6,6 +6,7 @@ import {
   copyFileSync,
   rmSync,
 } from "node:fs";
+import { loadCredentials } from "./services/auth.js";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -39,6 +40,7 @@ const SKILLS = [
   { name: "supermemory-search", script: "search-memory.js" },
   { name: "supermemory-save", script: "save-memory.js" },
   { name: "supermemory-forget", script: "forget-memory.js" },
+  { name: "supermemory-login", script: "login.js" },
 ] as const;
 
 const SCRIPT_DIR = getScriptDir();
@@ -251,15 +253,17 @@ Installation complete!
 
 You now have:
   • Implicit memory — auto-recall on every prompt, auto-capture on session end
-  • Explicit memory — supermemory-search, supermemory-save, and supermemory-forget skills
+  • Explicit memory — supermemory-search, supermemory-save, supermemory-forget, and supermemory-login skills
 
 Next steps:
-  1. Add your API key to your shell profile:
-     export SUPERMEMORY_CODEX_API_KEY="sm_..."
+  1. Start Codex — on your first prompt, a browser window will open to
+     authenticate with Supermemory automatically.
 
-  2. Get your API key at: https://console.supermemory.ai/keys
+  Or authenticate manually:
+     /supermemory-login      (inside Codex)
+     export SUPERMEMORY_CODEX_API_KEY="sm_..."   (in your shell profile)
 
-  3. Restart Codex CLI to activate memory.
+  2. Get an API key at: https://console.supermemory.ai/keys (if needed)
 
 Optional: Enable debug logging:
   export SUPERMEMORY_DEBUG=true
@@ -293,7 +297,15 @@ function uninstall() {
 }
 
 function status() {
-  const apiKey = process.env.SUPERMEMORY_CODEX_API_KEY;
+  const envApiKey = process.env.SUPERMEMORY_CODEX_API_KEY;
+  const credentialsApiKey = !envApiKey ? loadCredentials() : undefined;
+  const apiKey = envApiKey || credentialsApiKey;
+  const apiKeySource = envApiKey
+    ? "SUPERMEMORY_CODEX_API_KEY env var"
+    : credentialsApiKey
+    ? "credentials file (~/.codex/supermemory/credentials.json)"
+    : null;
+
   const hooksInstalled = existsSync(RECALL_SCRIPT) && existsSync(CAPTURE_SCRIPT);
   const hooksJsonExists = existsSync(CODEX_HOOKS_JSON);
   const configTomlExists = existsSync(CODEX_CONFIG_TOML);
@@ -322,7 +334,7 @@ function status() {
   );
 
   console.log("codex-supermemory status:\n");
-  console.log(`  API key:       ${apiKey ? "✓ set (SUPERMEMORY_CODEX_API_KEY)" : "✗ not set"}`);
+  console.log(`  API key:       ${apiKey ? `✓ set (${apiKeySource})` : "✗ not set"}`);
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
   console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
   console.log(`  Skills:        ${skillsInstalled ? `✓ installed (${SKILLS.map(s => s.name).join(", ")})` : "✗ not installed"}`);

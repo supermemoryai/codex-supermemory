@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { loadCredentials } from "./services/auth.js";
 
 const CONFIG_FILE = join(homedir(), ".codex", "supermemory.json");
 
@@ -45,10 +46,14 @@ const fileConfig = loadConfig();
 function getApiKey(): string | undefined {
   if (process.env.SUPERMEMORY_CODEX_API_KEY) return process.env.SUPERMEMORY_CODEX_API_KEY;
   if (fileConfig.apiKey) return fileConfig.apiKey;
-  return undefined;
+  return loadCredentials();
 }
 
-export const SUPERMEMORY_API_KEY = getApiKey();
+export let SUPERMEMORY_API_KEY = getApiKey();
+
+export function reloadApiKey(): void {
+  SUPERMEMORY_API_KEY = getApiKey();
+}
 
 export const CONFIG = {
   similarityThreshold: fileConfig.similarityThreshold ?? DEFAULTS.similarityThreshold,
@@ -64,4 +69,8 @@ export const CONFIG = {
 
 export function isConfigured(): boolean {
   return !!SUPERMEMORY_API_KEY;
+}
+
+export function getApiKeyValue(): string | undefined {
+  return SUPERMEMORY_API_KEY;
 }

@@ -16,7 +16,7 @@ const entries = [
     in: `src/hooks/${n}.ts`,
     out: `dist/hooks/${n}.js`,
   })),
-  ...["search-memory", "save-memory", "forget-memory"].map((n) => ({
+  ...["search-memory", "save-memory", "forget-memory", "login"].map((n) => ({
     in: `src/skills/${n}.ts`,
     out: `dist/skills/${n}.js`,
   })),
@@ -34,7 +34,7 @@ await Promise.all(
 );
 
 // Copy SKILL.md files to dist
-for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget"]) {
+for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-login"]) {
   mkdirSync(`dist/skills/${skillName}`, { recursive: true });
   copyFileSync(
     `src/skills/${skillName}/SKILL.md`,
