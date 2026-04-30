@@ -34,6 +34,8 @@ const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
 const CAPTURE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
+const RECALL_TIMEOUT_SECONDS = 90;
+const CAPTURE_TIMEOUT_SECONDS = 60;
 
 // Skill metadata — single source of truth for install/uninstall/status.
 const SKILLS = [
@@ -95,10 +97,36 @@ interface MatcherGroup {
   hooks: HookEntry[];
 }
 
-interface HooksJson {
+interface HookEvents {
   UserPromptSubmit?: MatcherGroup[];
   Stop?: MatcherGroup[];
   [key: string]: MatcherGroup[] | undefined;
+}
+
+interface HooksJson {
+  hooks?: HookEvents;
+}
+
+function normalizeHookEvents(raw: unknown): HookEvents {
+  if (!raw || typeof raw !== "object") return {};
+
+  const maybeWrapped = raw as HooksJson & HookEvents;
+  // Codex expects hooks.json to contain a top-level `hooks` object. Older
+  // codex-supermemory versions accidentally wrote event keys at the root, so
+  // accept both shapes and always write back the documented one.
+  const events =
+    maybeWrapped.hooks && typeof maybeWrapped.hooks === "object"
+      ? maybeWrapped.hooks
+      : (maybeWrapped as HookEvents);
+
+  for (const key of ["UserPromptSubmit", "Stop"] as const) {
+    const val = events[key];
+    if (val !== undefined && !Array.isArray(val)) {
+      events[key] = [val as unknown as MatcherGroup];
+    }
+  }
+
+  return events;
 }
 
 function mergeHooksJson(add: boolean) {
@@ -107,25 +135,13 @@ function mergeHooksJson(add: boolean) {
     return;
   }
 
-  let hooks: HooksJson = {};
+  let hooks: HookEvents = {};
   if (existsSync(CODEX_HOOKS_JSON)) {
     try {
       const content = readFileSync(CODEX_HOOKS_JSON, "utf-8");
-      hooks = JSON.parse(content) as HooksJson;
+      hooks = normalizeHookEvents(JSON.parse(content));
     } catch {
       // start fresh
-    }
-  }
-
-  // Normalize event arrays: older hooks.json files (or hand-written configs) may
-  // store the UserPromptSubmit/Stop values as a plain object `{ hooks: [] }` rather
-  // than the array-of-MatcherGroups format that Codex expects.  Convert those to a
-  // single-element array so the rest of the merge logic can work safely.
-  for (const key of ["UserPromptSubmit", "Stop"] as const) {
-    const val = hooks[key];
-    if (val !== undefined && !Array.isArray(val)) {
-      // Wrap the stray object in an array — preserve any hooks it already contains.
-      hooks[key] = [val as unknown as MatcherGroup];
     }
   }
 
@@ -139,13 +155,22 @@ function mergeHooksJson(add: boolean) {
     const hasRecall = hooks.UserPromptSubmit.some((g) =>
       g.hooks.some((h) => h.command === recallCmd)
     );
-    if (!hasRecall) {
+    if (hasRecall) {
+      for (const group of hooks.UserPromptSubmit) {
+        for (const hook of group.hooks) {
+          if (hook.command === recallCmd) {
+            hook.timeout = RECALL_TIMEOUT_SECONDS;
+            hook.statusMessage = "Searching memories...";
+          }
+        }
+      }
+    } else {
       const globalGroup = hooks.UserPromptSubmit.find((g) => !g.matcher);
       if (globalGroup) {
         globalGroup.hooks.push({
           type: "command",
           command: recallCmd,
-          timeout: 30,
+          timeout: RECALL_TIMEOUT_SECONDS,
           statusMessage: "Searching memories...",
         });
       } else {
@@ -153,7 +178,7 @@ function mergeHooksJson(add: boolean) {
           hooks: [{
             type: "command",
             command: recallCmd,
-            timeout: 30,
+            timeout: RECALL_TIMEOUT_SECONDS,
             statusMessage: "Searching memories...",
           }],
         });
@@ -166,13 +191,22 @@ function mergeHooksJson(add: boolean) {
     const hasCapture = hooks.Stop.some((g) =>
       g.hooks.some((h) => h.command === captureCmd)
     );
-    if (!hasCapture) {
+    if (hasCapture) {
+      for (const group of hooks.Stop) {
+        for (const hook of group.hooks) {
+          if (hook.command === captureCmd) {
+            hook.timeout = CAPTURE_TIMEOUT_SECONDS;
+            hook.statusMessage = "Saving to memory...";
+          }
+        }
+      }
+    } else {
       const globalGroup = hooks.Stop.find((g) => !g.matcher);
       if (globalGroup) {
         globalGroup.hooks.push({
           type: "command",
           command: captureCmd,
-          timeout: 60,
+          timeout: CAPTURE_TIMEOUT_SECONDS,
           statusMessage: "Saving to memory...",
         });
       } else {
@@ -180,7 +214,7 @@ function mergeHooksJson(add: boolean) {
           hooks: [{
             type: "command",
             command: captureCmd,
-            timeout: 60,
+            timeout: CAPTURE_TIMEOUT_SECONDS,
             statusMessage: "Saving to memory...",
           }],
         });
@@ -204,7 +238,7 @@ function mergeHooksJson(add: boolean) {
     }
   }
 
-  writeFileSync(CODEX_HOOKS_JSON, JSON.stringify(hooks, null, 2));
+  writeFileSync(CODEX_HOOKS_JSON, JSON.stringify({ hooks }, null, 2));
 }
 
 function install() {
@@ -260,7 +294,7 @@ Next steps:
      authenticate with Supermemory automatically.
 
   Or authenticate manually:
-     /supermemory-login      (inside Codex)
+     $supermemory-login      (inside Codex)
      export SUPERMEMORY_CODEX_API_KEY="sm_..."   (in your shell profile)
 
   2. Get an API key at: https://console.supermemory.ai/keys (if needed)
@@ -313,7 +347,7 @@ function status() {
   let hooksEnabled = false;
   if (hooksJsonExists) {
     try {
-      const hooks = JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")) as HooksJson;
+      const hooks = normalizeHookEvents(JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")));
       const recallCmd = `node ${RECALL_SCRIPT}`;
       const captureCmd = `node ${CAPTURE_SCRIPT}`;
       // hooks.json uses array-of-MatcherGroups — check both recall and capture are registered.

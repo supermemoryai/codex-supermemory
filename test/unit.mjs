@@ -320,30 +320,35 @@ describe("recall hook output envelope", () => {
 describe("capture hook Stop payload", () => {
   const captureBin = new URL("../dist/hooks/capture.js", import.meta.url).pathname;
 
-  test("exits 0 with no transcript_path and no last_assistant_message", () => {
-    const result = spawnSync("node", [captureBin], {
-      input: JSON.stringify({ session_id: "s1", transcript_path: null }),
-      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
+  function runCaptureUnconfigured(t, input) {
+    const tmpDir = makeTmpDir();
+    mkdirSync(join(tmpDir, ".codex"), { recursive: true });
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    return spawnSync("node", [captureBin], {
+      input,
+      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
+  }
+
+  test("exits 0 with no transcript_path and no last_assistant_message", (t) => {
+    const result = runCaptureUnconfigured(
+      t,
+      JSON.stringify({ session_id: "s1", transcript_path: null })
+    );
     assert.equal(result.status, 0);
   });
 
-  test("exits 0 when not configured (even with last_assistant_message)", () => {
-    const result = spawnSync("node", [captureBin], {
-      input: JSON.stringify({ session_id: "s1", last_assistant_message: "hello" }),
-      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
-      encoding: "utf-8",
-    });
+  test("exits 0 when not configured (even with last_assistant_message)", (t) => {
+    const result = runCaptureUnconfigured(
+      t,
+      JSON.stringify({ session_id: "s1", last_assistant_message: "hello" })
+    );
     assert.equal(result.status, 0);
   });
 
-  test("exits 0 on malformed JSON input", () => {
-    const result = spawnSync("node", [captureBin], {
-      input: "not-json",
-      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
-      encoding: "utf-8",
-    });
+  test("exits 0 on malformed JSON input", (t) => {
+    const result = runCaptureUnconfigured(t, "not-json");
     assert.equal(result.status, 0);
   });
 
@@ -359,27 +364,25 @@ describe("capture hook Stop payload", () => {
       ].join("\n")
     );
 
-    const result = spawnSync("node", [captureBin], {
-      input: JSON.stringify({
+    const result = runCaptureUnconfigured(
+      t,
+      JSON.stringify({
         session_id: "s1",
         transcript_path: transcriptFile,
         cwd: tmpDir,
-      }),
-      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
-      encoding: "utf-8",
-    });
+      })
+    );
     assert.equal(result.status, 0);
   });
 
-  test("does not crash when transcript_path points to nonexistent file", () => {
-    const result = spawnSync("node", [captureBin], {
-      input: JSON.stringify({
+  test("does not crash when transcript_path points to nonexistent file", (t) => {
+    const result = runCaptureUnconfigured(
+      t,
+      JSON.stringify({
         session_id: "s1",
         transcript_path: "/nonexistent/path/transcript.jsonl",
-      }),
-      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
-      encoding: "utf-8",
-    });
+      })
+    );
     assert.equal(result.status, 0);
   });
 });

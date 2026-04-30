@@ -116,7 +116,7 @@ export function startAuthFlow(): Promise<string> {
       const params = new URLSearchParams({
         callback: callbackUrl,
         client: "codex",
-        hostname: hostname(),
+        hostname: `codex - ${hostname()}`,
         os: `${platform()}-${arch()}`,
         cwd: process.cwd(),
         cli_version: "1.0.0",

@@ -7,11 +7,18 @@ import { getTags } from "../services/tags.js";
 import { formatContextForPrompt } from "../services/context.js";
 import { log } from "../services/logger.js";
 import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
+import {
+  captureConversationDelta,
+  shouldCheckpointPrompt,
+} from "../services/conversation-capture.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 
 interface CodexHookPayload {
   session_id?: string;
+  turn_id?: string;
+  transcript_path?: string | null;
+  cwd?: string;
   prompt?: string;
   input?: string;
   [key: string]: unknown;
@@ -94,12 +101,21 @@ async function main() {
 
   const client = new SupermemoryClient();
 
+  const checkpointPromise =
+    payload.session_id &&
+    shouldCheckpointPrompt(payload.session_id, CONFIG.autoSaveEveryTurns)
+      ? captureConversationDelta(payload, { source: "user-prompt" }).catch((error) => {
+          log("recall: checkpoint error", { error: String(error) });
+        })
+      : Promise.resolve();
+
   try {
     const [searchResult, profileResult] = await Promise.all([
       client.searchMemories(query, tags.project),
       CONFIG.injectProfile
         ? client.getProfile(tags.user, query)
         : Promise.resolve({ success: false as const, profile: null }),
+      checkpointPromise,
     ]);
 
     const context = formatContextForPrompt(

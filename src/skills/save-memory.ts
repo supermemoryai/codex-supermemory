@@ -6,7 +6,7 @@ async function main(): Promise<void> {
   if (!isConfigured()) {
     console.error(
       "Supermemory is not authenticated.\n" +
-      "Run /supermemory-login to connect, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
+      "Use $supermemory-login to connect, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
     );
     process.exit(1);
   }

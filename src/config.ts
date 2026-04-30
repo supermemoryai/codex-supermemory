@@ -16,6 +16,7 @@ interface CodexSupermemoryConfig {
   projectContainerTag?: string;
   filterPrompt?: string;
   debug?: boolean;
+  autoSaveEveryTurns?: number;
 }
 
 const DEFAULTS = {
@@ -27,6 +28,7 @@ const DEFAULTS = {
   filterPrompt:
     "You are a stateful coding agent. Remember all the information, including but not limited to user's coding preferences, tech stack, behaviours, workflows, and any other relevant details.",
   debug: false,
+  autoSaveEveryTurns: 3,
 };
 
 function loadConfig(): CodexSupermemoryConfig {
@@ -65,6 +67,7 @@ export const CONFIG = {
   projectContainerTag: fileConfig.projectContainerTag,
   filterPrompt: fileConfig.filterPrompt ?? DEFAULTS.filterPrompt,
   debug: fileConfig.debug ?? DEFAULTS.debug,
+  autoSaveEveryTurns: fileConfig.autoSaveEveryTurns ?? DEFAULTS.autoSaveEveryTurns,
 };
 
 export function isConfigured(): boolean {

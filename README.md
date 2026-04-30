@@ -83,6 +83,7 @@ Drop this file in to override defaults:
 | `projectContainerTag`    | `string`  | auto (per-cwd) | Override the project container tag.                                                          |
 | `filterPrompt`           | `string`  | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean` | `false`        | Enable debug logging.                                                                        |
+| `autoSaveEveryTurns`     | `number`  | `3`            | Save new transcript messages every N prompts via the prompt hook. Set to `0` to disable periodic checkpoints. |
 
 User and project tags are auto-derived from your `git config user.email` and the
 current working directory (both hashed) when not explicitly set.
