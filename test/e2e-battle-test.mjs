@@ -149,8 +149,9 @@ const hooksJsonPath = join(codexDir, "hooks.json");
 record("hooks.json exists", existsSync(hooksJsonPath));
 if (existsSync(hooksJsonPath)) {
   const hooksJson = JSON.parse(readFileSync(hooksJsonPath, "utf-8"));
-  record("hooks.json has UserPromptSubmit", !!hooksJson.UserPromptSubmit);
-  record("hooks.json has Stop", !!hooksJson.Stop);
+  record("hooks.json has hooks wrapper", !!hooksJson.hooks);
+  record("hooks.json has UserPromptSubmit", !!hooksJson.hooks?.UserPromptSubmit);
+  record("hooks.json has Stop", !!hooksJson.hooks?.Stop);
 }
 
 // config.toml
@@ -401,9 +402,9 @@ record("double install exits 0", doubleInstall.status === 0);
 // Verify no duplicates in hooks.json
 if (existsSync(hooksJsonPath)) {
   const hooksJson = JSON.parse(readFileSync(hooksJsonPath, "utf-8"));
-  const userPromptHooks = hooksJson.UserPromptSubmit || [];
+  const userPromptHooks = hooksJson.hooks?.UserPromptSubmit || [];
   record("no duplicate UserPromptSubmit hooks", userPromptHooks.length === 1, `count: ${userPromptHooks.length}`);
-  const stopHooks = hooksJson.Stop || [];
+  const stopHooks = hooksJson.hooks?.Stop || [];
   record("no duplicate Stop hooks", stopHooks.length === 1, `count: ${stopHooks.length}`);
 }
 

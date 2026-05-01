@@ -1,18 +1,4 @@
-import type { ProfileWithSearchResult } from "./client.js";
-
-interface SearchResult {
-  content?: string;
-  memory?: string;
-  chunk?: string;
-  score?: number;
-  similarity?: number;
-  metadata?: Record<string, unknown> | null;
-}
-
-interface SearchResponse {
-  success: boolean;
-  results?: SearchResult[];
-}
+import type { ProfileWithSearchResult, SearchResponse } from "./client.js";
 
 interface ProfileShape {
   static?: string[];
@@ -47,6 +33,9 @@ function formatProfile(
  * Format context from combined profile+search result.
  * Accepts an optional separate project search result to merge project-scoped
  * memories alongside user-scoped ones from the profile API.
+ *
+ * Memories from both containers are interleaved by alternating picks so that
+ * neither source is entirely crowded out when the total exceeds maxMemories.
  */
 export function formatCombinedContext(
   result: ProfileWithSearchResult,
@@ -63,35 +52,54 @@ export function formatCombinedContext(
     }
   }
 
-  // Merge memories from both user (profile API) and project (search API) containers.
-  // Deduplicate by lowercased content to avoid showing the same memory twice.
+  // Collect memories from both user (profile API) and project (search API)
+  // containers. Deduplicate by id when available, falling back to content.
   const seen = new Set<string>();
-  const allMemories: string[] = [];
 
+  function dedupKey(id: string | undefined, text: string): string {
+    if (id) return `id:${id}`;
+    return `content:${text.toLowerCase().trim()}`;
+  }
+
+  const userMemories: string[] = [];
   if (result.searchResults && result.searchResults.results.length > 0) {
     for (const r of result.searchResults.results) {
       const text = r.memory || "";
-      const key = text.toLowerCase().trim();
+      const key = dedupKey(r.id, text);
       if (key && !seen.has(key)) {
         seen.add(key);
-        allMemories.push(text);
+        userMemories.push(text);
       }
     }
   }
 
+  const projectMemories: string[] = [];
   if (projectSearchResult?.success && projectSearchResult.results && projectSearchResult.results.length > 0) {
     for (const r of projectSearchResult.results) {
       const text = r.memory ?? r.chunk ?? r.content ?? "";
-      const key = text.toLowerCase().trim();
+      const key = dedupKey(r.id, text);
       if (key && !seen.has(key)) {
         seen.add(key);
-        allMemories.push(text);
+        projectMemories.push(text);
       }
+    }
+  }
+
+  // Interleave user and project memories so neither source is dropped when
+  // the total exceeds maxMemories. Alternate picks: user, project, user, …
+  const allMemories: string[] = [];
+  let ui = 0;
+  let pi = 0;
+  while (allMemories.length < maxMemories && (ui < userMemories.length || pi < projectMemories.length)) {
+    if (ui < userMemories.length) {
+      allMemories.push(userMemories[ui++]);
+    }
+    if (allMemories.length < maxMemories && pi < projectMemories.length) {
+      allMemories.push(projectMemories[pi++]);
     }
   }
 
   const memories = allMemories
-    .slice(0, maxMemories)
     .map((m, i) => `${i + 1}. ${m}`)
     .filter((m) => m.trim().length > 2)
     .join("\n");
@@ -102,7 +110,10 @@ export function formatCombinedContext(
   return parts.join("\n\n");
 }
 
-// Keep old method for backward compatibility
+/**
+ * Format context from separate search + profile results.
+ * Used by the search-memory skill script which makes its own API calls.
+ */
 export function formatContextForPrompt(
   searchResult: SearchResponse,
   profileResult: ProfileResponse,

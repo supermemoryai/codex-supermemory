@@ -1,5 +1,5 @@
 import { CONFIG, isConfigured } from "../config.js";
-import { SupermemoryClient } from "../services/client.js";
+import { SupermemoryClient, type SearchResponse } from "../services/client.js";
 import { formatContextForPrompt } from "../services/context.js";
 import { getProjectTag, getUserTag } from "../services/tags.js";
 
@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   const projectTag = getProjectTag(process.cwd());
 
   try {
-    let searchResult: Awaited<ReturnType<typeof client.searchMemories>>;
+    let searchResult: SearchResponse;
 
     if (scope === "both") {
       const [userResult, projectResult] = await Promise.all([
@@ -76,11 +76,11 @@ async function main(): Promise<void> {
       ];
 
       searchResult = {
-        success: true as const,
+        success: true,
         results: combinedResults,
         total: combinedResults.length,
         timing: 0,
-      } as Awaited<ReturnType<typeof client.searchMemories>>;
+      };
     } else {
       const tag = scope === "user" ? userTag : projectTag;
       searchResult = await client.searchMemories(query, tag);

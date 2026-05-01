@@ -13,14 +13,27 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(id));
 }
 
-interface SearchResultItem {
+/** Canonical search result item used across the codebase. */
+export interface SearchResultItem {
   id?: string;
   memory?: string;
   content?: string;
-  context?: string;
+  chunk?: string;
+  context?: unknown;
+  score?: number;
   similarity?: number;
   title?: string;
   updatedAt?: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+/** Response shape returned by search APIs. */
+export interface SearchResponse {
+  success: boolean;
+  results?: SearchResultItem[];
+  total?: number;
+  timing?: number;
+  error?: string;
 }
 
 export interface ProfileWithSearchResult {
@@ -57,8 +70,9 @@ export class SupermemoryClient {
   }
 
   /**
-   * Get profile with embedded search results - single API call.
-   * This is the preferred method matching Claude's approach.
+   * Get user profile with embedded search results from a single container.
+   * The recall hook pairs this with a separate `searchMemories()` call to
+   * the project container so both user and project memories are surfaced.
    */
   async getProfileWithSearch(containerTag: string, query?: string): Promise<ProfileWithSearchResult> {
     log("getProfileWithSearch: start", { containerTag, hasQuery: !!query });
@@ -88,7 +102,7 @@ export class SupermemoryClient {
       if (result.searchResults) {
         const mapped = (result.searchResults.results as SearchResultItem[]).map((r) => ({
           id: r.id,
-          memory: r.memory || r.content || r.context || "",
+          memory: r.memory || r.content || String(r.context ?? ""),
           similarity: r.similarity,
           title: r.title,
           updatedAt: r.updatedAt,
@@ -120,7 +134,7 @@ export class SupermemoryClient {
 
   // Keep old methods for backward compatibility
 
-  async searchMemories(query: string, containerTag: string) {
+  async searchMemories(query: string, containerTag: string): Promise<SearchResponse> {
     log("searchMemories: start", { containerTag });
     try {
       const result = await withTimeout(
@@ -134,11 +148,11 @@ export class SupermemoryClient {
         TIMEOUT_MS
       );
       log("searchMemories: success", { count: result.results?.length || 0 });
-      return { success: true as const, ...result };
+      return { success: true, results: result.results as SearchResultItem[], total: result.total, timing: result.timing };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log("searchMemories: error", { error: errorMessage });
-      return { success: false as const, error: errorMessage, results: [], total: 0, timing: 0 };
+      return { success: false, error: errorMessage, results: [], total: 0, timing: 0 };
     }
   }
 

@@ -349,7 +349,7 @@ describe("flush hook Stop payload", () => {
     assert.equal(result.status, 0);
   });
 
-  test("reads transcript_path JSONL file when it exists (exits 0 without API key)", (t) => {
+  test("exits 0 without API key even when transcript exists (smoke test)", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     const transcriptFile = join(tmpDir, "transcript.jsonl");
@@ -481,5 +481,133 @@ describe("skill scripts: search/save/forget", () => {
         `flags ${args.join(" ")} should hit the unconfigured branch`
       );
     }
+  });
+});
+
+// ─── formatCombinedContext — interleaved memory merging ──────────────────────
+
+describe("formatCombinedContext interleaving", () => {
+  // Simulate the formatCombinedContext interleaving logic inline to test without
+  // importing the ESM module (which is bundled into CJS by esbuild).
+  function interleaveMemories(userMemories, projectMemories, maxMemories) {
+    const allMemories = [];
+    let ui = 0;
+    let pi = 0;
+    while (allMemories.length < maxMemories && (ui < userMemories.length || pi < projectMemories.length)) {
+      if (ui < userMemories.length) {
+        allMemories.push(userMemories[ui++]);
+      }
+      if (allMemories.length < maxMemories && pi < projectMemories.length) {
+        allMemories.push(projectMemories[pi++]);
+      }
+    }
+    return allMemories;
+  }
+
+  test("interleaves user and project memories evenly", () => {
+    const user = ["u1", "u2", "u3"];
+    const project = ["p1", "p2", "p3"];
+    const result = interleaveMemories(user, project, 6);
+    assert.deepEqual(result, ["u1", "p1", "u2", "p2", "u3", "p3"]);
+  });
+
+  test("limits total to maxMemories while preserving both sources", () => {
+    const user = ["u1", "u2", "u3", "u4", "u5"];
+    const project = ["p1", "p2", "p3", "p4", "p5"];
+    const result = interleaveMemories(user, project, 5);
+    // Should interleave: u1, p1, u2, p2, u3
+    assert.equal(result.length, 5);
+    assert.ok(result.some(m => m.startsWith("u")), "must include user memories");
+    assert.ok(result.some(m => m.startsWith("p")), "must include project memories");
+  });
+
+  test("project memories not dropped when user has many results", () => {
+    const user = ["u1", "u2", "u3", "u4", "u5", "u6"];
+    const project = ["p1", "p2"];
+    const result = interleaveMemories(user, project, 5);
+    // Should interleave: u1, p1, u2, p2, u3
+    assert.ok(result.includes("p1"), "project memory p1 must be included");
+    assert.ok(result.includes("p2"), "project memory p2 must be included");
+  });
+
+  test("handles empty project memories", () => {
+    const user = ["u1", "u2", "u3"];
+    const project = [];
+    const result = interleaveMemories(user, project, 5);
+    assert.deepEqual(result, ["u1", "u2", "u3"]);
+  });
+
+  test("handles empty user memories", () => {
+    const user = [];
+    const project = ["p1", "p2", "p3"];
+    const result = interleaveMemories(user, project, 5);
+    assert.deepEqual(result, ["p1", "p2", "p3"]);
+  });
+
+  test("handles both empty", () => {
+    const result = interleaveMemories([], [], 5);
+    assert.deepEqual(result, []);
+  });
+});
+
+// ─── dedup by id — memory deduplication ──────────────────────────────────────
+
+describe("memory deduplication by id", () => {
+  function dedupKey(id, text) {
+    if (id) return `id:${id}`;
+    return `content:${text.toLowerCase().trim()}`;
+  }
+
+  test("deduplicates by id when available", () => {
+    const seen = new Set();
+    const memories = [
+      { id: "mem-1", memory: "React components" },
+      { id: "mem-1", memory: "react components" }, // same id, different casing
+      { id: "mem-2", memory: "Vue components" },
+    ];
+
+    const result = memories.filter(m => {
+      const key = dedupKey(m.id, m.memory);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    assert.equal(result.length, 2, "should deduplicate by id");
+  });
+
+  test("falls back to content-based dedup when id is missing", () => {
+    const seen = new Set();
+    const memories = [
+      { memory: "React components" },
+      { memory: "react components" }, // same content, different casing
+      { memory: "Vue components" },
+    ];
+
+    const result = memories.filter(m => {
+      const key = dedupKey(m.id, m.memory);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    assert.equal(result.length, 2, "should deduplicate by lowercased content");
+  });
+
+  test("does not over-deduplicate when ids differ but content matches", () => {
+    const seen = new Set();
+    const memories = [
+      { id: "mem-1", memory: "React components" },
+      { id: "mem-2", memory: "React components" }, // different id, same content
+    ];
+
+    const result = memories.filter(m => {
+      const key = dedupKey(m.id, m.memory);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    assert.equal(result.length, 2, "should keep both since ids differ");
   });
 });

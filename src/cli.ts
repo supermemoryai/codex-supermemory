@@ -129,6 +129,51 @@ function normalizeHookEvents(raw: unknown): HookEvents {
   return events;
 }
 
+/**
+ * Ensure a hook is registered in the given event's MatcherGroup array.
+ * If the command already exists, update its timeout and statusMessage.
+ * Otherwise, append it to an existing global (no-matcher) group or create one.
+ */
+function ensureHookRegistered(
+  groups: MatcherGroup[],
+  command: string,
+  timeout: number,
+  statusMessage: string,
+): void {
+  const exists = groups.some((g) => g.hooks.some((h) => h.command === command));
+  if (exists) {
+    for (const group of groups) {
+      for (const hook of group.hooks) {
+        if (hook.command === command) {
+          hook.timeout = timeout;
+          hook.statusMessage = statusMessage;
+        }
+      }
+    }
+  } else {
+    const globalGroup = groups.find((g) => !g.matcher);
+    const entry: HookEntry = { type: "command", command, timeout, statusMessage };
+    if (globalGroup) {
+      globalGroup.hooks.push(entry);
+    } else {
+      groups.push({ hooks: [entry] });
+    }
+  }
+}
+
+/**
+ * Remove all hooks matching any of the given commands from an event's groups.
+ * Returns the filtered groups (empty groups are dropped).
+ */
+function removeHookCommands(
+  groups: MatcherGroup[],
+  commands: string[],
+): MatcherGroup[] {
+  return groups
+    .map((g) => ({ ...g, hooks: g.hooks.filter((h) => !commands.includes(h.command)) }))
+    .filter((g) => g.hooks.length > 0);
+}
+
 function mergeHooksJson(add: boolean) {
   if (!add && !existsSync(CODEX_HOOKS_JSON)) {
     // Nothing to remove — file doesn't exist yet.
@@ -146,106 +191,35 @@ function mergeHooksJson(add: boolean) {
   }
 
   if (add) {
-    // Add UserPromptSubmit hook (dedup by command).
-    // Append to an existing global (no-matcher) group if one exists, otherwise
-    // push a new global group. This avoids silently attaching to a matcher-scoped
-    // group that the user may have configured for a specific tool.
-    if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
     const recallCmd = `node ${RECALL_SCRIPT}`;
-    const hasRecall = hooks.UserPromptSubmit.some((g) =>
-      g.hooks.some((h) => h.command === recallCmd)
-    );
-    if (hasRecall) {
-      // Update existing hook timeout
-      for (const group of hooks.UserPromptSubmit) {
-        for (const hook of group.hooks) {
-          if (hook.command === recallCmd) {
-            hook.timeout = RECALL_TIMEOUT_SECONDS;
-            hook.statusMessage = "Searching memories...";
-          }
-        }
-      }
-    } else {
-      const globalGroup = hooks.UserPromptSubmit.find((g) => !g.matcher);
-      if (globalGroup) {
-        globalGroup.hooks.push({
-          type: "command",
-          command: recallCmd,
-          timeout: RECALL_TIMEOUT_SECONDS,
-          statusMessage: "Searching memories...",
-        });
-      } else {
-        hooks.UserPromptSubmit.push({
-          hooks: [{
-            type: "command",
-            command: recallCmd,
-            timeout: RECALL_TIMEOUT_SECONDS,
-            statusMessage: "Searching memories...",
-          }],
-        });
-      }
-    }
+    const flushCmd = `node ${FLUSH_SCRIPT}`;
+    const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
+
+    // Register UserPromptSubmit hook for recall
+    if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
+    ensureHookRegistered(hooks.UserPromptSubmit, recallCmd, RECALL_TIMEOUT_SECONDS, "Searching memories...");
 
     // Remove old capture.js Stop hook from previous installs
     if (hooks.Stop) {
-      const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
-      hooks.Stop = hooks.Stop
-        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== oldCaptureCmd) }))
-        .filter((g) => g.hooks.length > 0);
+      hooks.Stop = removeHookCommands(hooks.Stop, [oldCaptureCmd]);
       if (hooks.Stop.length === 0) delete hooks.Stop;
     }
 
-    // Add Stop hook for flush (captures remaining entries at session end)
+    // Register Stop hook for flush
     if (!hooks.Stop) hooks.Stop = [];
-    const flushCmd = `node ${FLUSH_SCRIPT}`;
-    const hasFlush = hooks.Stop.some((g) =>
-      g.hooks.some((h) => h.command === flushCmd)
-    );
-    if (hasFlush) {
-      for (const group of hooks.Stop) {
-        for (const hook of group.hooks) {
-          if (hook.command === flushCmd) {
-            hook.timeout = FLUSH_TIMEOUT_SECONDS;
-            hook.statusMessage = "Saving to memory...";
-          }
-        }
-      }
-    } else {
-      const globalGroup = hooks.Stop.find((g) => !g.matcher);
-      if (globalGroup) {
-        globalGroup.hooks.push({
-          type: "command",
-          command: flushCmd,
-          timeout: FLUSH_TIMEOUT_SECONDS,
-          statusMessage: "Saving to memory...",
-        });
-      } else {
-        hooks.Stop.push({
-          hooks: [{
-            type: "command",
-            command: flushCmd,
-            timeout: FLUSH_TIMEOUT_SECONDS,
-            statusMessage: "Saving to memory...",
-          }],
-        });
-      }
-    }
+    ensureHookRegistered(hooks.Stop, flushCmd, FLUSH_TIMEOUT_SECONDS, "Saving to memory...");
   } else {
     // Remove our hooks from every MatcherGroup, then drop empty groups.
     const recallCmd = `node ${RECALL_SCRIPT}`;
+    const flushCmd = `node ${FLUSH_SCRIPT}`;
+    const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
+
     if (hooks.UserPromptSubmit) {
-      hooks.UserPromptSubmit = hooks.UserPromptSubmit
-        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== recallCmd) }))
-        .filter((g) => g.hooks.length > 0);
+      hooks.UserPromptSubmit = removeHookCommands(hooks.UserPromptSubmit, [recallCmd]);
       if (hooks.UserPromptSubmit.length === 0) delete hooks.UserPromptSubmit;
     }
-    // Remove flush hook and any old capture hooks from Stop
     if (hooks.Stop) {
-      const flushCmd = `node ${FLUSH_SCRIPT}`;
-      const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
-      hooks.Stop = hooks.Stop
-        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== flushCmd && h.command !== oldCaptureCmd) }))
-        .filter((g) => g.hooks.length > 0);
+      hooks.Stop = removeHookCommands(hooks.Stop, [flushCmd, oldCaptureCmd]);
       if (hooks.Stop.length === 0) delete hooks.Stop;
     }
   }
