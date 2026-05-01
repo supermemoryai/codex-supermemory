@@ -259,25 +259,24 @@ describe("recall hook output envelope", () => {
     assert.equal(typeof parsed.hookSpecificOutput.additionalContext, "string");
   });
 
-  test("outputs hookSpecificOutput envelope on empty prompt", () => {
+  test("emits no envelope on empty prompt (so Codex doesn't render an empty hook context line)", () => {
     const result = spawnSync("node", [recallBin], {
       input: JSON.stringify({ session_id: "s1", prompt: "" }),
       env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
       encoding: "utf-8",
     });
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.hookSpecificOutput.hookEventName, "UserPromptSubmit");
-    assert.equal(parsed.hookSpecificOutput.additionalContext, "");
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "", "empty context should produce empty stdout");
   });
 
-  test("outputs hookSpecificOutput envelope on malformed JSON input", () => {
+  test("emits no envelope on malformed JSON input", () => {
     const result = spawnSync("node", [recallBin], {
       input: "not-json",
       env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
       encoding: "utf-8",
     });
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "");
   });
 
   test("never outputs bare additionalContext at top level (old wrong shape)", (t) => {

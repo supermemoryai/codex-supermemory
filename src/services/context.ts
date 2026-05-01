@@ -1,4 +1,5 @@
 import type { ProfileWithSearchResult } from "./client.js";
+import { normalizeFact } from "./factCache.js";
 
 interface SearchResult {
   content?: string;
@@ -43,36 +44,68 @@ function formatProfile(
   return items.map((s, i) => `${i + 1}. ${s}`).join("\n");
 }
 
+export interface FormattedContext {
+  text: string;
+  newFacts: string[];
+}
+
+function pickNewProfileItems(
+  profile: ProfileWithSearchResult["profile"],
+  seen: Set<string>,
+  max: number
+): string[] {
+  if (!profile) return [];
+  const items = [...(profile.static ?? []), ...(profile.dynamic ?? [])]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && !seen.has(normalizeFact(s)));
+  return items.slice(0, max);
+}
+
+function pickNewMemories(
+  results: NonNullable<ProfileWithSearchResult["searchResults"]>["results"],
+  seen: Set<string>,
+  max: number
+): string[] {
+  return results
+    .map((r) => (r.memory || "").trim())
+    .filter((m) => m.length > 2 && !seen.has(normalizeFact(m)))
+    .slice(0, max);
+}
+
 /**
- * Format context from combined profile+search result (single API call).
- * This is the preferred method matching Claude's approach.
+ * Format only facts the session hasn't seen yet. Already-injected facts live in
+ * the model's prior turns, so re-sending them is wasted tokens.
  */
 export function formatCombinedContext(
   result: ProfileWithSearchResult,
   maxMemories: number,
-  maxProfileItems: number
-): string {
+  maxProfileItems: number,
+  seen: Set<string> = new Set()
+): FormattedContext {
   const parts: string[] = [];
+  const newFacts: string[] = [];
 
   if (result.success && result.profile) {
-    const profileText = formatProfile(result.profile, maxProfileItems);
-    if (profileText) {
-      parts.push(`[User Profile]\n${profileText}`);
+    const items = pickNewProfileItems(result.profile, seen, maxProfileItems);
+    if (items.length > 0) {
+      parts.push(
+        `[User Profile]\n${items.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
+      );
+      newFacts.push(...items);
     }
   }
 
   if (result.searchResults && result.searchResults.results.length > 0) {
-    const memories = result.searchResults.results
-      .slice(0, maxMemories)
-      .map((r, i) => `${i + 1}. ${r.memory || ""}`)
-      .filter((m) => m.trim().length > 2)
-      .join("\n");
-    if (memories) {
-      parts.push(`[Relevant Memories]\n${memories}`);
+    const items = pickNewMemories(result.searchResults.results, seen, maxMemories);
+    if (items.length > 0) {
+      parts.push(
+        `[Relevant Memories]\n${items.map((m, i) => `${i + 1}. ${m}`).join("\n")}`
+      );
+      newFacts.push(...items);
     }
   }
 
-  return parts.join("\n\n");
+  return { text: parts.join("\n\n"), newFacts };
 }
 
 // Keep old method for backward compatibility

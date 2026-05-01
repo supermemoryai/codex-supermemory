@@ -15,6 +15,7 @@ import {
 } from "../services/transcript.js";
 import { getLastCapturedIndex, setLastCapturedIndex } from "../services/tracker.js";
 import { filterBySignals, groupEntriesIntoTurns } from "../services/signals.js";
+import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 
@@ -28,15 +29,19 @@ interface CodexHookPayload {
 }
 
 // Output shape required by Codex UserPromptSubmitCommandOutputWire.
+// Empty context is emitted as a silent exit so Codex doesn't render a
+// "hook context:" label with no content.
 function exitWithContext(additionalContext: string): never {
-  process.stdout.write(
-    JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "UserPromptSubmit",
-        additionalContext,
-      },
-    })
-  );
+  if (additionalContext) {
+    process.stdout.write(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext,
+        },
+      })
+    );
+  }
   process.exit(0);
 }
 
@@ -225,16 +230,23 @@ async function main() {
       query
     );
 
-    const context = formatCombinedContext(
+    const seen = getSeenFacts(sessionId);
+    const { text, newFacts } = formatCombinedContext(
       result,
       CONFIG.maxMemories,
-      CONFIG.maxProfileItems
+      CONFIG.maxProfileItems,
+      seen
     );
 
-    log("recall: done", { contextLength: context.length });
+    log("recall: done", {
+      contextLength: text.length,
+      newFactCount: newFacts.length,
+      seenCount: seen.size,
+    });
 
-    if (context.trim()) {
-      exitWithContext(`[SUPERMEMORY CONTEXT]\n${context}\n[END SUPERMEMORY CONTEXT]`);
+    if (newFacts.length > 0) {
+      addSeenFacts(sessionId, newFacts);
+      exitWithContext(`[SUPERMEMORY CONTEXT]\n${text}\n[END SUPERMEMORY CONTEXT]`);
     } else {
       exitWithContext("");
     }
