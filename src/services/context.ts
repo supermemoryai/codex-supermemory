@@ -1,3 +1,5 @@
+import type { ProfileWithSearchResult } from "./client.js";
+
 interface SearchResult {
   content?: string;
   memory?: string;
@@ -41,6 +43,39 @@ function formatProfile(
   return items.map((s, i) => `${i + 1}. ${s}`).join("\n");
 }
 
+/**
+ * Format context from combined profile+search result (single API call).
+ * This is the preferred method matching Claude's approach.
+ */
+export function formatCombinedContext(
+  result: ProfileWithSearchResult,
+  maxMemories: number,
+  maxProfileItems: number
+): string {
+  const parts: string[] = [];
+
+  if (result.success && result.profile) {
+    const profileText = formatProfile(result.profile, maxProfileItems);
+    if (profileText) {
+      parts.push(`[User Profile]\n${profileText}`);
+    }
+  }
+
+  if (result.searchResults && result.searchResults.results.length > 0) {
+    const memories = result.searchResults.results
+      .slice(0, maxMemories)
+      .map((r, i) => `${i + 1}. ${r.memory || ""}`)
+      .filter((m) => m.trim().length > 2)
+      .join("\n");
+    if (memories) {
+      parts.push(`[Relevant Memories]\n${memories}`);
+    }
+  }
+
+  return parts.join("\n\n");
+}
+
+// Keep old method for backward compatibility
 export function formatContextForPrompt(
   searchResult: SearchResponse,
   profileResult: ProfileResponse,
@@ -69,5 +104,3 @@ export function formatContextForPrompt(
 
   return parts.join("\n\n");
 }
-
-

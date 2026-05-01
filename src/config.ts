@@ -16,7 +16,60 @@ interface CodexSupermemoryConfig {
   projectContainerTag?: string;
   filterPrompt?: string;
   debug?: boolean;
+  // Signal extraction settings
+  signalExtraction?: boolean;
+  signalKeywords?: string[];
+  signalTurnsBefore?: number;
+  // Auto-save interval
+  autoSaveEveryTurns?: number;
 }
+
+const DEFAULT_SIGNAL_KEYWORDS = [
+  // Preferences (single words to match "i really like", "i always prefer", etc.)
+  "prefer",
+  "like",
+  "love",
+  "use",
+  "hate",
+  "dislike",
+  "avoid",
+  // Memory commands
+  "remember",
+  "forget",
+  "note",
+  // Decisions & Architecture
+  "decision",
+  "decided",
+  "chose",
+  "choose",
+  "picked",
+  "switched",
+  "moved",
+  "migrated",
+  "architecture",
+  "pattern",
+  "approach",
+  "design",
+  "tradeoff",
+  // Technical
+  "implementation",
+  "refactor",
+  "upgrade",
+  "deprecate",
+  // Problem solving
+  "bug",
+  "fix",
+  "fixed",
+  "solved",
+  "solution",
+  "important",
+  // Stack/tools
+  "stack",
+  "framework",
+  "library",
+  "tool",
+  "database",
+];
 
 const DEFAULTS = {
   similarityThreshold: 0.6,
@@ -27,6 +80,12 @@ const DEFAULTS = {
   filterPrompt:
     "You are a stateful coding agent. Remember all the information, including but not limited to user's coding preferences, tech stack, behaviours, workflows, and any other relevant details.",
   debug: false,
+  // Signal extraction - disabled by default, captures everything
+  signalExtraction: false,
+  signalKeywords: DEFAULT_SIGNAL_KEYWORDS,
+  signalTurnsBefore: 3,
+  // Auto-save interval
+  autoSaveEveryTurns: 3,
 };
 
 function loadConfig(): CodexSupermemoryConfig {
@@ -65,6 +124,12 @@ export const CONFIG = {
   projectContainerTag: fileConfig.projectContainerTag,
   filterPrompt: fileConfig.filterPrompt ?? DEFAULTS.filterPrompt,
   debug: fileConfig.debug ?? DEFAULTS.debug,
+  // Signal extraction
+  signalExtraction: fileConfig.signalExtraction ?? DEFAULTS.signalExtraction,
+  signalKeywords: fileConfig.signalKeywords ?? DEFAULTS.signalKeywords,
+  signalTurnsBefore: fileConfig.signalTurnsBefore ?? DEFAULTS.signalTurnsBefore,
+  // Auto-save interval
+  autoSaveEveryTurns: fileConfig.autoSaveEveryTurns ?? DEFAULTS.autoSaveEveryTurns,
 };
 
 export function isConfigured(): boolean {
@@ -73,4 +138,16 @@ export function isConfigured(): boolean {
 
 export function getApiKeyValue(): string | undefined {
   return SUPERMEMORY_API_KEY;
+}
+
+export function getSignalConfig(): {
+  enabled: boolean;
+  keywords: string[];
+  turnsBefore: number;
+} {
+  return {
+    enabled: CONFIG.signalExtraction,
+    keywords: CONFIG.signalKeywords.map((k) => k.toLowerCase()),
+    turnsBefore: CONFIG.signalTurnsBefore,
+  };
 }

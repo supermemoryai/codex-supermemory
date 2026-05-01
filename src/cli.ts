@@ -32,8 +32,8 @@ const CODEX_CONFIG_TOML = join(CODEX_DIR, "config.toml");
 const CODEX_HOOKS_JSON = join(CODEX_DIR, "hooks.json");
 const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
-const CAPTURE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
+const RECALL_TIMEOUT_SECONDS = 90;
 
 // Skill metadata — single source of truth for install/uninstall/status.
 const SKILLS = [
@@ -95,10 +95,36 @@ interface MatcherGroup {
   hooks: HookEntry[];
 }
 
-interface HooksJson {
+interface HookEvents {
   UserPromptSubmit?: MatcherGroup[];
   Stop?: MatcherGroup[];
   [key: string]: MatcherGroup[] | undefined;
+}
+
+interface HooksJson {
+  hooks?: HookEvents;
+}
+
+function normalizeHookEvents(raw: unknown): HookEvents {
+  if (!raw || typeof raw !== "object") return {};
+
+  const maybeWrapped = raw as HooksJson & HookEvents;
+  // Codex expects hooks.json to contain a top-level `hooks` object. Older
+  // codex-supermemory versions accidentally wrote event keys at the root, so
+  // accept both shapes and always write back the documented one.
+  const events =
+    maybeWrapped.hooks && typeof maybeWrapped.hooks === "object"
+      ? maybeWrapped.hooks
+      : (maybeWrapped as HookEvents);
+
+  for (const key of ["UserPromptSubmit", "Stop"] as const) {
+    const val = events[key];
+    if (val !== undefined && !Array.isArray(val)) {
+      events[key] = [val as unknown as MatcherGroup];
+    }
+  }
+
+  return events;
 }
 
 function mergeHooksJson(add: boolean) {
@@ -107,25 +133,13 @@ function mergeHooksJson(add: boolean) {
     return;
   }
 
-  let hooks: HooksJson = {};
+  let hooks: HookEvents = {};
   if (existsSync(CODEX_HOOKS_JSON)) {
     try {
       const content = readFileSync(CODEX_HOOKS_JSON, "utf-8");
-      hooks = JSON.parse(content) as HooksJson;
+      hooks = normalizeHookEvents(JSON.parse(content));
     } catch {
       // start fresh
-    }
-  }
-
-  // Normalize event arrays: older hooks.json files (or hand-written configs) may
-  // store the UserPromptSubmit/Stop values as a plain object `{ hooks: [] }` rather
-  // than the array-of-MatcherGroups format that Codex expects.  Convert those to a
-  // single-element array so the rest of the merge logic can work safely.
-  for (const key of ["UserPromptSubmit", "Stop"] as const) {
-    const val = hooks[key];
-    if (val !== undefined && !Array.isArray(val)) {
-      // Wrap the stray object in an array — preserve any hooks it already contains.
-      hooks[key] = [val as unknown as MatcherGroup];
     }
   }
 
@@ -139,13 +153,23 @@ function mergeHooksJson(add: boolean) {
     const hasRecall = hooks.UserPromptSubmit.some((g) =>
       g.hooks.some((h) => h.command === recallCmd)
     );
-    if (!hasRecall) {
+    if (hasRecall) {
+      // Update existing hook timeout
+      for (const group of hooks.UserPromptSubmit) {
+        for (const hook of group.hooks) {
+          if (hook.command === recallCmd) {
+            hook.timeout = RECALL_TIMEOUT_SECONDS;
+            hook.statusMessage = "Searching memories...";
+          }
+        }
+      }
+    } else {
       const globalGroup = hooks.UserPromptSubmit.find((g) => !g.matcher);
       if (globalGroup) {
         globalGroup.hooks.push({
           type: "command",
           command: recallCmd,
-          timeout: 30,
+          timeout: RECALL_TIMEOUT_SECONDS,
           statusMessage: "Searching memories...",
         });
       } else {
@@ -153,58 +177,41 @@ function mergeHooksJson(add: boolean) {
           hooks: [{
             type: "command",
             command: recallCmd,
-            timeout: 30,
+            timeout: RECALL_TIMEOUT_SECONDS,
             statusMessage: "Searching memories...",
           }],
         });
       }
     }
 
-    // Add Stop hook (dedup by command).
-    if (!hooks.Stop) hooks.Stop = [];
-    const captureCmd = `node ${CAPTURE_SCRIPT}`;
-    const hasCapture = hooks.Stop.some((g) =>
-      g.hooks.some((h) => h.command === captureCmd)
-    );
-    if (!hasCapture) {
-      const globalGroup = hooks.Stop.find((g) => !g.matcher);
-      if (globalGroup) {
-        globalGroup.hooks.push({
-          type: "command",
-          command: captureCmd,
-          timeout: 60,
-          statusMessage: "Saving to memory...",
-        });
-      } else {
-        hooks.Stop.push({
-          hooks: [{
-            type: "command",
-            command: captureCmd,
-            timeout: 60,
-            statusMessage: "Saving to memory...",
-          }],
-        });
-      }
+    // Remove old Stop hook from previous installs (capture.ts was removed)
+    if (hooks.Stop) {
+      const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
+      hooks.Stop = hooks.Stop
+        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== oldCaptureCmd) }))
+        .filter((g) => g.hooks.length > 0);
+      if (hooks.Stop.length === 0) delete hooks.Stop;
     }
   } else {
     // Remove our hooks from every MatcherGroup, then drop empty groups.
     const recallCmd = `node ${RECALL_SCRIPT}`;
-    const captureCmd = `node ${CAPTURE_SCRIPT}`;
     if (hooks.UserPromptSubmit) {
       hooks.UserPromptSubmit = hooks.UserPromptSubmit
         .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== recallCmd) }))
         .filter((g) => g.hooks.length > 0);
       if (hooks.UserPromptSubmit.length === 0) delete hooks.UserPromptSubmit;
     }
+    // Also clean up any old Stop hooks from previous installs
     if (hooks.Stop) {
+      const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
       hooks.Stop = hooks.Stop
-        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== captureCmd) }))
+        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== oldCaptureCmd) }))
         .filter((g) => g.hooks.length > 0);
       if (hooks.Stop.length === 0) delete hooks.Stop;
     }
   }
 
-  writeFileSync(CODEX_HOOKS_JSON, JSON.stringify(hooks, null, 2));
+  writeFileSync(CODEX_HOOKS_JSON, JSON.stringify({ hooks }, null, 2));
 }
 
 function install() {
@@ -214,15 +221,19 @@ function install() {
 
   // Copy hook scripts
   const recallSrc = join(DIST_HOOKS_DIR, "recall.js");
-  const captureSrc = join(DIST_HOOKS_DIR, "capture.js");
 
-  if (!existsSync(recallSrc) || !existsSync(captureSrc)) {
+  if (!existsSync(recallSrc)) {
     console.error("Error: Hook scripts not found. Please reinstall the package.");
     process.exit(1);
   }
 
   copyFileSync(recallSrc, RECALL_SCRIPT);
-  copyFileSync(captureSrc, CAPTURE_SCRIPT);
+
+  // Remove old capture.js if it exists
+  const oldCapture = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
+  if (existsSync(oldCapture)) {
+    rmSync(oldCapture);
+  }
 
   // Copy skill scripts and SKILL.md files
   for (const { name, script } of SKILLS) {
@@ -252,7 +263,7 @@ function install() {
 Installation complete!
 
 You now have:
-  • Implicit memory — auto-recall on every prompt, auto-capture on session end
+  • Implicit memory — auto-recall and incremental capture on every prompt
   • Explicit memory — supermemory-search, supermemory-save, supermemory-forget, and supermemory-login skills
 
 Next steps:
@@ -306,24 +317,20 @@ function status() {
     ? "credentials file (~/.codex/supermemory/credentials.json)"
     : null;
 
-  const hooksInstalled = existsSync(RECALL_SCRIPT) && existsSync(CAPTURE_SCRIPT);
+  const hooksInstalled = existsSync(RECALL_SCRIPT);
   const hooksJsonExists = existsSync(CODEX_HOOKS_JSON);
   const configTomlExists = existsSync(CODEX_CONFIG_TOML);
 
   let hooksEnabled = false;
   if (hooksJsonExists) {
     try {
-      const hooks = JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")) as HooksJson;
+      const hooks = normalizeHookEvents(JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")));
       const recallCmd = `node ${RECALL_SCRIPT}`;
-      const captureCmd = `node ${CAPTURE_SCRIPT}`;
-      // hooks.json uses array-of-MatcherGroups — check both recall and capture are registered.
-      const recallRegistered = hooks.UserPromptSubmit?.some((g) =>
-        g.hooks.some((h) => h.command === recallCmd)
+      // hooks.json uses array-of-MatcherGroups — check recall is registered.
+      const recallRegistered = hooks.UserPromptSubmit?.some((g: MatcherGroup) =>
+        g.hooks.some((h: HookEntry) => h.command === recallCmd)
       );
-      const captureRegistered = hooks.Stop?.some((g) =>
-        g.hooks.some((h) => h.command === captureCmd)
-      );
-      hooksEnabled = !!(recallRegistered && captureRegistered);
+      hooksEnabled = !!recallRegistered;
     } catch {
       // ignore
     }
