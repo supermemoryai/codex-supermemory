@@ -15,6 +15,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 interface SearchResultItem {
   id?: string;
+  memory?: string;
   content?: string;
   context?: string;
   similarity?: number;
@@ -87,7 +88,7 @@ export class SupermemoryClient {
       if (result.searchResults) {
         const mapped = (result.searchResults.results as SearchResultItem[]).map((r) => ({
           id: r.id,
-          memory: r.content || r.context || "",
+          memory: r.memory || r.content || r.context || "",
           similarity: r.similarity,
           title: r.title,
           updatedAt: r.updatedAt,

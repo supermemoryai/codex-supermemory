@@ -43,20 +43,22 @@ and the lessons learned across every project — automatically.
 ## How it works
 
 Codex CLI supports a hooks system that lets external scripts run at specific
-lifecycle events. `codex-supermemory` registers one hook:
+lifecycle events. `codex-supermemory` registers two hooks:
 
 | Hook              | Event                  | What it does                                                        |
 | ----------------- | ---------------------- | ------------------------------------------------------------------- |
 | `recall`          | `UserPromptSubmit`     | Captures new turns (every N prompts), then searches Supermemory for relevant memories and your profile, injecting them into the prompt as `additionalContext`. |
+| `flush`           | `Stop`                 | Captures any remaining turns at session end so the final conversation turns are never lost. |
 
 **Incremental capture**: Memories are saved every N turns (default: 3) during the session.
 This means memories from earlier in your session are immediately available for recall
-in the same session.
+in the same session. The flush hook ensures any trailing turns are captured when the
+session ends.
 
 The installer:
 
 - Enables the `codex_hooks` feature flag in `~/.codex/config.toml`
-- Registers the hook in `~/.codex/hooks.json`
+- Registers the hooks in `~/.codex/hooks.json`
 - Copies pre-bundled hook scripts to `~/.codex/supermemory/`
 - Installs skills to `~/.codex/skills/`
 

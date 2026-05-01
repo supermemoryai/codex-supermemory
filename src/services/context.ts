@@ -44,13 +44,15 @@ function formatProfile(
 }
 
 /**
- * Format context from combined profile+search result (single API call).
- * This is the preferred method matching Claude's approach.
+ * Format context from combined profile+search result.
+ * Accepts an optional separate project search result to merge project-scoped
+ * memories alongside user-scoped ones from the profile API.
  */
 export function formatCombinedContext(
   result: ProfileWithSearchResult,
   maxMemories: number,
-  maxProfileItems: number
+  maxProfileItems: number,
+  projectSearchResult?: SearchResponse,
 ): string {
   const parts: string[] = [];
 
@@ -61,15 +63,40 @@ export function formatCombinedContext(
     }
   }
 
+  // Merge memories from both user (profile API) and project (search API) containers.
+  // Deduplicate by lowercased content to avoid showing the same memory twice.
+  const seen = new Set<string>();
+  const allMemories: string[] = [];
+
   if (result.searchResults && result.searchResults.results.length > 0) {
-    const memories = result.searchResults.results
-      .slice(0, maxMemories)
-      .map((r, i) => `${i + 1}. ${r.memory || ""}`)
-      .filter((m) => m.trim().length > 2)
-      .join("\n");
-    if (memories) {
-      parts.push(`[Relevant Memories]\n${memories}`);
+    for (const r of result.searchResults.results) {
+      const text = r.memory || "";
+      const key = text.toLowerCase().trim();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        allMemories.push(text);
+      }
     }
+  }
+
+  if (projectSearchResult?.success && projectSearchResult.results && projectSearchResult.results.length > 0) {
+    for (const r of projectSearchResult.results) {
+      const text = r.memory ?? r.chunk ?? r.content ?? "";
+      const key = text.toLowerCase().trim();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        allMemories.push(text);
+      }
+    }
+  }
+
+  const memories = allMemories
+    .slice(0, maxMemories)
+    .map((m, i) => `${i + 1}. ${m}`)
+    .filter((m) => m.trim().length > 2)
+    .join("\n");
+  if (memories) {
+    parts.push(`[Relevant Memories]\n${memories}`);
   }
 
   return parts.join("\n\n");

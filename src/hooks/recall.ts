@@ -218,17 +218,19 @@ async function main() {
   await captureNewEntries(client, sessionId, transcriptPath, tags);
 
   // Step 2: Now search for relevant memories (including what we just captured)
-  // Single API call for both profile and search (matching Claude's approach)
+  // Query both containers: user profile from user container, memories from project container.
+  // The profile() API only accepts a single containerTag, so we make parallel calls.
   try {
-    const result = await client.getProfileWithSearch(
-      tags.user,
-      query
-    );
+    const [profileResult, projectSearchResult] = await Promise.all([
+      client.getProfileWithSearch(tags.user, query),
+      client.searchMemories(query, tags.project),
+    ]);
 
     const context = formatCombinedContext(
-      result,
+      profileResult,
       CONFIG.maxMemories,
-      CONFIG.maxProfileItems
+      CONFIG.maxProfileItems,
+      projectSearchResult,
     );
 
     log("recall: done", { contextLength: context.length });

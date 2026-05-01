@@ -79,23 +79,25 @@ describe("stripPrivateContent", () => {
 // ─── hooks.json format ──────────────────────────────────────────────────────
 
 describe("hooks.json format", () => {
-  test("array-of-MatcherGroups shape is valid JSON", () => {
+  test("wrapped hooks.json shape is valid JSON", () => {
     const recallScript = "/home/user/.codex/supermemory/recall.js";
-    const captureScript = "/home/user/.codex/supermemory/capture.js";
+    const flushScript = "/home/user/.codex/supermemory/flush.js";
 
-    const hooks = {
-      UserPromptSubmit: [{ hooks: [{ type: "command", command: `node ${recallScript}`, timeout: 30 }] }],
-      Stop: [{ hooks: [{ type: "command", command: `node ${captureScript}`, timeout: 60 }] }],
+    const hooksJson = {
+      hooks: {
+        UserPromptSubmit: [{ hooks: [{ type: "command", command: `node ${recallScript}`, timeout: 90 }] }],
+        Stop: [{ hooks: [{ type: "command", command: `node ${flushScript}`, timeout: 60 }] }],
+      },
     };
-    const json = JSON.stringify(hooks, null, 2);
+    const json = JSON.stringify(hooksJson, null, 2);
     const parsed = JSON.parse(json);
 
-    assert.ok(Array.isArray(parsed.UserPromptSubmit), "UserPromptSubmit must be an array");
-    assert.ok(Array.isArray(parsed.UserPromptSubmit[0].hooks), "UserPromptSubmit[0].hooks must be an array");
-    assert.equal(parsed.UserPromptSubmit[0].hooks[0].type, "command");
-    assert.ok(Array.isArray(parsed.Stop), "Stop must be an array");
-    assert.ok(Array.isArray(parsed.Stop[0].hooks), "Stop[0].hooks must be an array");
-    assert.equal(parsed.Stop[0].hooks[0].type, "command");
+    assert.ok(parsed.hooks, "must have top-level hooks key");
+    assert.ok(!parsed.UserPromptSubmit, "must NOT have UserPromptSubmit at top level");
+    assert.ok(Array.isArray(parsed.hooks.UserPromptSubmit), "hooks.UserPromptSubmit must be an array");
+    assert.equal(parsed.hooks.UserPromptSubmit[0].hooks[0].timeout, 90);
+    assert.ok(Array.isArray(parsed.hooks.Stop), "hooks.Stop must be an array");
+    assert.equal(parsed.hooks.Stop[0].hooks[0].type, "command");
   });
 
   test("dedup: adding same command twice results in exactly one entry", () => {
@@ -315,13 +317,13 @@ describe("recall hook output envelope", () => {
   });
 });
 
-// ─── capture hook — Stop payload handling ───────────────────────────────────
+// ─── flush hook — Stop payload handling ──────────────────────────────────────
 
-describe("capture hook Stop payload", () => {
-  const captureBin = new URL("../dist/hooks/capture.js", import.meta.url).pathname;
+describe("flush hook Stop payload", () => {
+  const flushBin = new URL("../dist/hooks/flush.js", import.meta.url).pathname;
 
-  test("exits 0 with no transcript_path and no last_assistant_message", () => {
-    const result = spawnSync("node", [captureBin], {
+  test("exits 0 with no transcript_path", () => {
+    const result = spawnSync("node", [flushBin], {
       input: JSON.stringify({ session_id: "s1", transcript_path: null }),
       env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
@@ -329,9 +331,9 @@ describe("capture hook Stop payload", () => {
     assert.equal(result.status, 0);
   });
 
-  test("exits 0 when not configured (even with last_assistant_message)", () => {
-    const result = spawnSync("node", [captureBin], {
-      input: JSON.stringify({ session_id: "s1", last_assistant_message: "hello" }),
+  test("exits 0 when not configured", () => {
+    const result = spawnSync("node", [flushBin], {
+      input: JSON.stringify({ session_id: "s1", cwd: "/tmp" }),
       env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
@@ -339,7 +341,7 @@ describe("capture hook Stop payload", () => {
   });
 
   test("exits 0 on malformed JSON input", () => {
-    const result = spawnSync("node", [captureBin], {
+    const result = spawnSync("node", [flushBin], {
       input: "not-json",
       env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
@@ -354,12 +356,12 @@ describe("capture hook Stop payload", () => {
     writeFileSync(
       transcriptFile,
       [
-        JSON.stringify({ role: "user", content: "What is 2+2?" }),
-        JSON.stringify({ role: "assistant", content: "4" }),
+        JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "What is 2+2?" } }),
+        JSON.stringify({ type: "event_msg", payload: { type: "assistant_output_text", text: "4" } }),
       ].join("\n")
     );
 
-    const result = spawnSync("node", [captureBin], {
+    const result = spawnSync("node", [flushBin], {
       input: JSON.stringify({
         session_id: "s1",
         transcript_path: transcriptFile,
@@ -372,7 +374,7 @@ describe("capture hook Stop payload", () => {
   });
 
   test("does not crash when transcript_path points to nonexistent file", () => {
-    const result = spawnSync("node", [captureBin], {
+    const result = spawnSync("node", [flushBin], {
       input: JSON.stringify({
         session_id: "s1",
         transcript_path: "/nonexistent/path/transcript.jsonl",

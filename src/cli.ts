@@ -32,8 +32,10 @@ const CODEX_CONFIG_TOML = join(CODEX_DIR, "config.toml");
 const CODEX_HOOKS_JSON = join(CODEX_DIR, "hooks.json");
 const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
+const FLUSH_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "flush.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
 const RECALL_TIMEOUT_SECONDS = 90;
+const FLUSH_TIMEOUT_SECONDS = 60;
 
 // Skill metadata — single source of truth for install/uninstall/status.
 const SKILLS = [
@@ -184,13 +186,49 @@ function mergeHooksJson(add: boolean) {
       }
     }
 
-    // Remove old Stop hook from previous installs (capture.ts was removed)
+    // Remove old capture.js Stop hook from previous installs
     if (hooks.Stop) {
       const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
       hooks.Stop = hooks.Stop
         .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== oldCaptureCmd) }))
         .filter((g) => g.hooks.length > 0);
       if (hooks.Stop.length === 0) delete hooks.Stop;
+    }
+
+    // Add Stop hook for flush (captures remaining entries at session end)
+    if (!hooks.Stop) hooks.Stop = [];
+    const flushCmd = `node ${FLUSH_SCRIPT}`;
+    const hasFlush = hooks.Stop.some((g) =>
+      g.hooks.some((h) => h.command === flushCmd)
+    );
+    if (hasFlush) {
+      for (const group of hooks.Stop) {
+        for (const hook of group.hooks) {
+          if (hook.command === flushCmd) {
+            hook.timeout = FLUSH_TIMEOUT_SECONDS;
+            hook.statusMessage = "Saving to memory...";
+          }
+        }
+      }
+    } else {
+      const globalGroup = hooks.Stop.find((g) => !g.matcher);
+      if (globalGroup) {
+        globalGroup.hooks.push({
+          type: "command",
+          command: flushCmd,
+          timeout: FLUSH_TIMEOUT_SECONDS,
+          statusMessage: "Saving to memory...",
+        });
+      } else {
+        hooks.Stop.push({
+          hooks: [{
+            type: "command",
+            command: flushCmd,
+            timeout: FLUSH_TIMEOUT_SECONDS,
+            statusMessage: "Saving to memory...",
+          }],
+        });
+      }
     }
   } else {
     // Remove our hooks from every MatcherGroup, then drop empty groups.
@@ -201,11 +239,12 @@ function mergeHooksJson(add: boolean) {
         .filter((g) => g.hooks.length > 0);
       if (hooks.UserPromptSubmit.length === 0) delete hooks.UserPromptSubmit;
     }
-    // Also clean up any old Stop hooks from previous installs
+    // Remove flush hook and any old capture hooks from Stop
     if (hooks.Stop) {
+      const flushCmd = `node ${FLUSH_SCRIPT}`;
       const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
       hooks.Stop = hooks.Stop
-        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== oldCaptureCmd) }))
+        .map((g) => ({ ...g, hooks: g.hooks.filter((h) => h.command !== flushCmd && h.command !== oldCaptureCmd) }))
         .filter((g) => g.hooks.length > 0);
       if (hooks.Stop.length === 0) delete hooks.Stop;
     }
@@ -221,13 +260,15 @@ function install() {
 
   // Copy hook scripts
   const recallSrc = join(DIST_HOOKS_DIR, "recall.js");
+  const flushSrc = join(DIST_HOOKS_DIR, "flush.js");
 
-  if (!existsSync(recallSrc)) {
+  if (!existsSync(recallSrc) || !existsSync(flushSrc)) {
     console.error("Error: Hook scripts not found. Please reinstall the package.");
     process.exit(1);
   }
 
   copyFileSync(recallSrc, RECALL_SCRIPT);
+  copyFileSync(flushSrc, FLUSH_SCRIPT);
 
   // Remove old capture.js if it exists
   const oldCapture = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
@@ -263,7 +304,7 @@ function install() {
 Installation complete!
 
 You now have:
-  • Implicit memory — auto-recall and incremental capture on every prompt
+  • Implicit memory — auto-recall on every prompt, incremental capture + final flush on session end
   • Explicit memory — supermemory-search, supermemory-save, supermemory-forget, and supermemory-login skills
 
 Next steps:
@@ -317,7 +358,7 @@ function status() {
     ? "credentials file (~/.codex/supermemory/credentials.json)"
     : null;
 
-  const hooksInstalled = existsSync(RECALL_SCRIPT);
+  const hooksInstalled = existsSync(RECALL_SCRIPT) && existsSync(FLUSH_SCRIPT);
   const hooksJsonExists = existsSync(CODEX_HOOKS_JSON);
   const configTomlExists = existsSync(CODEX_CONFIG_TOML);
 
@@ -326,11 +367,14 @@ function status() {
     try {
       const hooks = normalizeHookEvents(JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")));
       const recallCmd = `node ${RECALL_SCRIPT}`;
-      // hooks.json uses array-of-MatcherGroups — check recall is registered.
+      const flushCmd = `node ${FLUSH_SCRIPT}`;
       const recallRegistered = hooks.UserPromptSubmit?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === recallCmd)
       );
-      hooksEnabled = !!recallRegistered;
+      const flushRegistered = hooks.Stop?.some((g: MatcherGroup) =>
+        g.hooks.some((h: HookEntry) => h.command === flushCmd)
+      );
+      hooksEnabled = !!(recallRegistered && flushRegistered);
     } catch {
       // ignore
     }
