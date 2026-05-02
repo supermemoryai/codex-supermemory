@@ -1,6 +1,6 @@
 {
   "name": "codex-supermemory",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "Persistent memory for OpenAI Codex CLI — powered by Supermemory",
   "type": "module",
   "main": "dist/cli.js",
