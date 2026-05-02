@@ -7,14 +7,7 @@ import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
 import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
-import {
-  parseTranscript,
-  getEntriesSince,
-  formatTranscript,
-  findTranscriptPath,
-} from "../services/transcript.js";
-import { getLastCapturedIndex, setLastCapturedIndex } from "../services/tracker.js";
-import { filterBySignals, groupEntriesIntoTurns } from "../services/signals.js";
+import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
@@ -43,109 +36,6 @@ function exitWithContext(additionalContext: string): never {
     );
   }
   process.exit(0);
-}
-
-/**
- * Capture any new entries from the transcript since last capture.
- * This runs BEFORE recall so same-session memories work.
- */
-async function captureNewEntries(
-  client: SupermemoryClient,
-  sessionId: string,
-  transcriptPath: string | null,
-  tags: { project: string; user: string }
-): Promise<void> {
-  if (!transcriptPath || !existsSync(transcriptPath)) {
-    log("recall: no transcript to capture from", { sessionId, transcriptPath });
-    return;
-  }
-
-  const entries = parseTranscript(transcriptPath);
-  if (entries.length === 0) {
-    log("recall: transcript empty", { sessionId });
-    return;
-  }
-
-  const lastIndex = getLastCapturedIndex(sessionId);
-  const newEntries = getEntriesSince(entries, lastIndex);
-
-  // Need at least one complete exchange to capture (user + assistant)
-  if (newEntries.length < 2) {
-    log("recall: not enough new entries to capture", {
-      sessionId,
-      newCount: newEntries.length,
-      lastIndex,
-    });
-    return;
-  }
-
-  // Only capture every N turns to reduce API calls (configurable)
-  // Count complete turns + 1 for the current prompt (which hasn't been responded to yet)
-  const turns = groupEntriesIntoTurns(newEntries);
-  const effectiveTurnCount = turns.length + 1; // +1 for current user prompt
-  if (effectiveTurnCount < CONFIG.autoSaveEveryTurns) {
-    log("recall: waiting for more turns before capture", {
-      sessionId,
-      turnCount: effectiveTurnCount,
-      requiredTurns: CONFIG.autoSaveEveryTurns,
-      lastIndex,
-    });
-    return;
-  }
-
-  // Filter to only entries with meaningful signals (preferences, decisions, etc.)
-  const signalEntries = filterBySignals(newEntries);
-
-  if (signalEntries.length === 0) {
-    log("recall: no signal entries to capture", {
-      sessionId,
-      totalNew: newEntries.length,
-      lastIndex,
-    });
-    // Still update tracker so we don't re-check these entries
-    const lastEntry = newEntries[newEntries.length - 1];
-    setLastCapturedIndex(sessionId, lastEntry.index);
-    return;
-  }
-
-  log("recall: capturing signal entries", {
-    sessionId,
-    signalCount: signalEntries.length,
-    totalNew: newEntries.length,
-    lastIndex,
-  });
-
-  const transcript = formatTranscript(signalEntries);
-  const content = `[Session ${sessionId}]\n${transcript}`;
-
-  const metadata = {
-    type: "conversation" as const,
-    sessionId,
-    entryCount: newEntries.length,
-    timestamp: new Date().toISOString(),
-  };
-
-  // Save to both project and user containers
-  // Use customId so all session turns go into the same document
-  try {
-    await Promise.all([
-      client.addMemory(content, tags.project, metadata, { customId: `${sessionId}_project` }),
-      client.addMemory(content, tags.user, metadata, { customId: `${sessionId}_user` }),
-    ]);
-
-    // Update tracker with the last entry's index
-    const lastEntry = newEntries[newEntries.length - 1];
-    setLastCapturedIndex(sessionId, lastEntry.index);
-
-    log("recall: captured entries", {
-      sessionId,
-      count: newEntries.length,
-      lastIndex: lastEntry.index,
-    });
-  } catch (error) {
-    log("recall: capture error", { error: String(error) });
-    // Don't fail the hook, just continue to recall
-  }
 }
 
 async function main() {
@@ -211,31 +101,36 @@ async function main() {
   log("recall: start", { query: query.slice(0, 100), tags, sessionId });
 
   // Find transcript path - either from payload or by searching
-  let transcriptPath = payload.transcript_path || null;
-  if (!transcriptPath && sessionId) {
-    transcriptPath = findTranscriptPath(sessionId);
+  const transcriptPath = resolveTranscriptPath(payload.transcript_path, sessionId);
+  if (transcriptPath) {
     log("recall: found transcript", { sessionId, transcriptPath });
   }
 
   const client = new SupermemoryClient();
 
   // Step 1: Capture any new entries from previous turns BEFORE recall
-  await captureNewEntries(client, sessionId, transcriptPath, tags);
+  await captureEntries("recall", client, sessionId, transcriptPath, tags, {
+    requireMinEntries: 2,
+    requireMinTurns: CONFIG.autoSaveEveryTurns,
+  });
 
   // Step 2: Now search for relevant memories (including what we just captured)
-  // Single API call for both profile and search (matching Claude's approach)
+  // Query both containers: user profile from user container, memories from project container.
+  // The profile() API only accepts a single containerTag, so we make parallel calls.
   try {
-    const result = await client.getProfileWithSearch(
-      tags.user,
-      query
-    );
+    const [profileResult, projectSearchResult] = await Promise.all([
+      client.getProfileWithSearch(tags.user, query),
+      client.searchMemories(query, tags.project),
+    ]);
 
+    // Get facts already shown in this session to avoid repeating them
     const seen = getSeenFacts(sessionId);
     const { text, newFacts } = formatCombinedContext(
-      result,
+      profileResult,
       CONFIG.maxMemories,
       CONFIG.maxProfileItems,
-      seen
+      projectSearchResult,
+      seen,
     );
 
     log("recall: done", {
