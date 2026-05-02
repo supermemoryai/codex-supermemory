@@ -1,4 +1,5 @@
 import type { ProfileWithSearchResult, SearchResponse } from "./client.js";
+import { normalizeFact } from "./factCache.js";
 
 interface ProfileShape {
   static?: string[];
@@ -29,6 +30,11 @@ function formatProfile(
   return items.map((s, i) => `${i + 1}. ${s}`).join("\n");
 }
 
+export interface FormattedContext {
+  text: string;
+  newFacts: string[];
+}
+
 /**
  * Format context from combined profile+search result.
  * Accepts an optional separate project search result to merge project-scoped
@@ -36,25 +42,37 @@ function formatProfile(
  *
  * Memories from both containers are interleaved by alternating picks so that
  * neither source is entirely crowded out when the total exceeds maxMemories.
+ *
+ * Facts already seen in this session (passed via `seenFacts`) are skipped
+ * to avoid wasting tokens on repeated context.
  */
 export function formatCombinedContext(
   result: ProfileWithSearchResult,
   maxMemories: number,
   maxProfileItems: number,
   projectSearchResult?: SearchResponse,
-): string {
+  seenFacts: Set<string> = new Set(),
+): FormattedContext {
   const parts: string[] = [];
+  const newFacts: string[] = [];
 
+  // Collect profile items, filtering out already-seen facts
   if (result.success && result.profile) {
-    const profileText = formatProfile(result.profile, maxProfileItems);
-    if (profileText) {
-      parts.push(`[User Profile]\n${profileText}`);
+    const items = [...(result.profile.static ?? []), ...(result.profile.dynamic ?? [])]
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !seenFacts.has(normalizeFact(s)))
+      .slice(0, maxProfileItems);
+    if (items.length > 0) {
+      parts.push(
+        `[User Profile]\n${items.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
+      );
+      newFacts.push(...items);
     }
   }
 
   // Collect memories from both user (profile API) and project (search API)
   // containers. Deduplicate by id when available, falling back to content.
-  const seen = new Set<string>();
+  const seenKeys = new Set<string>();
 
   function dedupKey(id: string | undefined, text: string): string {
     if (id) return `id:${id}`;
@@ -65,9 +83,10 @@ export function formatCombinedContext(
   if (result.searchResults && result.searchResults.results.length > 0) {
     for (const r of result.searchResults.results) {
       const text = r.memory || "";
+      if (!text || seenFacts.has(normalizeFact(text))) continue;
       const key = dedupKey(r.id, text);
-      if (key && !seen.has(key)) {
-        seen.add(key);
+      if (key && !seenKeys.has(key)) {
+        seenKeys.add(key);
         userMemories.push(text);
       }
     }
@@ -77,9 +96,10 @@ export function formatCombinedContext(
   if (projectSearchResult?.success && projectSearchResult.results && projectSearchResult.results.length > 0) {
     for (const r of projectSearchResult.results) {
       const text = r.memory ?? r.chunk ?? r.content ?? "";
+      if (!text || seenFacts.has(normalizeFact(text))) continue;
       const key = dedupKey(r.id, text);
-      if (key && !seen.has(key)) {
-        seen.add(key);
+      if (key && !seenKeys.has(key)) {
+        seenKeys.add(key);
         projectMemories.push(text);
       }
     }
@@ -99,15 +119,18 @@ export function formatCombinedContext(
     }
   }
 
-  const memories = allMemories
-    .map((m, i) => `${i + 1}. ${m}`)
-    .filter((m) => m.trim().length > 2)
-    .join("\n");
-  if (memories) {
-    parts.push(`[Relevant Memories]\n${memories}`);
+  if (allMemories.length > 0) {
+    const memories = allMemories
+      .map((m, i) => `${i + 1}. ${m}`)
+      .filter((m) => m.trim().length > 2)
+      .join("\n");
+    if (memories) {
+      parts.push(`[Relevant Memories]\n${memories}`);
+      newFacts.push(...allMemories);
+    }
   }
 
-  return parts.join("\n\n");
+  return { text: parts.join("\n\n"), newFacts };
 }
 
 /**
