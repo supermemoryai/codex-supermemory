@@ -12,7 +12,7 @@ const sharedConfig = {
 
 const entries = [
   { in: "src/cli.ts", out: "dist/cli.js" },
-  ...["recall", "capture"].map((n) => ({
+  ...["recall", "flush"].map((n) => ({
     in: `src/hooks/${n}.ts`,
     out: `dist/hooks/${n}.js`,
   })),

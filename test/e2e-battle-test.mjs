@@ -16,7 +16,7 @@
  *   9. Wait for indexing
  *  10. Search again — verify the memory is gone
  *  11. Test recall hook against prod (UserPromptSubmit)
- *  12. Test capture hook against prod (SessionStop)
+ *  12. Test flush hook against prod (SessionStop)
  *  13. Uninstall and verify cleanup
  */
 
@@ -40,7 +40,7 @@ const SEARCH_SCRIPT = join(REPO_ROOT, "dist", "skills", "search-memory.js");
 const SAVE_SCRIPT = join(REPO_ROOT, "dist", "skills", "save-memory.js");
 const FORGET_SCRIPT = join(REPO_ROOT, "dist", "skills", "forget-memory.js");
 const RECALL_HOOK = join(REPO_ROOT, "dist", "hooks", "recall.js");
-const CAPTURE_HOOK = join(REPO_ROOT, "dist", "hooks", "capture.js");
+const FLUSH_HOOK = join(REPO_ROOT, "dist", "hooks", "flush.js");
 
 // Unique test marker to avoid collisions with real data
 const TEST_ID = `e2e_test_${randomUUID().slice(0, 8)}`;
@@ -125,7 +125,7 @@ const skillsDir = join(codexDir, "skills");
 
 // Hook scripts
 record("recall.js exists", existsSync(join(supermemoryDir, "recall.js")));
-record("capture.js exists", existsSync(join(supermemoryDir, "capture.js")));
+record("flush.js exists", existsSync(join(supermemoryDir, "flush.js")));
 
 // Skill scripts
 record("search-memory.js exists", existsSync(join(supermemoryDir, "search-memory.js")));
@@ -149,8 +149,9 @@ const hooksJsonPath = join(codexDir, "hooks.json");
 record("hooks.json exists", existsSync(hooksJsonPath));
 if (existsSync(hooksJsonPath)) {
   const hooksJson = JSON.parse(readFileSync(hooksJsonPath, "utf-8"));
-  record("hooks.json has UserPromptSubmit", !!hooksJson.UserPromptSubmit);
-  record("hooks.json has Stop", !!hooksJson.Stop);
+  record("hooks.json has hooks wrapper", !!hooksJson.hooks);
+  record("hooks.json has UserPromptSubmit", !!hooksJson.hooks?.UserPromptSubmit);
+  record("hooks.json has Stop", !!hooksJson.hooks?.Stop);
 }
 
 // config.toml
@@ -259,34 +260,32 @@ try {
   record("recall hook returns valid JSON", false, `Parse error: ${e.message}`);
 }
 
-// ─── Step 8: Test capture hook against prod ──────────────────────────────────
+// ─── Step 8: Test flush hook against prod ─────────────────────────────────────
 
-step("Capture hook (Stop) against prod");
+step("Flush hook (Stop) against prod");
 
-// Create a fake transcript file
+// Create a fake transcript file using the Codex event_msg format
 const transcriptDir = join(tmpHome, "codex-transcripts");
 mkdirSync(transcriptDir, { recursive: true });
 const transcriptPath = join(transcriptDir, `test-${TEST_ID}.jsonl`);
 const transcriptLines = [
-  JSON.stringify({ type: "message", role: "user", content: `Tell me about ${TEST_ID} database setup` }),
-  JSON.stringify({ type: "message", role: "assistant", content: `The ${TEST_ID} project uses PostgreSQL 16 with pgvector. Migrations are handled by Drizzle ORM.` }),
-  JSON.stringify({ type: "message", role: "user", content: "Thanks, that's helpful!" }),
-  JSON.stringify({ type: "message", role: "assistant", content: "You're welcome! Let me know if you need anything else." }),
+  JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: `Tell me about ${TEST_ID} database setup` } }),
+  JSON.stringify({ type: "event_msg", payload: { type: "assistant_output_text", text: `The ${TEST_ID} project uses PostgreSQL 16 with pgvector. Migrations are handled by Drizzle ORM.` } }),
+  JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "Thanks, that's helpful!" } }),
+  JSON.stringify({ type: "event_msg", payload: { type: "assistant_output_text", text: "You're welcome! Let me know if you need anything else." } }),
 ];
 writeFileSync(transcriptPath, transcriptLines.join("\n") + "\n");
 
-const capturePayload = JSON.stringify({
-  hook: "Stop",
-  payload: {
-    transcript_path: transcriptPath,
-    cwd: REPO_ROOT,
-  },
+const flushPayload = JSON.stringify({
+  session_id: `e2e_${TEST_ID}`,
+  transcript_path: transcriptPath,
+  cwd: REPO_ROOT,
 });
 
-const captureResult = spawnSync("node", [CAPTURE_HOOK], {
+const flushResult = spawnSync("node", [FLUSH_HOOK], {
   encoding: "utf-8",
   timeout: 30000,
-  input: capturePayload,
+  input: flushPayload,
   env: {
     ...process.env,
     HOME: tmpHome,
@@ -295,13 +294,11 @@ const captureResult = spawnSync("node", [CAPTURE_HOOK], {
   },
 });
 
-console.log("  stdout:", (captureResult.stdout || "").trim().slice(0, 300));
-if (captureResult.stderr?.trim()) console.log("  stderr (first 200 chars):", captureResult.stderr.trim().slice(0, 200));
+console.log("  stdout:", (flushResult.stdout || "").trim().slice(0, 300));
+if (flushResult.stderr?.trim()) console.log("  stderr (first 200 chars):", flushResult.stderr.trim().slice(0, 200));
 
-record("capture hook exits 0", captureResult.status === 0, `exit code: ${captureResult.status}`);
-// The capture hook (Stop) doesn't output JSON — it ingests the transcript and exits 0.
-// Success = exit code 0 with no crash.
-record("capture hook completes without error", captureResult.status === 0 && !(captureResult.stderr || "").includes("Error"));
+record("flush hook exits 0", flushResult.status === 0, `exit code: ${flushResult.status}`);
+record("flush hook completes without error", flushResult.status === 0 && !(flushResult.stderr || "").includes("Error"));
 
 // ─── Step 9: Forget the memory ───────────────────────────────────────────────
 
@@ -405,9 +402,9 @@ record("double install exits 0", doubleInstall.status === 0);
 // Verify no duplicates in hooks.json
 if (existsSync(hooksJsonPath)) {
   const hooksJson = JSON.parse(readFileSync(hooksJsonPath, "utf-8"));
-  const userPromptHooks = hooksJson.UserPromptSubmit || [];
+  const userPromptHooks = hooksJson.hooks?.UserPromptSubmit || [];
   record("no duplicate UserPromptSubmit hooks", userPromptHooks.length === 1, `count: ${userPromptHooks.length}`);
-  const stopHooks = hooksJson.Stop || [];
+  const stopHooks = hooksJson.hooks?.Stop || [];
   record("no duplicate Stop hooks", stopHooks.length === 1, `count: ${stopHooks.length}`);
 }
 

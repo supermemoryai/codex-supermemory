@@ -4,9 +4,11 @@ import { homedir } from "node:os";
 import { isConfigured, CONFIG, reloadApiKey } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
-import { formatContextForPrompt } from "../services/context.js";
+import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
 import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
+import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
+import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 
@@ -14,26 +16,30 @@ interface CodexHookPayload {
   session_id?: string;
   prompt?: string;
   input?: string;
+  transcript_path?: string | null;
+  cwd?: string;
   [key: string]: unknown;
 }
 
 // Output shape required by Codex UserPromptSubmitCommandOutputWire.
-// The Rust struct uses #[serde(rename_all = "camelCase")] so keys are camelCase.
+// Empty context is emitted as a silent exit so Codex doesn't render a
+// "hook context:" label with no content.
 function exitWithContext(additionalContext: string): never {
-  process.stdout.write(
-    JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "UserPromptSubmit",
-        additionalContext,
-      },
-    })
-  );
+  if (additionalContext) {
+    process.stdout.write(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext,
+        },
+      })
+    );
+  }
   process.exit(0);
 }
 
 async function main() {
-  // Read stdin via fd 0 — works with both shell pipes and spawnSync piped input.
-  // readFileSync("/dev/stdin") fails when stdin is a pipe (not a tty).
+  // Read stdin via fd 0
   let rawInput = "";
   try {
     rawInput = readFileSync(0, "utf-8");
@@ -88,31 +94,54 @@ async function main() {
     exitWithContext("");
   }
 
-  const cwd = process.cwd();
+  const sessionId = payload.session_id || `codex_${Date.now()}`;
+  const cwd = payload.cwd || process.cwd();
   const tags = getTags(cwd);
-  log("recall: start", { query: query.slice(0, 100), tags });
+
+  log("recall: start", { query: query.slice(0, 100), tags, sessionId });
+
+  // Find transcript path - either from payload or by searching
+  const transcriptPath = resolveTranscriptPath(payload.transcript_path, sessionId);
+  if (transcriptPath) {
+    log("recall: found transcript", { sessionId, transcriptPath });
+  }
 
   const client = new SupermemoryClient();
 
+  // Step 1: Capture any new entries from previous turns BEFORE recall
+  await captureEntries("recall", client, sessionId, transcriptPath, tags, {
+    requireMinEntries: 2,
+    requireMinTurns: CONFIG.autoSaveEveryTurns,
+  });
+
+  // Step 2: Now search for relevant memories (including what we just captured)
+  // Query both containers: user profile from user container, memories from project container.
+  // The profile() API only accepts a single containerTag, so we make parallel calls.
   try {
-    const [searchResult, profileResult] = await Promise.all([
+    const [profileResult, projectSearchResult] = await Promise.all([
+      client.getProfileWithSearch(tags.user, query),
       client.searchMemories(query, tags.project),
-      CONFIG.injectProfile
-        ? client.getProfile(tags.user, query)
-        : Promise.resolve({ success: false as const, profile: null }),
     ]);
 
-    const context = formatContextForPrompt(
-      searchResult,
+    // Get facts already shown in this session to avoid repeating them
+    const seen = getSeenFacts(sessionId);
+    const { text, newFacts } = formatCombinedContext(
       profileResult,
       CONFIG.maxMemories,
-      CONFIG.maxProfileItems
+      CONFIG.maxProfileItems,
+      projectSearchResult,
+      seen,
     );
 
-    log("recall: done", { contextLength: context.length });
+    log("recall: done", {
+      contextLength: text.length,
+      newFactCount: newFacts.length,
+      seenCount: seen.size,
+    });
 
-    if (context.trim()) {
-      exitWithContext(`[SUPERMEMORY CONTEXT]\n${context}\n[END SUPERMEMORY CONTEXT]`);
+    if (newFacts.length > 0) {
+      addSeenFacts(sessionId, newFacts);
+      exitWithContext(`[SUPERMEMORY CONTEXT]\n${text}\n[END SUPERMEMORY CONTEXT]`);
     } else {
       exitWithContext("");
     }
