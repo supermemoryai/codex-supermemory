@@ -25,6 +25,7 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-const REPO_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const CLI_BIN = join(REPO_ROOT, "dist", "cli.js");
 const SEARCH_SCRIPT = join(REPO_ROOT, "dist", "skills", "search-memory.js");
 const SAVE_SCRIPT = join(REPO_ROOT, "dist", "skills", "save-memory.js");
