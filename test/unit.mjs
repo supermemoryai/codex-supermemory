@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import * as TOML from "@iarna/toml";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -180,7 +181,7 @@ describe("hooks.json format", () => {
 // through npm.
 
 describe("integration: install/uninstall", () => {
-  const cliBin = new URL("../dist/cli.js", import.meta.url).pathname;
+  const cliBin = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
   test("install copies skill SKILL.md files to ~/.codex/skills/", (t) => {
     const { tmpDir, codexDir } = setupCodexHome(t);
@@ -236,7 +237,7 @@ describe("integration: install/uninstall", () => {
 // ─── recall hook output envelope ────────────────────────────────────────────
 
 describe("recall hook output envelope", () => {
-  const recallBin = new URL("../dist/hooks/recall.js", import.meta.url).pathname;
+  const recallBin = fileURLToPath(new URL("../dist/hooks/recall.js", import.meta.url));
 
   // Helper: run recall hook with an isolated HOME and a short auth timeout so
   // the first-invocation browser flow times out in 2s rather than 60s.
@@ -319,7 +320,7 @@ describe("recall hook output envelope", () => {
 // ─── flush hook — Stop payload handling ──────────────────────────────────────
 
 describe("flush hook Stop payload", () => {
-  const flushBin = new URL("../dist/hooks/flush.js", import.meta.url).pathname;
+  const flushBin = fileURLToPath(new URL("../dist/hooks/flush.js", import.meta.url));
 
   test("exits 0 with no transcript_path", () => {
     const result = spawnSync("node", [flushBin], {
@@ -392,9 +393,9 @@ describe("flush hook Stop payload", () => {
 // argument parsing, the unconfigured-fallback message, and clean exit codes.
 
 describe("skill scripts: search/save/forget", () => {
-  const searchBin = new URL("../dist/skills/search-memory.js", import.meta.url).pathname;
-  const saveBin = new URL("../dist/skills/save-memory.js", import.meta.url).pathname;
-  const forgetBin = new URL("../dist/skills/forget-memory.js", import.meta.url).pathname;
+  const searchBin = fileURLToPath(new URL("../dist/skills/search-memory.js", import.meta.url));
+  const saveBin = fileURLToPath(new URL("../dist/skills/save-memory.js", import.meta.url));
+  const forgetBin = fileURLToPath(new URL("../dist/skills/forget-memory.js", import.meta.url));
 
   // Run a script with a fresh empty $HOME (no config file) and an empty
   // SUPERMEMORY_CODEX_API_KEY so isConfigured() is false. Returns the spawn result.
