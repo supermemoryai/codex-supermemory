@@ -14,6 +14,9 @@ and the lessons learned across every project — automatically.
   at session end via the `Stop` hook.
 - 🏷️ **Project + user scoping** — memories are tagged per-project and per-user so
   context never leaks across repos.
+- 📦 **Custom container tags** — define custom memory containers (e.g., `work`, `personal`,
+  `code_style`). The AI automatically picks the right container based on your instructions
+  when saving, searching, or forgetting memories.
 - 🔒 **Privacy-aware** — anything wrapped in `<private>...</private>` is redacted
   before being sent to Supermemory.
 - ⚡ **Zero-config install** — one command sets up `~/.codex/config.toml` and
@@ -78,22 +81,25 @@ anything else fails, they exit cleanly without breaking your Codex session.
 
 Drop this file in to override defaults:
 
-| Key                      | Type       | Default        | Description                                                                                  |
-| ------------------------ | ---------- | -------------- | -------------------------------------------------------------------------------------------- |
-| `apiKey`                 | `string`   | —              | API key (env var takes precedence, browser auth is preferred).                               |
-| `similarityThreshold`    | `number`   | `0.6`          | Minimum similarity score for retrieved memories.                                             |
-| `maxMemories`            | `number`   | `5`            | Max memories injected per prompt.                                                            |
-| `maxProfileItems`        | `number`   | `5`            | Max profile items considered.                                                                |
-| `injectProfile`          | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
-| `containerTagPrefix`     | `string`   | `"codex"`      | Prefix for auto-generated container tags.                                                    |
-| `userContainerTag`       | `string`   | auto           | Override the user container tag.                                                             |
-| `projectContainerTag`    | `string`   | auto (per-cwd) | Override the project container tag.                                                          |
-| `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
-| `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
-| `autoSaveEveryTurns`     | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
-| `signalExtraction`       | `boolean`  | `false`        | Enable signal-based filtering (only capture turns with keywords like "prefer", "decided").   |
-| `signalKeywords`         | `string[]` | (defaults)     | Keywords that trigger signal extraction.                                                     |
-| `signalTurnsBefore`      | `number`   | `3`            | Include N turns before a signal for context.                                                 |
+| Key                            | Type       | Default        | Description                                                                                  |
+| ------------------------------ | ---------- | -------------- | -------------------------------------------------------------------------------------------- |
+| `apiKey`                       | `string`   | —              | API key (env var takes precedence, browser auth is preferred).                               |
+| `similarityThreshold`          | `number`   | `0.6`          | Minimum similarity score for retrieved memories.                                             |
+| `maxMemories`                  | `number`   | `5`            | Max memories injected per prompt.                                                            |
+| `maxProfileItems`              | `number`   | `5`            | Max profile items considered.                                                                |
+| `injectProfile`                | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
+| `containerTagPrefix`           | `string`   | `"codex"`      | Prefix for auto-generated container tags.                                                    |
+| `userContainerTag`             | `string`   | auto           | Override the user container tag.                                                             |
+| `projectContainerTag`          | `string`   | auto (per-cwd) | Override the project container tag.                                                          |
+| `filterPrompt`                 | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
+| `debug`                        | `boolean`  | `false`        | Enable debug logging.                                                                        |
+| `autoSaveEveryTurns`           | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
+| `signalExtraction`             | `boolean`  | `false`        | Enable signal-based filtering (only capture turns with keywords like "prefer", "decided").   |
+| `signalKeywords`               | `string[]` | (defaults)     | Keywords that trigger signal extraction.                                                     |
+| `signalTurnsBefore`            | `number`   | `3`            | Include N turns before a signal for context.                                                 |
+| `enableCustomContainers`       | `boolean`  | `false`        | Enable AI-driven routing to custom containers.                                               |
+| `customContainers`             | `array`    | `[]`           | Custom containers with `tag` and `description` (see below).                                  |
+| `customContainerInstructions`  | `string`   | `""`           | Free-text instructions for the AI on how to route memories to containers.                    |
 
 User and project tags are auto-derived from your `git config user.email` and the
 current working directory (both hashed) when not explicitly set.
@@ -114,16 +120,62 @@ npx codex-supermemory status      # show current install status
 
 ## Skills (fallback commands)
 
-These Codex skills are available as explicit commands when you need more control:
+These Codex skills are available as explicit commands when you need more control.
+All memory skills support `--container <tag>` to target a specific custom container.
 
-| Skill                  | Usage                                      | Description                              |
-| ---------------------- | ------------------------------------------ | ---------------------------------------- |
-| `/supermemory-search`  | `/supermemory-search <query>`              | Search memories manually.                |
-| `/supermemory-save`    | `/supermemory-save <content>`              | Save a specific memory explicitly.       |
-| `/supermemory-forget`  | `/supermemory-forget <content>`            | Remove a memory.                         |
-| `/supermemory-login`   | `/supermemory-login`                       | Re-authenticate with Supermemory.        |
+| Skill                  | Usage                                                       | Description                              |
+| ---------------------- | ----------------------------------------------------------- | ---------------------------------------- |
+| `/supermemory-search`  | `/supermemory-search [--container <tag>] <query>`           | Search memories manually.                |
+| `/supermemory-save`    | `/supermemory-save [--container <tag>] <content>`           | Save a specific memory explicitly.       |
+| `/supermemory-forget`  | `/supermemory-forget [--container <tag>] <content>`         | Remove a memory.                         |
+| `/supermemory-login`   | `/supermemory-login`                                        | Re-authenticate with Supermemory.        |
 
 Skills are fallback commands — the hooks handle most use cases automatically.
+
+## Custom Container Tags
+
+Custom container tags let you organize memories into separate buckets (e.g., `work`,
+`personal`, `code_style`). The AI reads the container descriptions from your config
+and automatically picks the right container when saving memories.
+
+### Setup
+
+Add these fields to `~/.codex/supermemory.json`:
+
+```json
+{
+  "enableCustomContainers": true,
+  "customContainers": [
+    { "tag": "personal", "description": "Personal life — family, health, hobbies, routines" },
+    { "tag": "work", "description": "Work-related — projects, deadlines, meetings, colleagues" },
+    { "tag": "code_style", "description": "Coding preferences — languages, tools, patterns, conventions" }
+  ],
+  "customContainerInstructions": "Route coding preferences to code_style. Personal topics to personal. Default to project container for ambiguous content."
+}
+```
+
+### How it works
+
+1. You define containers with a `tag` (identifier) and a `description` (plain English
+   explaining what belongs there).
+2. On every prompt, the container catalog is injected into the AI's context so it knows
+   what containers are available.
+3. When the AI saves a memory (via `/supermemory-save`), it picks the best matching
+   container based on the descriptions and uses `--container <tag>`.
+4. When searching or forgetting, the AI can also target specific containers.
+5. Automatic capture (background saving) always goes to the default project/user
+   containers — only explicit saves get routed to custom containers.
+
+Each container tag automatically becomes a **Space** on the
+[Supermemory dashboard](https://app.supermemory.ai), so you can view and manage
+memories organized by category.
+
+### Container config reference
+
+| Field              | Type     | Description                                        |
+| ------------------ | -------- | -------------------------------------------------- |
+| `tag`              | `string` | Unique identifier for the container (e.g. `work`). |
+| `description`      | `string` | Plain English description for AI routing.           |
 
 ## Privacy
 

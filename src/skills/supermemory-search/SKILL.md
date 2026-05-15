@@ -13,7 +13,7 @@ Search Supermemory for past coding sessions, decisions, and saved information.
 Run the search script with the user's query and optional scope flag:
 
 ```bash
-node ~/.codex/supermemory/search-memory.js [--user|--project|--both] "USER_QUERY_HERE"
+node ~/.codex/supermemory/search-memory.js [--user|--project|--both|--container <tag>] "USER_QUERY_HERE"
 ```
 
 ### Scope Flags
@@ -21,6 +21,7 @@ node ~/.codex/supermemory/search-memory.js [--user|--project|--both] "USER_QUERY
 - `--both` (default): Search both personal and project memories in parallel
 - `--user`: Search personal/user memories across sessions
 - `--project`: Search project-specific memories
+- `--container <tag>`: Search a specific custom container (see `[SUPERMEMORY CONTAINERS]` in your context for available containers)
 
 ### Options
 

@@ -3,34 +3,39 @@ import { SupermemoryClient, type SearchResponse } from "../services/client.js";
 import { formatContextForPrompt } from "../services/context.js";
 import { getProjectTag, getUserTag } from "../services/tags.js";
 
-type Scope = "user" | "project" | "both";
+type Scope = "user" | "project" | "both" | "custom";
 
 interface ParsedArgs {
   scope: Scope;
   includeProfile: boolean;
   query: string;
+  containerTag?: string;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
   let scope: Scope = "both";
   let includeProfile = true;
+  let containerTag: string | undefined;
   const queryParts: string[] = [];
 
-  for (const arg of args) {
-    if (arg === "--user") {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--user") {
       scope = "user";
-    } else if (arg === "--project") {
+    } else if (args[i] === "--project") {
       scope = "project";
-    } else if (arg === "--both") {
+    } else if (args[i] === "--both") {
       scope = "both";
-    } else if (arg === "--no-profile") {
+    } else if (args[i] === "--no-profile") {
       includeProfile = false;
+    } else if (args[i] === "--container" && i + 1 < args.length) {
+      containerTag = args[++i];
+      scope = "custom";
     } else {
-      queryParts.push(arg);
+      queryParts.push(args[i]);
     }
   }
 
-  return { scope, includeProfile, query: queryParts.join(" ") };
+  return { scope, includeProfile, query: queryParts.join(" "), containerTag };
 }
 
 async function main(): Promise<void> {
@@ -42,11 +47,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const { scope, includeProfile, query } = parseArgs(process.argv.slice(2));
+  const { scope, includeProfile, query, containerTag } = parseArgs(process.argv.slice(2));
 
   if (!query.trim()) {
     console.log(
-      'No search query provided. Usage: node search-memory.js [--user|--project|--both] "query"'
+      'No search query provided. Usage: node search-memory.js [--user|--project|--both|--container <tag>] "query"'
     );
     process.exit(0);
   }
@@ -58,7 +63,14 @@ async function main(): Promise<void> {
   try {
     let searchResult: SearchResponse;
 
-    if (scope === "both") {
+    if (scope === "custom" && containerTag) {
+      searchResult = await client.searchMemories(query, containerTag);
+
+      if (!searchResult.success) {
+        console.log(`Failed to search container '${containerTag}': ${searchResult.error}`);
+        return;
+      }
+    } else if (scope === "both") {
       const [userResult, projectResult] = await Promise.all([
         client.searchMemories(query, userTag),
         client.searchMemories(query, projectTag),
