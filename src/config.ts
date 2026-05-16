@@ -202,7 +202,7 @@ export function getContainerCatalog(): string | null {
 
 export function validateContainerTag(tag: string): string | null {
   if (!CONFIG.enableCustomContainers || CONFIG.customContainers.length === 0) {
-    return null;
+    return "Custom containers are not enabled. Remove --container or set enableCustomContainers in config.";
   }
 
   const validTags = CONFIG.customContainers.map((c) => c.tag);
