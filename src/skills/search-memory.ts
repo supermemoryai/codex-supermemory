@@ -1,4 +1,4 @@
-import { CONFIG, isConfigured } from "../config.js";
+import { CONFIG, isConfigured, validateContainerTag } from "../config.js";
 import { SupermemoryClient, type SearchResponse } from "../services/client.js";
 import { formatContextForPrompt } from "../services/context.js";
 import { getProjectTag, getUserTag } from "../services/tags.js";
@@ -59,6 +59,14 @@ async function main(): Promise<void> {
   const client = new SupermemoryClient();
   const userTag = getUserTag();
   const projectTag = getProjectTag(process.cwd());
+
+  if (containerTag) {
+    const validationError = validateContainerTag(containerTag);
+    if (validationError) {
+      console.log(validationError);
+      process.exit(1);
+    }
+  }
 
   try {
     let searchResult: SearchResponse;

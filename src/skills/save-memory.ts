@@ -1,4 +1,4 @@
-import { isConfigured } from "../config.js";
+import { isConfigured, validateContainerTag } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getProjectTag } from "../services/tags.js";
 
@@ -31,6 +31,14 @@ async function main(): Promise<void> {
   if (!content.trim()) {
     console.log('No content provided. Usage: node save-memory.js [--container <tag>] "content to save"');
     process.exit(0);
+  }
+
+  if (containerTag) {
+    const validationError = validateContainerTag(containerTag);
+    if (validationError) {
+      console.log(validationError);
+      process.exit(1);
+    }
   }
 
   const client = new SupermemoryClient();

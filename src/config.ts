@@ -199,3 +199,17 @@ export function getContainerCatalog(): string | null {
 
   return lines.join("\n");
 }
+
+export function validateContainerTag(tag: string): string | null {
+  if (!CONFIG.enableCustomContainers || CONFIG.customContainers.length === 0) {
+    return null;
+  }
+
+  const validTags = CONFIG.customContainers.map((c) => c.tag);
+  if (validTags.includes(tag)) {
+    return null;
+  }
+
+  const validList = validTags.map((t) => `'${t}'`).join(", ");
+  return `Unknown container tag '${tag}'. Valid containers: ${validList}`;
+}
