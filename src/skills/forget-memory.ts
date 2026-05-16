@@ -1,6 +1,21 @@
-import { isConfigured } from "../config.js";
+import { isConfigured, validateContainerTag } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getProjectTag, getUserTag } from "../services/tags.js";
+
+function parseArgs(args: string[]): { content: string; containerTag?: string } {
+  let containerTag: string | undefined;
+  const contentParts: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--container" && i + 1 < args.length) {
+      containerTag = args[++i];
+    } else {
+      contentParts.push(args[i]);
+    }
+  }
+
+  return { content: contentParts.join(" "), containerTag };
+}
 
 async function main(): Promise<void> {
   if (!isConfigured()) {
@@ -11,45 +26,62 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const content = process.argv.slice(2).join(" ");
+  const { content, containerTag } = parseArgs(process.argv.slice(2));
 
   if (!content.trim()) {
     console.log(
-      'No content provided. Usage: node forget-memory.js "content to forget"'
+      'No content provided. Usage: node forget-memory.js [--container <tag>] "content to forget"'
     );
     process.exit(0);
   }
 
   const client = new SupermemoryClient();
-  const projectTag = getProjectTag(process.cwd());
-  const userTag = getUserTag();
+
+  if (containerTag) {
+    const validationError = validateContainerTag(containerTag);
+    if (validationError) {
+      console.log(validationError);
+      process.exit(1);
+    }
+  }
 
   try {
-    // Forget from both project and user scopes since memories may exist in either.
-    const [projectResult, userResult] = await Promise.all([
-      client.forgetMemory(content, projectTag),
-      client.forgetMemory(content, userTag),
-    ]);
-
-    const forgotten: string[] = [];
-    const errors: string[] = [];
-
-    if (projectResult.success) {
-      forgotten.push(projectResult.id ? `project (id: ${projectResult.id})` : "project");
+    if (containerTag) {
+      const result = await client.forgetMemory(content, containerTag);
+      if (result.success) {
+        console.log(`Memory forgotten from container '${containerTag}'${result.id ? ` (id: ${result.id})` : ""}`);
+      } else {
+        console.log(`Failed to forget memory from container '${containerTag}': ${result.error}`);
+      }
     } else {
-      errors.push(`project: ${projectResult.error}`);
-    }
+      const projectTag = getProjectTag(process.cwd());
+      const userTag = getUserTag();
 
-    if (userResult.success) {
-      forgotten.push(userResult.id ? `user (id: ${userResult.id})` : "user");
-    } else {
-      errors.push(`user: ${userResult.error}`);
-    }
+      const [projectResult, userResult] = await Promise.all([
+        client.forgetMemory(content, projectTag),
+        client.forgetMemory(content, userTag),
+      ]);
 
-    if (forgotten.length > 0) {
-      console.log(`Memory forgotten from: ${forgotten.join(", ")}`);
-    } else {
-      console.log(`Failed to forget memory: ${errors.join("; ")}`);
+      const forgotten: string[] = [];
+      const errors: string[] = [];
+
+      if (projectResult.success) {
+        forgotten.push(projectResult.id ? `project (id: ${projectResult.id})` : "project");
+      } else {
+        errors.push(`project: ${projectResult.error}`);
+      }
+
+      if (userResult.success) {
+        forgotten.push(userResult.id ? `user (id: ${userResult.id})` : "user");
+      } else {
+        errors.push(`user: ${userResult.error}`);
+      }
+
+      if (forgotten.length > 0) {
+        console.log(`Memory forgotten from: ${forgotten.join(", ")}`);
+      } else {
+        console.log(`Failed to forget memory: ${errors.join("; ")}`);
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -5,6 +5,11 @@ import { loadCredentials } from "./services/auth.js";
 
 const CONFIG_FILE = join(homedir(), ".codex", "supermemory.json");
 
+export interface CustomContainer {
+  tag: string;
+  description: string;
+}
+
 interface CodexSupermemoryConfig {
   apiKey?: string;
   similarityThreshold?: number;
@@ -22,6 +27,10 @@ interface CodexSupermemoryConfig {
   signalTurnsBefore?: number;
   // Auto-save interval
   autoSaveEveryTurns?: number;
+  // Custom container routing
+  enableCustomContainers?: boolean;
+  customContainers?: CustomContainer[];
+  customContainerInstructions?: string;
 }
 
 const DEFAULT_SIGNAL_KEYWORDS = [
@@ -130,6 +139,13 @@ export const CONFIG = {
   signalTurnsBefore: fileConfig.signalTurnsBefore ?? DEFAULTS.signalTurnsBefore,
   // Auto-save interval
   autoSaveEveryTurns: fileConfig.autoSaveEveryTurns ?? DEFAULTS.autoSaveEveryTurns,
+  // Custom container routing
+  enableCustomContainers: fileConfig.enableCustomContainers ?? false,
+  customContainers: (fileConfig.customContainers ?? []).filter(
+    (c): c is CustomContainer =>
+      !!c && typeof c.tag === "string" && typeof c.description === "string",
+  ),
+  customContainerInstructions: fileConfig.customContainerInstructions ?? "",
 };
 
 export function isConfigured(): boolean {
@@ -150,4 +166,50 @@ export function getSignalConfig(): {
     keywords: CONFIG.signalKeywords.map((k) => k.toLowerCase()),
     turnsBefore: CONFIG.signalTurnsBefore,
   };
+}
+
+export function getContainerCatalog(): string | null {
+  if (!CONFIG.enableCustomContainers || CONFIG.customContainers.length === 0) {
+    return null;
+  }
+
+  const lines: string[] = [];
+  lines.push("Custom memory containers are available for organizing memories:");
+  lines.push("");
+  for (const c of CONFIG.customContainers) {
+    lines.push(`- \`${c.tag}\`: ${c.description}`);
+  }
+
+  if (CONFIG.customContainerInstructions) {
+    lines.push("");
+    lines.push(CONFIG.customContainerInstructions);
+  }
+
+  lines.push("");
+  lines.push(
+    "When saving memories with /supermemory-save, use --container <tag> to route to a specific container.",
+  );
+  lines.push(
+    "When searching with /supermemory-search, use --container <tag> to search a specific container.",
+  );
+  lines.push(
+    "When forgetting with /supermemory-forget, use --container <tag> to target a specific container.",
+  );
+  lines.push("If no container is specified, memories go to the default project/user containers.");
+
+  return lines.join("\n");
+}
+
+export function validateContainerTag(tag: string): string | null {
+  if (!CONFIG.enableCustomContainers || CONFIG.customContainers.length === 0) {
+    return "Custom containers are not enabled. Remove --container or set enableCustomContainers in config.";
+  }
+
+  const validTags = CONFIG.customContainers.map((c) => c.tag);
+  if (validTags.includes(tag)) {
+    return null;
+  }
+
+  const validList = validTags.map((t) => `'${t}'`).join(", ");
+  return `Unknown container tag '${tag}'. Valid containers: ${validList}`;
 }

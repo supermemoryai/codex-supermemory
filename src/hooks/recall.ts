@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { isConfigured, CONFIG, reloadApiKey } from "../config.js";
+import { isConfigured, CONFIG, reloadApiKey, getContainerCatalog } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
@@ -139,9 +139,26 @@ async function main() {
       seenCount: seen.size,
     });
 
+    const containerCatalog = getContainerCatalog();
+
     if (newFacts.length > 0) {
       addSeenFacts(sessionId, newFacts);
-      exitWithContext(`[SUPERMEMORY CONTEXT]\n${text}\n[END SUPERMEMORY CONTEXT]`);
+      let additionalContext = `[SUPERMEMORY CONTEXT]\n${text}\n[END SUPERMEMORY CONTEXT]`;
+
+      if (containerCatalog) {
+        additionalContext += `\n\n[SUPERMEMORY CONTAINERS]\n${containerCatalog}\n[END SUPERMEMORY CONTAINERS]`;
+      }
+
+      log("recall: emit context", {
+        additionalContextLength: additionalContext.length,
+      });
+      exitWithContext(additionalContext);
+    } else if (containerCatalog) {
+      const additionalContext = `[SUPERMEMORY CONTAINERS]\n${containerCatalog}\n[END SUPERMEMORY CONTAINERS]`;
+      log("recall: emit container catalog only", {
+        additionalContextLength: additionalContext.length,
+      });
+      exitWithContext(additionalContext);
     } else {
       exitWithContext("");
     }
