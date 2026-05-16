@@ -139,16 +139,23 @@ async function main() {
       seenCount: seen.size,
     });
 
+    const containerCatalog = getContainerCatalog();
+
     if (newFacts.length > 0) {
       addSeenFacts(sessionId, newFacts);
       let additionalContext = `[SUPERMEMORY CONTEXT]\n${text}\n[END SUPERMEMORY CONTEXT]`;
 
-      const containerCatalog = getContainerCatalog();
       if (containerCatalog) {
         additionalContext += `\n\n[SUPERMEMORY CONTAINERS]\n${containerCatalog}\n[END SUPERMEMORY CONTAINERS]`;
       }
 
       log("recall: emit context", {
+        additionalContextLength: additionalContext.length,
+      });
+      exitWithContext(additionalContext);
+    } else if (containerCatalog) {
+      const additionalContext = `[SUPERMEMORY CONTAINERS]\n${containerCatalog}\n[END SUPERMEMORY CONTAINERS]`;
+      log("recall: emit container catalog only", {
         additionalContextLength: additionalContext.length,
       });
       exitWithContext(additionalContext);
