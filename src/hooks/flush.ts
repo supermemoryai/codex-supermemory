@@ -4,6 +4,7 @@ import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { log } from "../services/logger.js";
 import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
+import { getSessionId } from "../services/session.js";
 
 interface CodexStopPayload {
   session_id?: string;
@@ -31,9 +32,9 @@ async function main() {
     return;
   }
 
-  const sessionId = payload.session_id || `codex_${Date.now()}`;
   const cwd = payload.cwd || process.cwd();
   const tags = getTags(cwd);
+  const sessionId = getSessionId(payload.session_id, tags.project);
 
   const transcriptPath = resolveTranscriptPath(payload.transcript_path, sessionId);
 
