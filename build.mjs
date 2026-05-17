@@ -10,7 +10,7 @@ const sharedConfig = {
   sourcemap: false,
 };
 
-const entries = [
+const executableEntries = [
   { in: "src/cli.ts", out: "dist/cli.js" },
   ...["recall", "flush"].map((n) => ({
     in: `src/hooks/${n}.ts`,
@@ -22,15 +22,29 @@ const entries = [
   })),
 ];
 
+const libraryEntries = [
+  { in: "src/services/session.ts", out: "dist/services/session.js" },
+  { in: "src/services/tags.ts", out: "dist/services/tags.js" },
+];
+
 await Promise.all(
-  entries.map((e) =>
-    esbuild.build({
-      ...sharedConfig,
-      entryPoints: [e.in],
-      outfile: e.out,
-      banner: { js: "#!/usr/bin/env node" },
-    })
-  )
+  [
+    ...executableEntries.map((e) =>
+      esbuild.build({
+        ...sharedConfig,
+        entryPoints: [e.in],
+        outfile: e.out,
+        banner: { js: "#!/usr/bin/env node" },
+      })
+    ),
+    ...libraryEntries.map((e) =>
+      esbuild.build({
+        ...sharedConfig,
+        entryPoints: [e.in],
+        outfile: e.out,
+      })
+    ),
+  ]
 );
 
 // Copy SKILL.md files to dist
@@ -48,7 +62,7 @@ mkdirSync("dist", { recursive: true });
 writeFileSync("dist/package.json", JSON.stringify({ type: "commonjs" }, null, 2));
 
 // Make the executables actually executable.
-for (const e of entries) {
+for (const e of executableEntries) {
   try {
     chmodSync(e.out, 0o755);
   } catch {

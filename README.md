@@ -17,6 +17,8 @@ and the lessons learned across every project — automatically.
 - 📦 **Custom container tags** — define custom memory containers (e.g., `work`, `personal`,
   `code_style`). The AI automatically picks the right container based on your instructions
   when saving, searching, or forgetting memories.
+- 🏷️ **Project + user scoping** — automatic session memories are stored per-user,
+  while explicit project knowledge is tagged per-repo so context never leaks across repos.
 - 🔒 **Privacy-aware** — anything wrapped in `<private>...</private>` is redacted
   before being sent to Supermemory.
 - ⚡ **Zero-config install** — one command sets up `~/.codex/config.toml` and
@@ -81,28 +83,30 @@ anything else fails, they exit cleanly without breaking your Codex session.
 
 Drop this file in to override defaults:
 
-| Key                            | Type       | Default        | Description                                                                                  |
-| ------------------------------ | ---------- | -------------- | -------------------------------------------------------------------------------------------- |
-| `apiKey`                       | `string`   | —              | API key (env var takes precedence, browser auth is preferred).                               |
-| `similarityThreshold`          | `number`   | `0.6`          | Minimum similarity score for retrieved memories.                                             |
-| `maxMemories`                  | `number`   | `5`            | Max memories injected per prompt.                                                            |
-| `maxProfileItems`              | `number`   | `5`            | Max profile items considered.                                                                |
-| `injectProfile`                | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
-| `containerTagPrefix`           | `string`   | `"codex"`      | Prefix for auto-generated container tags.                                                    |
-| `userContainerTag`             | `string`   | auto           | Override the user container tag.                                                             |
-| `projectContainerTag`          | `string`   | auto (per-cwd) | Override the project container tag.                                                          |
-| `filterPrompt`                 | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
-| `debug`                        | `boolean`  | `false`        | Enable debug logging.                                                                        |
-| `autoSaveEveryTurns`           | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
-| `signalExtraction`             | `boolean`  | `false`        | Enable signal-based filtering (only capture turns with keywords like "prefer", "decided").   |
-| `signalKeywords`               | `string[]` | (defaults)     | Keywords that trigger signal extraction.                                                     |
-| `signalTurnsBefore`            | `number`   | `3`            | Include N turns before a signal for context.                                                 |
-| `enableCustomContainers`       | `boolean`  | `false`        | Enable AI-driven routing to custom containers.                                               |
-| `customContainers`             | `array`    | `[]`           | Custom containers with `tag` and `description` (see below).                                  |
-| `customContainerInstructions`  | `string`   | `""`           | Free-text instructions for the AI on how to route memories to containers.                    |
+| Key                      | Type       | Default        | Description                                                                                  |
+| ------------------------ | ---------- | -------------- | -------------------------------------------------------------------------------------------- |
+| `apiKey`                 | `string`   | —              | API key (env var takes precedence, browser auth is preferred).                               |
+| `similarityThreshold`    | `number`   | `0.6`          | Minimum similarity score for retrieved memories.                                             |
+| `maxMemories`            | `number`   | `5`            | Max memories injected per prompt.                                                            |
+| `maxProfileItems`        | `number`   | `5`            | Max profile items considered.                                                                |
+| `injectProfile`          | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
+| `containerTagPrefix`     | `string`   | `"codex"`      | Prefix for auto-generated container tags.                                                    |
+| `userContainerTag`       | `string`   | auto           | Override the user container tag.                                                             |
+| `projectContainerTag`    | `string`   | auto (per-repo) | Override the project container tag.                                                         |
+| `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
+| `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
+| `autoSaveEveryTurns`     | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
+| `signalExtraction`       | `boolean`  | `false`        | Enable signal-based filtering (only capture turns with keywords like "prefer", "decided").   |
+| `signalKeywords`         | `string[]` | (defaults)     | Keywords that trigger signal extraction.                                                     |
+| `signalTurnsBefore`      | `number`   | `3`            | Include N turns before a signal for context.                                                 |
+| `enableCustomContainers`       | `boolean`  | `false`        | Enable AI-driven routing to custom containers.                                         |
+| `customContainers`             | `array`    | `[]`           | Custom containers with `tag` and `description` (see below).                            |
+| `customContainerInstructions`  | `string`   | `""`           | Free-text instructions for the AI on how to route memories to containers.  
 
-User and project tags are auto-derived from your `git config user.email` and the
-current working directory (both hashed) when not explicitly set.
+User tags are auto-derived from your `git config user.email`. Project tags are
+derived from the Git common directory when available, so linked worktrees and
+Conductor workspaces for the same repository share one project container by default.
+Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to keep each worktree isolated.
 
 ### Signal extraction (optional)
 

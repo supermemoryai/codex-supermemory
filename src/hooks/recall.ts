@@ -9,6 +9,7 @@ import { log } from "../services/logger.js";
 import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
 import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
+import { getSessionId } from "../services/session.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 
@@ -94,9 +95,9 @@ async function main() {
     exitWithContext("");
   }
 
-  const sessionId = payload.session_id || `codex_${Date.now()}`;
   const cwd = payload.cwd || process.cwd();
   const tags = getTags(cwd);
+  const sessionId = getSessionId(payload.session_id, tags.project);
 
   log("recall: start", { query: query.slice(0, 100), tags, sessionId });
 
