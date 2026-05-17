@@ -68,6 +68,20 @@ function getGitRoot(directory: string): string | null {
   }
 }
 
+function getGitRepoName(directory: string): string | null {
+  try {
+    const remoteUrl = execSync("git remote get-url origin", {
+      cwd: directory,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    const match = remoteUrl.match(/[/:]([^/]+?)(?:\.git)?$/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 export function getUserTag(): string {
   if (CONFIG.userContainerTag) return CONFIG.userContainerTag;
   const email = getGitEmail();
@@ -80,6 +94,12 @@ export function getProjectTag(directory: string): string {
   if (CONFIG.projectContainerTag) return CONFIG.projectContainerTag;
   const basePath = getGitRoot(directory) || directory;
   return `${CONFIG.containerTagPrefix}_project_${sha256(basePath)}`;
+}
+
+export function getProjectName(directory: string): string {
+  const gitRoot = getGitRoot(directory);
+  const basePath = gitRoot || directory;
+  return getGitRepoName(basePath) || basename(basePath) || "unknown";
 }
 
 export function getTags(directory: string): { user: string; project: string } {

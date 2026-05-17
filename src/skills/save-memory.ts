@@ -1,6 +1,6 @@
 import { isConfigured } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
-import { getProjectTag } from "../services/tags.js";
+import { getProjectName, getProjectTag } from "../services/tags.js";
 
 async function main(): Promise<void> {
   if (!isConfigured()) {
@@ -20,17 +20,20 @@ async function main(): Promise<void> {
 
   const client = new SupermemoryClient();
   const projectTag = getProjectTag(process.cwd());
+  const projectName = getProjectName(process.cwd());
 
   try {
     const metadata = {
       type: "project-knowledge" as const,
       source: "skill",
+      project: projectName,
       timestamp: new Date().toISOString(),
     };
 
     const result = await client.addMemory(content, projectTag, metadata);
 
     if (result.success) {
+      await client.updateContainerTagName(projectTag, `Codex · ${projectName}`);
       console.log(`Memory saved (id: ${result.id}) to project '${projectTag}'`);
     } else {
       console.log(`Failed to save memory: ${result.error}`);
