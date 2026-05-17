@@ -12,8 +12,8 @@ and the lessons learned across every project — automatically.
   `UserPromptSubmit` hook.
 - 💾 **Automatic capture** — conversations are stored incrementally (every N turns) and
   at session end via the `Stop` hook.
-- 🏷️ **Project + user scoping** — memories are tagged per-project and per-user so
-  context never leaks across repos.
+- 🏷️ **Project + user scoping** — automatic session memories are stored per-user,
+  while explicit project knowledge is tagged per-repo so context never leaks across repos.
 - 🔒 **Privacy-aware** — anything wrapped in `<private>...</private>` is redacted
   before being sent to Supermemory.
 - ⚡ **Zero-config install** — one command sets up `~/.codex/config.toml` and
@@ -87,7 +87,7 @@ Drop this file in to override defaults:
 | `injectProfile`          | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
 | `containerTagPrefix`     | `string`   | `"codex"`      | Prefix for auto-generated container tags.                                                    |
 | `userContainerTag`       | `string`   | auto           | Override the user container tag.                                                             |
-| `projectContainerTag`    | `string`   | auto (per-cwd) | Override the project container tag.                                                          |
+| `projectContainerTag`    | `string`   | auto (per-repo) | Override the project container tag.                                                         |
 | `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
 | `autoSaveEveryTurns`     | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
@@ -95,8 +95,10 @@ Drop this file in to override defaults:
 | `signalKeywords`         | `string[]` | (defaults)     | Keywords that trigger signal extraction.                                                     |
 | `signalTurnsBefore`      | `number`   | `3`            | Include N turns before a signal for context.                                                 |
 
-User and project tags are auto-derived from your `git config user.email` and the
-current working directory (both hashed) when not explicitly set.
+User tags are auto-derived from your `git config user.email`. Project tags are
+derived from the Git common directory when available, so linked worktrees and
+Conductor workspaces for the same repository share one project container by default.
+Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to keep each worktree isolated.
 
 ### Signal extraction (optional)
 
