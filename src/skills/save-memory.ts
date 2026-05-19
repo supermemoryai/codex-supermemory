@@ -1,6 +1,21 @@
-import { isConfigured } from "../config.js";
+import { isConfigured, validateContainerTag } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getProjectTag } from "../services/tags.js";
+
+function parseArgs(args: string[]): { content: string; containerTag?: string } {
+  let containerTag: string | undefined;
+  const contentParts: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--container" && i + 1 < args.length) {
+      containerTag = args[++i];
+    } else {
+      contentParts.push(args[i]);
+    }
+  }
+
+  return { content: contentParts.join(" "), containerTag };
+}
 
 async function main(): Promise<void> {
   if (!isConfigured()) {
@@ -11,15 +26,23 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const content = process.argv.slice(2).join(" ");
+  const { content, containerTag } = parseArgs(process.argv.slice(2));
 
   if (!content.trim()) {
-    console.log('No content provided. Usage: node save-memory.js "content to save"');
+    console.log('No content provided. Usage: node save-memory.js [--container <tag>] "content to save"');
     process.exit(0);
   }
 
+  if (containerTag) {
+    const validationError = validateContainerTag(containerTag);
+    if (validationError) {
+      console.log(validationError);
+      process.exit(1);
+    }
+  }
+
   const client = new SupermemoryClient();
-  const projectTag = getProjectTag(process.cwd());
+  const effectiveTag = containerTag || getProjectTag(process.cwd());
 
   try {
     const metadata = {
@@ -28,10 +51,11 @@ async function main(): Promise<void> {
       timestamp: new Date().toISOString(),
     };
 
-    const result = await client.addMemory(content, projectTag, metadata);
+    const result = await client.addMemory(content, effectiveTag, metadata);
 
     if (result.success) {
-      console.log(`Memory saved (id: ${result.id}) to project '${projectTag}'`);
+      const tagLabel = containerTag ? `container '${containerTag}'` : `project '${effectiveTag}'`;
+      console.log(`Memory saved (id: ${result.id}) to ${tagLabel}`);
     } else {
       console.log(`Failed to save memory: ${result.error}`);
     }

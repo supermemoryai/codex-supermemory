@@ -122,7 +122,12 @@ export async function captureEntries(
   });
 
   const transcript = formatTranscript(signalEntries);
-  const content = `[Session ${sessionId}]\n${transcript}`;
+  const rawContent = `[Session ${sessionId}]\n${transcript}`;
+
+  const content = rawContent
+    .replace(/\[SUPERMEMORY CONTAINERS\][\s\S]*?\[END SUPERMEMORY CONTAINERS\]\s*/g, "")
+    .replace(/<supermemory-containers>[\s\S]*?<\/supermemory-containers>\s*/g, "")
+    .trim();
 
   const metadata = {
     type: "conversation" as const,

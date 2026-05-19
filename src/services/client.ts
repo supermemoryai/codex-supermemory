@@ -181,7 +181,11 @@ export class SupermemoryClient {
     metadata?: { type?: MemoryType; tool?: string; [key: string]: unknown },
     options?: { customId?: string }
   ) {
-    log("addMemory: start", { containerTag, contentLength: content.length, customId: options?.customId });
+    log("addMemory: start", {
+      containerTag,
+      contentLength: content.length,
+      customId: options?.customId,
+    });
     try {
       const payload: {
         content: string;
