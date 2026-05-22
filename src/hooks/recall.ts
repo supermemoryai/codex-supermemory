@@ -22,9 +22,6 @@ interface CodexHookPayload {
   [key: string]: unknown;
 }
 
-// Output shape required by Codex UserPromptSubmitCommandOutputWire.
-// Empty context is emitted as a silent exit so Codex doesn't render a
-// "hook context:" label with no content.
 function exitWithContext(additionalContext: string): never {
   if (additionalContext) {
     process.stdout.write(
@@ -40,7 +37,6 @@ function exitWithContext(additionalContext: string): never {
 }
 
 async function main() {
-  // Read stdin via fd 0
   let rawInput = "";
   try {
     rawInput = readFileSync(0, "utf-8");
@@ -99,32 +95,33 @@ async function main() {
   const tags = getTags(cwd);
   const sessionId = getSessionId(payload.session_id, tags.project);
 
-  log("recall: start", { query: query.slice(0, 100), tags, sessionId });
-
-  // Find transcript path - either from payload or by searching
-  const transcriptPath = resolveTranscriptPath(payload.transcript_path, sessionId);
-  if (transcriptPath) {
-    log("recall: found transcript", { sessionId, transcriptPath });
-  }
-
-  const client = new SupermemoryClient();
-
-  // Step 1: Capture any new entries from previous turns BEFORE recall
-  await captureEntries("recall", client, sessionId, transcriptPath, tags, {
-    requireMinEntries: 2,
-    requireMinTurns: CONFIG.autoSaveEveryTurns,
+  log("recall: start", {
+    query: query.slice(0, 100),
+    tags,
+    sessionId,
+    autoRecallEveryPrompt: CONFIG.autoRecallEveryPrompt,
   });
 
-  // Step 2: Now search for relevant memories (including what we just captured)
-  // Query both containers: user profile from user container, memories from project container.
-  // The profile() API only accepts a single containerTag, so we make parallel calls.
+  const transcriptPath = resolveTranscriptPath(payload.transcript_path, sessionId);
+  const client = new SupermemoryClient();
+
+  if (CONFIG.captureEveryNTurns > 0) {
+    await captureEntries("recall", client, sessionId, transcriptPath, tags, {
+      requireMinEntries: 2,
+      requireMinTurns: CONFIG.captureEveryNTurns,
+    });
+  }
+
+  if (!CONFIG.autoRecallEveryPrompt) {
+    exitWithContext("");
+  }
+
   try {
     const [profileResult, projectSearchResult] = await Promise.all([
       client.getProfileWithSearch(tags.user, query),
       client.searchMemories(query, tags.project),
     ]);
 
-    // Get facts already shown in this session to avoid repeating them
     const seen = getSeenFacts(sessionId);
     const { text, newFacts } = formatCombinedContext(
       profileResult,

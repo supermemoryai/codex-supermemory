@@ -134,6 +134,7 @@ export async function captureEntries(
     sessionId,
     entryCount: newEntries.length,
     timestamp: new Date().toISOString(),
+    sm_capture_mode: caller === "flush" ? "session_end" : "turn",
   };
 
   // Save automatic transcript capture to the user container. Explicit project
