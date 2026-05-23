@@ -22,6 +22,12 @@ Describe the content to forget — the system will find and remove matching memo
 node ~/.codex/supermemory/forget-memory.js "DESCRIPTION_OF_WHAT_TO_FORGET"
 ```
 
+To forget from a specific custom container:
+
+```bash
+node ~/.codex/supermemory/forget-memory.js --container <tag> "DESCRIPTION_OF_WHAT_TO_FORGET"
+```
+
 ## Examples
 
 - User says "I no longer use React, I switched to Vue":
