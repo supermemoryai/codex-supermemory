@@ -1,6 +1,6 @@
 import { isConfigured, validateContainerTag } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
-import { getProjectTag } from "../services/tags.js";
+import { getProjectName, getProjectTag } from "../services/tags.js";
 
 function parseArgs(args: string[]): { content: string; containerTag?: string } {
   let containerTag: string | undefined;
@@ -42,18 +42,25 @@ async function main(): Promise<void> {
   }
 
   const client = new SupermemoryClient();
-  const effectiveTag = containerTag || getProjectTag(process.cwd());
+  const projectTag = getProjectTag(process.cwd());
+  const projectName = getProjectName(process.cwd());
+  const effectiveTag = containerTag || projectTag;
+
 
   try {
     const metadata = {
       type: "project-knowledge" as const,
       source: "skill",
+      project: projectName,
       timestamp: new Date().toISOString(),
     };
 
     const result = await client.addMemory(content, effectiveTag, metadata);
 
     if (result.success) {
+      if (!containerTag) {
+        await client.updateContainerTagName(projectTag, `Codex · ${projectName}`);
+      } 
       const tagLabel = containerTag ? `container '${containerTag}'` : `project '${effectiveTag}'`;
       console.log(`Memory saved (id: ${result.id}) to ${tagLabel}`);
     } else {

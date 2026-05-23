@@ -4,6 +4,12 @@ import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 
 const TIMEOUT_MS = 30000;
+const SPACE_NAME_TIMEOUT_MS = 5000;
+const API_URL =
+  process.env.SUPERMEMORY_API_URL ||
+  process.env.SUPERMEMORY_BASE_URL ||
+  "https://api.supermemory.ai";
+const CODEX_SOURCE = "codex";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let id: ReturnType<typeof setTimeout>;
@@ -195,7 +201,11 @@ export class SupermemoryClient {
       } = {
         content,
         containerTag,
-        metadata: metadata as Record<string, string | number | boolean | string[]>,
+        metadata: {
+          sm_source: CODEX_SOURCE,
+          sm_client: CODEX_SOURCE,
+          ...metadata,
+        } as Record<string, string | number | boolean | string[]>,
       };
       if (options?.customId) {
         payload.customId = options.customId;
@@ -209,6 +219,70 @@ export class SupermemoryClient {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log("addMemory: error", { error: errorMessage });
+      return { success: false as const, error: errorMessage };
+    }
+  }
+
+  async updateContainerTagName(containerTag: string, name: string) {
+    log("updateContainerTagName: start", { containerTag, name });
+    try {
+      const currentResponse = await withTimeout(
+        fetch(`${API_URL}/v3/container-tags/${encodeURIComponent(containerTag)}`, {
+          headers: {
+            Authorization: `Bearer ${getApiKeyValue()}`,
+          },
+        }),
+        SPACE_NAME_TIMEOUT_MS
+      );
+
+      if (!currentResponse.ok) {
+        log("updateContainerTagName: skipped", {
+          containerTag,
+          status: currentResponse.status,
+        });
+        return { success: false as const, error: `HTTP ${currentResponse.status}` };
+      }
+
+      const current = (await currentResponse.json()) as { name?: string | null };
+      const currentName = current.name?.trim();
+      if (
+        currentName &&
+        currentName !== `Space ${containerTag}` &&
+        !currentName.startsWith("Codex · ")
+      ) {
+        log("updateContainerTagName: kept custom name", { containerTag, currentName });
+        return { success: true as const };
+      }
+
+      if (currentName === name) {
+        return { success: true as const };
+      }
+
+      const response = await withTimeout(
+        fetch(`${API_URL}/v3/container-tags/${encodeURIComponent(containerTag)}`, {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${getApiKeyValue()}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ name }),
+        }),
+        SPACE_NAME_TIMEOUT_MS
+      );
+
+      if (!response.ok) {
+        log("updateContainerTagName: skipped", {
+          containerTag,
+          status: response.status,
+        });
+        return { success: false as const, error: `HTTP ${response.status}` };
+      }
+
+      log("updateContainerTagName: success", { containerTag, name });
+      return { success: true as const };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("updateContainerTagName: error", { containerTag, error: errorMessage });
       return { success: false as const, error: errorMessage };
     }
   }
