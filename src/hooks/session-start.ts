@@ -1,8 +1,7 @@
 import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { createHash } from "node:crypto";
-import { PLUGIN_VERSION } from "../config.js";
+import { isConfigured, CONFIG, reloadApiKey } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
@@ -30,10 +29,6 @@ function exitWithContext(additionalContext: string): never {
     );
   }
   process.exit(0);
-}
-
-function sessionHash(sessionId: string): string {
-  return createHash("sha256").update(sessionId).digest("hex").slice(0, 16);
 }
 
 async function main() {
