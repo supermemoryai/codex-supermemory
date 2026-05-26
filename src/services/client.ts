@@ -1,5 +1,5 @@
 import Supermemory from "supermemory";
-import { CONFIG, isConfigured, getApiKeyValue } from "../config.js";
+import { CONFIG, isConfigured, getApiKeyValue, PLUGIN_VERSION } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 
@@ -70,7 +70,12 @@ export class SupermemoryClient {
       if (!isConfigured()) {
         throw new Error("SUPERMEMORY_API_KEY not set");
       }
-      this.client = new Supermemory({ apiKey: getApiKeyValue() });
+      // `x-sm-source` is read by mono's API to attribute searches and
+      // writes to the Codex plugin in PostHog / `document.source`.
+      this.client = new Supermemory({
+        apiKey: getApiKeyValue(),
+        defaultHeaders: { "x-sm-source": CODEX_SOURCE },
+      });
     }
     return this.client;
   }
@@ -193,6 +198,16 @@ export class SupermemoryClient {
       customId: options?.customId,
     });
     try {
+      // Always stamp `sm_source` so mono's `document.source` column attributes
+      // these writes to the Codex plugin. Caller-provided metadata wins on
+      // conflicts so a tool can override the source if it ever needs to.
+      const mergedMetadata = {
+        sm_source: CODEX_SOURCE,
+        sm_client: CODEX_SOURCE,
+        sm_plugin_version: PLUGIN_VERSION,
+        ...(metadata ?? {}),
+      } as Record<string, string | number | boolean | string[]>;
+
       const payload: {
         content: string;
         containerTag: string;
@@ -201,11 +216,7 @@ export class SupermemoryClient {
       } = {
         content,
         containerTag,
-        metadata: {
-          sm_source: CODEX_SOURCE,
-          sm_client: CODEX_SOURCE,
-          ...metadata,
-        } as Record<string, string | number | boolean | string[]>,
+        metadata: mergedMetadata,
       };
       if (options?.customId) {
         payload.customId = options.customId;

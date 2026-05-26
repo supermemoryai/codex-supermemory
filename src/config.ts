@@ -1,9 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { loadCredentials } from "./services/auth.js";
 
-const CONFIG_FILE = join(homedir(), ".codex", "supermemory.json");
+export const CONFIG_FILE = join(homedir(), ".codex", "supermemory.json");
+export const PLUGIN_VERSION = "1.0.7";
 
 export interface CustomContainer {
   tag: string;
@@ -21,63 +22,26 @@ interface CodexSupermemoryConfig {
   projectContainerTag?: string;
   filterPrompt?: string;
   debug?: boolean;
-  // Signal extraction settings
   signalExtraction?: boolean;
   signalKeywords?: string[];
   signalTurnsBefore?: number;
-  // Auto-save interval
+  /** @deprecated Use captureEveryNTurns */
   autoSaveEveryTurns?: number;
-  // Custom container routing
+  autoRecallEveryPrompt?: boolean;
+  captureEveryNTurns?: number;
   enableCustomContainers?: boolean;
   customContainers?: CustomContainer[];
   customContainerInstructions?: string;
 }
 
 const DEFAULT_SIGNAL_KEYWORDS = [
-  // Preferences (single words to match "i really like", "i always prefer", etc.)
-  "prefer",
-  "like",
-  "love",
-  "use",
-  "hate",
-  "dislike",
-  "avoid",
-  // Memory commands
-  "remember",
-  "forget",
-  "note",
-  // Decisions & Architecture
-  "decision",
-  "decided",
-  "chose",
-  "choose",
-  "picked",
-  "switched",
-  "moved",
-  "migrated",
-  "architecture",
-  "pattern",
-  "approach",
-  "design",
-  "tradeoff",
-  // Technical
-  "implementation",
-  "refactor",
-  "upgrade",
-  "deprecate",
-  // Problem solving
-  "bug",
-  "fix",
-  "fixed",
-  "solved",
-  "solution",
-  "important",
-  // Stack/tools
-  "stack",
-  "framework",
-  "library",
-  "tool",
-  "database",
+  "prefer", "like", "love", "use", "hate", "dislike", "avoid",
+  "remember", "forget", "note",
+  "decision", "decided", "chose", "choose", "picked", "switched", "moved", "migrated",
+  "architecture", "pattern", "approach", "design", "tradeoff",
+  "implementation", "refactor", "upgrade", "deprecate",
+  "bug", "fix", "fixed", "solved", "solution", "important",
+  "stack", "framework", "library", "tool", "database",
 ];
 
 const DEFAULTS = {
@@ -89,27 +53,40 @@ const DEFAULTS = {
   filterPrompt:
     "You are a stateful coding agent. Remember all the information, including but not limited to user's coding preferences, tech stack, behaviours, workflows, and any other relevant details.",
   debug: false,
-  // Signal extraction - disabled by default, captures everything
   signalExtraction: false,
   signalKeywords: DEFAULT_SIGNAL_KEYWORDS,
   signalTurnsBefore: 3,
-  // Auto-save interval
   autoSaveEveryTurns: 3,
+  autoRecallEveryPrompt: false,
+  captureEveryNTurns: 0,
 };
 
-function loadConfig(): CodexSupermemoryConfig {
+function loadRawConfig(): { config: CodexSupermemoryConfig; existed: boolean } {
   if (existsSync(CONFIG_FILE)) {
     try {
       const content = readFileSync(CONFIG_FILE, "utf-8");
-      return JSON.parse(content) as CodexSupermemoryConfig;
+      return { config: JSON.parse(content) as CodexSupermemoryConfig, existed: true };
     } catch {
-      // Invalid config, use defaults
+      return { config: {}, existed: true };
     }
   }
-  return {};
+  return { config: {}, existed: false };
 }
 
-const fileConfig = loadConfig();
+const { config: fileConfig, existed: configExisted } = loadRawConfig();
+
+function resolveCaptureEveryNTurns(config: CodexSupermemoryConfig): number {
+  if (config.captureEveryNTurns !== undefined) return config.captureEveryNTurns;
+  if (config.autoSaveEveryTurns !== undefined) return config.autoSaveEveryTurns;
+  if (configExisted) return 3;
+  return DEFAULTS.captureEveryNTurns;
+}
+
+function resolveAutoRecallEveryPrompt(config: CodexSupermemoryConfig): boolean {
+  if (config.autoRecallEveryPrompt !== undefined) return config.autoRecallEveryPrompt;
+  if (configExisted) return true;
+  return DEFAULTS.autoRecallEveryPrompt;
+}
 
 function getApiKey(): string | undefined {
   if (process.env.SUPERMEMORY_CODEX_API_KEY) return process.env.SUPERMEMORY_CODEX_API_KEY;
@@ -133,13 +110,12 @@ export const CONFIG = {
   projectContainerTag: fileConfig.projectContainerTag,
   filterPrompt: fileConfig.filterPrompt ?? DEFAULTS.filterPrompt,
   debug: fileConfig.debug ?? DEFAULTS.debug,
-  // Signal extraction
   signalExtraction: fileConfig.signalExtraction ?? DEFAULTS.signalExtraction,
   signalKeywords: fileConfig.signalKeywords ?? DEFAULTS.signalKeywords,
   signalTurnsBefore: fileConfig.signalTurnsBefore ?? DEFAULTS.signalTurnsBefore,
-  // Auto-save interval
   autoSaveEveryTurns: fileConfig.autoSaveEveryTurns ?? DEFAULTS.autoSaveEveryTurns,
-  // Custom container routing
+  autoRecallEveryPrompt: resolveAutoRecallEveryPrompt(fileConfig),
+  captureEveryNTurns: resolveCaptureEveryNTurns(fileConfig),
   enableCustomContainers: fileConfig.enableCustomContainers ?? false,
   customContainers: (fileConfig.customContainers ?? []).filter(
     (c): c is CustomContainer =>
@@ -212,4 +188,34 @@ export function validateContainerTag(tag: string): string | null {
 
   const validList = validTags.map((t) => `'${t}'`).join(", ");
   return `Unknown container tag '${tag}'. Valid containers: ${validList}`;
+}
+
+/** Persist explicit recall/capture defaults for fresh installs or legacy upgrades. */
+export function writeInstallDefaults(isExistingInstall: boolean): void {
+  const current = loadRawConfig().config;
+  const next: CodexSupermemoryConfig = { ...current };
+
+  if (isExistingInstall) {
+    if (next.autoRecallEveryPrompt === undefined) {
+      next.autoRecallEveryPrompt = true;
+    }
+    if (next.captureEveryNTurns === undefined) {
+      next.captureEveryNTurns = next.autoSaveEveryTurns ?? 3;
+    }
+  } else {
+    next.autoRecallEveryPrompt = false;
+    next.captureEveryNTurns = 0;
+  }
+
+  writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2));
+}
+
+export function getRecallModeSummary(): string {
+  if (CONFIG.autoRecallEveryPrompt) {
+    return "legacy: recall on every prompt";
+  }
+  if (CONFIG.captureEveryNTurns > 0) {
+    return `unified: session-start profile + capture every ${CONFIG.captureEveryNTurns} turns + session-end flush`;
+  }
+  return "unified: session-start profile + session-end flush only";
 }

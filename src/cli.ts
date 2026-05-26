@@ -7,6 +7,7 @@ import {
   rmSync,
 } from "node:fs";
 import { loadCredentials } from "./services/auth.js";
+import { writeInstallDefaults, CONFIG_FILE, getRecallModeSummary, CONFIG } from "./config.js";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -33,15 +34,18 @@ const CODEX_HOOKS_JSON = join(CODEX_DIR, "hooks.json");
 const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
 const FLUSH_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "flush.js");
+const SESSION_START_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "session-start.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
 const RECALL_TIMEOUT_SECONDS = 90;
 const FLUSH_TIMEOUT_SECONDS = 60;
+const SESSION_START_TIMEOUT_SECONDS = 60;
 
 // Skill metadata — single source of truth for install/uninstall/status.
 const SKILLS = [
   { name: "supermemory-search", script: "search-memory.js" },
   { name: "supermemory-save", script: "save-memory.js" },
   { name: "supermemory-forget", script: "forget-memory.js" },
+  { name: "supermemory-profile", script: "profile-memory.js" },
   { name: "supermemory-login", script: "login.js" },
 ] as const;
 
@@ -193,9 +197,18 @@ function mergeHooksJson(add: boolean) {
   if (add) {
     const recallCmd = `node ${RECALL_SCRIPT}`;
     const flushCmd = `node ${FLUSH_SCRIPT}`;
+    const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
     const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
 
-    // Register UserPromptSubmit hook for recall
+    if (!hooks.SessionStart) hooks.SessionStart = [];
+    ensureHookRegistered(
+      hooks.SessionStart,
+      sessionStartCmd,
+      SESSION_START_TIMEOUT_SECONDS,
+      "Loading memory profile...",
+    );
+
+    // Register UserPromptSubmit hook for optional per-prompt recall / turn capture
     if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
     ensureHookRegistered(hooks.UserPromptSubmit, recallCmd, RECALL_TIMEOUT_SECONDS, "Searching memories...");
 
@@ -212,8 +225,13 @@ function mergeHooksJson(add: boolean) {
     // Remove our hooks from every MatcherGroup, then drop empty groups.
     const recallCmd = `node ${RECALL_SCRIPT}`;
     const flushCmd = `node ${FLUSH_SCRIPT}`;
+    const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
     const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
 
+    if (hooks.SessionStart) {
+      hooks.SessionStart = removeHookCommands(hooks.SessionStart, [sessionStartCmd]);
+      if (hooks.SessionStart.length === 0) delete hooks.SessionStart;
+    }
     if (hooks.UserPromptSubmit) {
       hooks.UserPromptSubmit = removeHookCommands(hooks.UserPromptSubmit, [recallCmd]);
       if (hooks.UserPromptSubmit.length === 0) delete hooks.UserPromptSubmit;
@@ -232,17 +250,22 @@ function install() {
 
   ensureCodexDir();
 
+  const hadExistingConfig = existsSync(CONFIG_FILE);
+  writeInstallDefaults(hadExistingConfig);
+
   // Copy hook scripts
   const recallSrc = join(DIST_HOOKS_DIR, "recall.js");
   const flushSrc = join(DIST_HOOKS_DIR, "flush.js");
+  const sessionStartSrc = join(DIST_HOOKS_DIR, "session-start.js");
 
-  if (!existsSync(recallSrc) || !existsSync(flushSrc)) {
+  if (!existsSync(recallSrc) || !existsSync(flushSrc) || !existsSync(sessionStartSrc)) {
     console.error("Error: Hook scripts not found. Please reinstall the package.");
     process.exit(1);
   }
 
   copyFileSync(recallSrc, RECALL_SCRIPT);
   copyFileSync(flushSrc, FLUSH_SCRIPT);
+  copyFileSync(sessionStartSrc, SESSION_START_SCRIPT);
 
   // Remove old capture.js if it exists
   const oldCapture = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
@@ -278,8 +301,12 @@ function install() {
 Installation complete!
 
 You now have:
-  • Implicit memory — auto-recall on every prompt, incremental capture + final flush on session end
-  • Explicit memory — supermemory-search, supermemory-save, supermemory-forget, and supermemory-login skills
+  • Session-start profile recall (${getRecallModeSummary()})
+  • Explicit memory — supermemory-search, supermemory-save, supermemory-forget, supermemory-profile, supermemory-login
+
+${hadExistingConfig
+    ? "Existing install: legacy per-prompt recall/capture preserved in ~/.codex/supermemory.json.\nTo opt into new defaults, set autoRecallEveryPrompt=false and captureEveryNTurns=0.\n"
+    : "Fresh install: session-start profile + session-end flush only.\nEnable autoRecallEveryPrompt or captureEveryNTurns in ~/.codex/supermemory.json if needed.\n"}
 
 Next steps:
   1. Start Codex — on your first prompt, a browser window will open to
@@ -332,7 +359,10 @@ function status() {
     ? "credentials file (~/.codex/supermemory/credentials.json)"
     : null;
 
-  const hooksInstalled = existsSync(RECALL_SCRIPT) && existsSync(FLUSH_SCRIPT);
+  const hooksInstalled =
+    existsSync(RECALL_SCRIPT) &&
+    existsSync(FLUSH_SCRIPT) &&
+    existsSync(SESSION_START_SCRIPT);
   const hooksJsonExists = existsSync(CODEX_HOOKS_JSON);
   const configTomlExists = existsSync(CODEX_CONFIG_TOML);
 
@@ -342,13 +372,17 @@ function status() {
       const hooks = normalizeHookEvents(JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")));
       const recallCmd = `node ${RECALL_SCRIPT}`;
       const flushCmd = `node ${FLUSH_SCRIPT}`;
+      const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
       const recallRegistered = hooks.UserPromptSubmit?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === recallCmd)
       );
       const flushRegistered = hooks.Stop?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === flushCmd)
       );
-      hooksEnabled = !!(recallRegistered && flushRegistered);
+      const sessionStartRegistered = hooks.SessionStart?.some((g: MatcherGroup) =>
+        g.hooks.some((h: HookEntry) => h.command === sessionStartCmd)
+      );
+      hooksEnabled = !!(recallRegistered && flushRegistered && sessionStartRegistered);
     } catch {
       // ignore
     }
@@ -360,6 +394,7 @@ function status() {
 
   console.log("codex-supermemory status:\n");
   console.log(`  API key:       ${apiKey ? `✓ set (${apiKeySource})` : "✗ not set"}`);
+  console.log(`  Recall mode:   ${getRecallModeSummary()}`);
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
   console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
   console.log(`  Skills:        ${skillsInstalled ? `✓ installed (${SKILLS.map(s => s.name).join(", ")})` : "✗ not installed"}`);
