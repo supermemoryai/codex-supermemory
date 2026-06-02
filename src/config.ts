@@ -5,6 +5,7 @@ import { loadCredentialData, loadCredentials } from "./services/auth.js";
 
 export const CONFIG_FILE = join(homedir(), ".codex", "supermemory.json");
 export const PLUGIN_VERSION = "1.0.7";
+export const DEFAULT_BASE_URL = "https://api.supermemory.ai";
 
 export interface CustomContainer {
   tag: string;
@@ -13,6 +14,7 @@ export interface CustomContainer {
 
 interface CodexSupermemoryConfig {
   apiKey?: string;
+  baseUrl?: string;
   similarityThreshold?: number;
   maxMemories?: number;
   maxProfileItems?: number;
@@ -132,13 +134,36 @@ export function getApiKeyValue(): string | undefined {
   return SUPERMEMORY_API_KEY;
 }
 
-export function getApiBaseUrl(): string {
-  return (
+function normalizeBaseUrl(baseUrl: unknown): string | null {
+  if (typeof baseUrl !== "string" || !baseUrl.trim()) return null;
+
+  const trimmed = baseUrl.trim();
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
+}
+
+export function getBaseUrl(): string {
+  const configured =
     process.env.SUPERMEMORY_API_URL ||
     process.env.SUPERMEMORY_BASE_URL ||
+    fileConfig.baseUrl ||
     loadCredentialData()?.apiBaseUrl ||
-    "https://api.supermemory.ai"
-  );
+    DEFAULT_BASE_URL;
+  const normalized = normalizeBaseUrl(configured);
+  if (!normalized) {
+    throw new Error("Invalid baseUrl: expected an absolute http(s) URL");
+  }
+  return normalized;
+}
+
+// Backwards-compatible alias for the credential-based accessor introduced on main.
+export function getApiBaseUrl(): string {
+  return getBaseUrl();
 }
 
 export function getSignalConfig(): {
