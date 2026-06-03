@@ -2,9 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, hostname, platform, arch } from "node:os";
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
+import { openUrl } from "./openUrl.js";
 
 const SUPERMEMORY_DIR = join(homedir(), ".codex", "supermemory");
 const CREDENTIALS_FILE = join(SUPERMEMORY_DIR, "credentials.json");
@@ -60,17 +60,6 @@ function saveCredentials(apiKey: string): void {
   );
 }
 
-function openBrowser(url: string): void {
-  const onError = () => {};
-  if (process.platform === "win32") {
-    execFile("explorer.exe", [url], onError);
-  } else if (process.platform === "darwin") {
-    execFile("open", [url], onError);
-  } else {
-    execFile("xdg-open", [url], onError);
-  }
-}
-
 export function startAuthFlow(): Promise<string> {
   return new Promise((resolve, reject) => {
     let resolved = false;
@@ -122,7 +111,13 @@ export function startAuthFlow(): Promise<string> {
         cli_version: "1.0.0",
       });
       const authUrl = `${AUTH_BASE_URL}?${params.toString()}`;
-      openBrowser(authUrl);
+      openUrl(authUrl).catch((error) => {
+        if (!resolved) {
+          clearTimeout(timer);
+          server.close();
+          reject(new Error(`Failed to open browser: ${error.message}`));
+        }
+      });
     });
 
     server.on("error", (err) => {

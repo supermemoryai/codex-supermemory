@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import * as TOML from "@iarna/toml";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ function setupCodexHome(t) {
 
 function runCli(cliBin, cmd, tmpDir) {
   return spawnSync("node", [cliBin, cmd], {
-    env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+    env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
     encoding: "utf-8",
   });
 }
@@ -73,6 +74,16 @@ describe("stripPrivateContent", () => {
 
   test("is case-insensitive", () => {
     assert.equal(stripPrivateContent("<PRIVATE>secret</PRIVATE>"), "[REDACTED]");
+  });
+});
+
+describe("browser auth opener", () => {
+  test("login bundle uses Windows-safe URL opener", () => {
+    const content = readFileSync(new URL("../dist/skills/login.js", import.meta.url), "utf-8");
+    assert.ok(content.includes("Refusing to open non-http URL"));
+    assert.ok(content.includes("rundll32.exe"));
+    assert.ok(content.includes("url.dll,FileProtocolHandler"));
+    assert.ok(!content.includes("explorer.exe"));
   });
 });
 
@@ -180,7 +191,7 @@ describe("hooks.json format", () => {
 // through npm.
 
 describe("integration: install/uninstall", () => {
-  const cliBin = new URL("../dist/cli.js", import.meta.url).pathname;
+  const cliBin = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
   test("install copies skill SKILL.md files to ~/.codex/skills/", (t) => {
     const { tmpDir, codexDir } = setupCodexHome(t);
@@ -236,7 +247,7 @@ describe("integration: install/uninstall", () => {
 // ─── recall hook output envelope ────────────────────────────────────────────
 
 describe("recall hook output envelope", () => {
-  const recallBin = new URL("../dist/hooks/recall.js", import.meta.url).pathname;
+  const recallBin = fileURLToPath(new URL("../dist/hooks/recall.js", import.meta.url));
 
   // Helper: run recall hook with an isolated HOME and a short auth timeout so
   // the first-invocation browser flow times out in 2s rather than 60s.
@@ -247,7 +258,7 @@ describe("recall hook output envelope", () => {
     return spawnSync("node", [recallBin], {
       input,
       // Use a 2s auth timeout so the browser flow times out quickly in CI.
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "", SUPERMEMORY_AUTH_TIMEOUT: "2000" },
+      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "", SUPERMEMORY_AUTH_TIMEOUT: "2000" },
       encoding: "utf-8",
       timeout: 5_000,
     });
@@ -292,7 +303,7 @@ describe("recall hook output envelope", () => {
 
     const result = spawnSync("node", [recallBin], {
       input: JSON.stringify({ prompt: "test" }),
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
     const parsed = JSON.parse(result.stdout);
@@ -309,7 +320,7 @@ describe("recall hook output envelope", () => {
 
     const result = spawnSync("node", [recallBin], {
       input: JSON.stringify({ prompt: "test" }),
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
     assert.equal(result.status, 0);
@@ -319,7 +330,7 @@ describe("recall hook output envelope", () => {
 // ─── flush hook — Stop payload handling ──────────────────────────────────────
 
 describe("flush hook Stop payload", () => {
-  const flushBin = new URL("../dist/hooks/flush.js", import.meta.url).pathname;
+  const flushBin = fileURLToPath(new URL("../dist/hooks/flush.js", import.meta.url));
 
   test("exits 0 with no transcript_path", () => {
     const result = spawnSync("node", [flushBin], {
@@ -392,9 +403,9 @@ describe("flush hook Stop payload", () => {
 // argument parsing, the unconfigured-fallback message, and clean exit codes.
 
 describe("skill scripts: search/save/forget", () => {
-  const searchBin = new URL("../dist/skills/search-memory.js", import.meta.url).pathname;
-  const saveBin = new URL("../dist/skills/save-memory.js", import.meta.url).pathname;
-  const forgetBin = new URL("../dist/skills/forget-memory.js", import.meta.url).pathname;
+  const searchBin = fileURLToPath(new URL("../dist/skills/search-memory.js", import.meta.url));
+  const saveBin = fileURLToPath(new URL("../dist/skills/save-memory.js", import.meta.url));
+  const forgetBin = fileURLToPath(new URL("../dist/skills/forget-memory.js", import.meta.url));
 
   // Run a script with a fresh empty $HOME (no config file) and an empty
   // SUPERMEMORY_CODEX_API_KEY so isConfigured() is false. Returns the spawn result.
@@ -403,7 +414,7 @@ describe("skill scripts: search/save/forget", () => {
     mkdirSync(join(tmpDir, ".codex"), { recursive: true });
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     return spawnSync("node", [bin, ...args], {
-      env: { PATH: process.env.PATH, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      env: { PATH: process.env.PATH, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
   }
@@ -415,7 +426,7 @@ describe("skill scripts: search/save/forget", () => {
     mkdirSync(join(tmpDir, ".codex"), { recursive: true });
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     return spawnSync("node", [bin], {
-      env: { PATH: process.env.PATH, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      env: { PATH: process.env.PATH, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
       encoding: "utf-8",
     });
   }
