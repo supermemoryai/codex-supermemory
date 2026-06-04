@@ -11,6 +11,7 @@ import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
+const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
 
 interface CodexHookPayload {
   session_id?: string;
@@ -48,6 +49,11 @@ async function main() {
   }
 
   if (!isConfigured()) {
+    if (existsSync(LOGGED_OUT_FILE)) {
+      log("recall: logged out marker present, skipping browser auth");
+      exitWithContext("");
+    }
+
     const alreadyAttempted = existsSync(AUTH_ATTEMPTED_FILE);
 
     if (!alreadyAttempted) {

@@ -1,5 +1,5 @@
 import Supermemory from "supermemory";
-import { CONFIG, isConfigured, getApiKeyValue } from "../config.js";
+import { CONFIG, isConfigured, getApiBaseUrl, getApiKeyValue } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 
@@ -64,7 +64,7 @@ export class SupermemoryClient {
       if (!isConfigured()) {
         throw new Error("SUPERMEMORY_API_KEY not set");
       }
-      this.client = new Supermemory({ apiKey: getApiKeyValue() });
+      this.client = new Supermemory({ apiKey: getApiKeyValue(), baseURL: getApiBaseUrl() });
     }
     return this.client;
   }

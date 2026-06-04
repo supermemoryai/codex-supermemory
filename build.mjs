@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { mkdirSync, writeFileSync, chmodSync, copyFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, chmodSync, copyFileSync, rmSync } from "node:fs";
 
 const sharedConfig = {
   bundle: true,
@@ -16,11 +16,13 @@ const entries = [
     in: `src/hooks/${n}.ts`,
     out: `dist/hooks/${n}.js`,
   })),
-  ...["search-memory", "save-memory", "forget-memory", "login"].map((n) => ({
+  ...["search-memory", "save-memory", "forget-memory", "status", "login", "logout"].map((n) => ({
     in: `src/skills/${n}.ts`,
     out: `dist/skills/${n}.js`,
   })),
 ];
+
+rmSync("dist", { recursive: true, force: true });
 
 await Promise.all(
   entries.map((e) =>
@@ -34,7 +36,7 @@ await Promise.all(
 );
 
 // Copy SKILL.md files to dist
-for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-login"]) {
+for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
   mkdirSync(`dist/skills/${skillName}`, { recursive: true });
   copyFileSync(
     `src/skills/${skillName}/SKILL.md`,

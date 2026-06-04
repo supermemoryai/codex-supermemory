@@ -8,10 +8,15 @@ import { openUrl } from "./openUrl.js";
 
 const SUPERMEMORY_DIR = join(homedir(), ".codex", "supermemory");
 const CREDENTIALS_FILE = join(SUPERMEMORY_DIR, "credentials.json");
+export interface Credentials {
+  apiKey?: string;
+  apiBaseUrl?: string;
+  savedAt?: string;
+}
 
 const AUTH_BASE_URL =
-  process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/agent-connect";
-const AUTH_TIMEOUT = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT) || 60_000;
+  process.env.SUPERMEMORY_AUTH_URL || "https://app.supermemory.ai/auth/agent-connect";
+const AUTH_TIMEOUT = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT) || 5 * 60_000;
 
 const AUTH_SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><title>Connected - Supermemory</title><style>
@@ -39,23 +44,43 @@ p{color:#666;font-size:16px}
 <p>Invalid API key received. Please try again.</p>
 </body></html>`;
 
-export function loadCredentials(): string | undefined {
+export function loadCredentialData(): Credentials | null {
   try {
     if (existsSync(CREDENTIALS_FILE)) {
-      const data = JSON.parse(readFileSync(CREDENTIALS_FILE, "utf-8")) as {
-        apiKey?: string;
-      };
-      if (data.apiKey) return data.apiKey;
+      return JSON.parse(readFileSync(CREDENTIALS_FILE, "utf-8")) as Credentials;
     }
   } catch {}
+  return null;
+}
+
+export function loadCredentials(): string | undefined {
+  const data = loadCredentialData();
+  if (data?.apiKey) return data.apiKey;
   return undefined;
 }
 
-function saveCredentials(apiKey: string): void {
+function normalizeApiBaseUrl(apiBaseUrl: string | null | undefined): string | undefined {
+  if (!apiBaseUrl) return undefined;
+  try {
+    const url = new URL(apiBaseUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+function saveCredentials(apiKey: string, apiBaseUrl?: string): void {
   mkdirSync(SUPERMEMORY_DIR, { recursive: true, mode: 0o700 });
+  const credentials: Credentials = { apiKey, savedAt: new Date().toISOString() };
+  const normalizedApiBaseUrl = normalizeApiBaseUrl(apiBaseUrl);
+  if (normalizedApiBaseUrl) credentials.apiBaseUrl = normalizedApiBaseUrl;
   writeFileSync(
     CREDENTIALS_FILE,
-    JSON.stringify({ apiKey, savedAt: new Date().toISOString() }, null, 2),
+    JSON.stringify(credentials, null, 2),
     { mode: 0o600 }
   );
 }
@@ -78,9 +103,11 @@ export function startAuthFlow(): Promise<string> {
 
         const apiKey =
           url.searchParams.get("apikey") || url.searchParams.get("api_key");
+        const apiBaseUrl =
+          url.searchParams.get("api_url") || url.searchParams.get("api_base_url");
 
         if (apiKey?.startsWith("sm_")) {
-          saveCredentials(apiKey);
+          saveCredentials(apiKey, apiBaseUrl);
           res.writeHead(200, { "Content-Type": "text/html" });
           res.end(AUTH_SUCCESS_HTML);
           resolved = true;
@@ -101,7 +128,7 @@ export function startAuthFlow(): Promise<string> {
     // the callback URL so the console redirects it back through the redirect.
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;
-      const callbackUrl = `http://localhost:${port}/callback?state=${stateToken}`;
+      const callbackUrl = `http://127.0.0.1:${port}/callback?state=${stateToken}`;
       const params = new URLSearchParams({
         callback: callbackUrl,
         client: "codex",

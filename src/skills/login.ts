@@ -5,18 +5,23 @@ import { isConfigured } from "../config.js";
 import { startAuthFlow, AUTH_BASE_URL, CREDENTIALS_FILE } from "../services/auth.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
+const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
 
 async function main(): Promise<void> {
-  // Clear the auth-attempted marker so the recall hook will try browser auth again
   try {
-    if (existsSync(AUTH_ATTEMPTED_FILE)) unlinkSync(AUTH_ATTEMPTED_FILE);
+    if (existsSync(LOGGED_OUT_FILE)) unlinkSync(LOGGED_OUT_FILE);
   } catch {}
 
   if (isConfigured()) {
     console.log("Already authenticated with Supermemory. Memory is active.");
     console.log(`To re-authenticate, remove ${CREDENTIALS_FILE} and run this again.`);
-    return;
+    process.exit(0);
   }
+
+  // Clear the auth-attempted marker so the recall hook will try browser auth again.
+  try {
+    if (existsSync(AUTH_ATTEMPTED_FILE)) unlinkSync(AUTH_ATTEMPTED_FILE);
+  } catch {}
 
   console.log("Opening browser to authenticate with Supermemory...");
   console.log(`If the browser does not open, visit: ${AUTH_BASE_URL}`);
@@ -27,6 +32,7 @@ async function main(): Promise<void> {
       if (existsSync(AUTH_ATTEMPTED_FILE)) unlinkSync(AUTH_ATTEMPTED_FILE);
     } catch {}
     console.log("\nAuthenticated successfully! Supermemory is now active.");
+    process.exit(0);
   } catch (err) {
     const isTimeout = err instanceof Error && err.message === "AUTH_TIMEOUT";
     if (isTimeout) {
@@ -36,7 +42,7 @@ async function main(): Promise<void> {
     }
     console.error(`\nAlternatively, set the API key manually:`);
     console.error(`  export SUPERMEMORY_CODEX_API_KEY="sm_..."`);
-    console.error(`  Get your key at: https://console.supermemory.ai/keys`);
+    console.error(`  Get your key at: https://app.supermemory.ai/?view=integrations`);
     process.exit(1);
   }
 }

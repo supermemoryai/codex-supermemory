@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { loadCredentials } from "./services/auth.js";
+import { loadCredentialData, loadCredentials } from "./services/auth.js";
 
 const CONFIG_FILE = join(homedir(), ".codex", "supermemory.json");
 
@@ -138,6 +138,15 @@ export function isConfigured(): boolean {
 
 export function getApiKeyValue(): string | undefined {
   return SUPERMEMORY_API_KEY;
+}
+
+export function getApiBaseUrl(): string {
+  return (
+    process.env.SUPERMEMORY_API_URL ||
+    process.env.SUPERMEMORY_BASE_URL ||
+    loadCredentialData()?.apiBaseUrl ||
+    "https://api.supermemory.ai"
+  );
 }
 
 export function getSignalConfig(): {
