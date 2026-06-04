@@ -5,8 +5,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import * as TOML from "@iarna/toml";
@@ -42,10 +43,161 @@ function readToml(path) {
   return TOML.parse(readFileSync(path, "utf-8"));
 }
 
+function hash16(input) {
+  return createHash("sha256").update(input).digest("hex").slice(0, 16);
+}
+
 // Inline the stripPrivateContent logic (mirrors src/services/privacy.ts exactly)
 function stripPrivateContent(s) {
   return s.replace(/<private>[\s\S]*?<\/private>/gi, "[REDACTED]");
 }
+
+// ─── container tags ─────────────────────────────────────────────────────────
+
+describe("container tags", () => {
+  const tagsModule = new URL("../dist/services/tags.js", import.meta.url).href;
+
+  function runGit(args, cwd) {
+    const result = spawnSync("git", args, { cwd, encoding: "utf-8" });
+    assert.equal(
+      result.status,
+      0,
+      `git ${args.join(" ")} failed:\n${result.stderr || result.stdout}`
+    );
+    return result.stdout.trim();
+  }
+
+  function getProjectTagFor(cwd, home, extraEnv = {}) {
+    const script = `
+      import { getProjectTag } from ${JSON.stringify(tagsModule)};
+      console.log(getProjectTag(process.argv.at(-1)));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, cwd], {
+      env: {
+        ...process.env,
+        HOME: home,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+        ...extraEnv,
+      },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, `getProjectTag failed: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+
+  test("project tag uses the shared git common directory for worktrees", (t) => {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+    const repoDir = join(tmpDir, "repo");
+    const worktreeDir = join(tmpDir, "worktree");
+    const homeDir = join(tmpDir, "home");
+    mkdirSync(repoDir, { recursive: true });
+    mkdirSync(homeDir, { recursive: true });
+
+    runGit(["init"], repoDir);
+    runGit(["config", "user.email", "test@example.com"], repoDir);
+    runGit(["config", "user.name", "Test User"], repoDir);
+    writeFileSync(join(repoDir, "README.md"), "# test\n");
+    runGit(["add", "README.md"], repoDir);
+    runGit(["commit", "-m", "initial"], repoDir);
+    runGit(["worktree", "add", "--detach", worktreeDir, "HEAD"], repoDir);
+    const gitCommonDir = runGit(["rev-parse", "--git-common-dir"], worktreeDir);
+    const resolvedCommonDir = resolve(worktreeDir, gitCommonDir);
+    const expectedBasePath =
+      basename(resolvedCommonDir) === ".git" &&
+      !resolvedCommonDir.includes(`${sep}.git${sep}`)
+        ? dirname(resolvedCommonDir)
+        : runGit(["rev-parse", "--show-toplevel"], worktreeDir);
+
+    assert.equal(
+      getProjectTagFor(worktreeDir, homeDir),
+      `codex_project_${hash16(expectedBasePath)}`
+    );
+  });
+
+  test("project tag can still isolate individual worktrees when requested", (t) => {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+    const repoDir = join(tmpDir, "repo");
+    const worktreeDir = join(tmpDir, "worktree");
+    const homeDir = join(tmpDir, "home");
+    mkdirSync(repoDir, { recursive: true });
+    mkdirSync(homeDir, { recursive: true });
+
+    runGit(["init"], repoDir);
+    runGit(["config", "user.email", "test@example.com"], repoDir);
+    runGit(["config", "user.name", "Test User"], repoDir);
+    writeFileSync(join(repoDir, "README.md"), "# test\n");
+    runGit(["add", "README.md"], repoDir);
+    runGit(["commit", "-m", "initial"], repoDir);
+    runGit(["worktree", "add", "--detach", worktreeDir, "HEAD"], repoDir);
+    const worktreeRoot = runGit(["rev-parse", "--show-toplevel"], worktreeDir);
+
+    assert.equal(
+      getProjectTagFor(worktreeDir, homeDir, { SUPERMEMORY_ISOLATE_WORKTREES: "true" }),
+      `codex_project_${hash16(worktreeRoot)}`
+    );
+  });
+});
+
+// ─── session ids ────────────────────────────────────────────────────────────
+
+describe("session ids", () => {
+  const sessionModule = new URL("../dist/services/session.js", import.meta.url).href;
+
+  function getSessionIdFor(providedSessionId, scope, isoDate) {
+    const script = `
+      import { getSessionId } from ${JSON.stringify(sessionModule)};
+      const provided = process.argv[1] === "__null__" ? null : process.argv[1];
+      console.log(getSessionId(provided, process.argv[2], new Date(process.argv[3])));
+    `;
+    const result = spawnSync(
+      "node",
+      [
+        "--input-type=module",
+        "-e",
+        script,
+        providedSessionId ?? "__null__",
+        scope,
+        isoDate,
+      ],
+      { encoding: "utf-8" }
+    );
+    assert.equal(result.status, 0, `getSessionId failed: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+
+  test("uses Codex session_id when provided", () => {
+    assert.equal(
+      getSessionIdFor("s1", "codex_project_abc", "2026-05-17T05:59:00.000Z"),
+      "s1"
+    );
+  });
+
+  test("fallback session id is stable within the same 4-hour window", () => {
+    const early = getSessionIdFor(null, "codex_project_abc", "2026-05-17T04:00:00.000Z");
+    const late = getSessionIdFor(null, "codex_project_abc", "2026-05-17T07:59:59.999Z");
+
+    assert.match(early, /^codex_[a-f0-9]{16}$/);
+    assert.equal(early, late);
+  });
+
+  test("fallback session id changes at the next 4-hour window", () => {
+    const current = getSessionIdFor(null, "codex_project_abc", "2026-05-17T07:59:59.999Z");
+    const next = getSessionIdFor(null, "codex_project_abc", "2026-05-17T08:00:00.000Z");
+
+    assert.notEqual(current, next);
+  });
+
+  test("fallback session id is scoped by project tag", () => {
+    const first = getSessionIdFor(null, "codex_project_abc", "2026-05-17T04:00:00.000Z");
+    const second = getSessionIdFor(null, "codex_project_def", "2026-05-17T04:00:00.000Z");
+
+    assert.notEqual(first, second);
+  });
+});
 
 // ─── stripPrivateContent ────────────────────────────────────────────────────
 

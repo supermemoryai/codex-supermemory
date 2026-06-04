@@ -1,7 +1,7 @@
 /**
  * Shared capture logic used by both recall and flush hooks.
  * Reads transcript entries since last capture, filters by signals,
- * and saves to both project and user containers.
+ * and saves to the user container.
  */
 import { existsSync } from "node:fs";
 import { SupermemoryClient } from "./client.js";
@@ -36,7 +36,7 @@ export function resolveTranscriptPath(
 
 /**
  * Capture new transcript entries since last capture, filter by signals,
- * and save to both project and user containers.
+ * and save to the user container.
  *
  * @param caller   Label for log messages (e.g. "recall" or "flush")
  * @param client   Supermemory API client
@@ -122,22 +122,26 @@ export async function captureEntries(
   });
 
   const transcript = formatTranscript(signalEntries);
-  const content = `[Session ${sessionId}]\n${transcript}`;
+  const rawContent = `[Session ${sessionId}]\n${transcript}`;
+
+  const content = rawContent
+    .replace(/\[SUPERMEMORY CONTAINERS\][\s\S]*?\[END SUPERMEMORY CONTAINERS\]\s*/g, "")
+    .replace(/<supermemory-containers>[\s\S]*?<\/supermemory-containers>\s*/g, "")
+    .trim();
 
   const metadata = {
     type: "conversation" as const,
     sessionId,
     entryCount: newEntries.length,
     timestamp: new Date().toISOString(),
+    sm_capture_mode: caller === "flush" ? "session_end" : "turn",
   };
 
-  // Save to both project and user containers.
+  // Save automatic transcript capture to the user container. Explicit project
+  // knowledge is still saved via the supermemory-save skill.
   // Use customId so all session turns go into the same document.
   try {
-    await Promise.all([
-      client.addMemory(content, tags.project, metadata, { customId: `${sessionId}_project` }),
-      client.addMemory(content, tags.user, metadata, { customId: `${sessionId}_user` }),
-    ]);
+    await client.addMemory(content, tags.user, metadata, { customId: sessionId });
 
     const lastEntry = newEntries[newEntries.length - 1];
     setLastCapturedIndex(sessionId, lastEntry.index);

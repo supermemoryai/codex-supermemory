@@ -52,3 +52,13 @@ Keep it natural. Capture the conversation flow.
 ```bash
 node ~/.codex/supermemory/save-memory.js "FORMATTED_CONTENT"
 ```
+
+### Container Routing
+
+If custom containers are configured (see `[SUPERMEMORY CONTAINERS]` in your context), you can route the memory to a specific container using `--container`:
+
+```bash
+node ~/.codex/supermemory/save-memory.js --container <tag> "FORMATTED_CONTENT"
+```
+
+Choose the container whose description best matches the content being saved. If unsure, omit `--container` to save to the default project container.
