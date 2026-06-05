@@ -1,5 +1,5 @@
-import { isConfigured, validateContainerTag } from "../config.js";
-import { SupermemoryClient } from "../services/client.js";
+import { CONFIG, isConfigured, validateContainerTag } from "../config.js";
+import { PROJECT_ENTITY_CONTEXT, SupermemoryClient } from "../services/client.js";
 import { getProjectName, getProjectTag } from "../services/tags.js";
 
 function parseArgs(args: string[]): { content: string; containerTag?: string } {
@@ -15,6 +15,25 @@ function parseArgs(args: string[]): { content: string; containerTag?: string } {
   }
 
   return { content: contentParts.join(" "), containerTag };
+}
+
+function getEntityContext(containerTag: string | undefined): string {
+  if (!containerTag) return PROJECT_ENTITY_CONTEXT;
+
+  const customContainer = CONFIG.customContainers.find((c) => c.tag === containerTag);
+  if (!customContainer) return PROJECT_ENTITY_CONTEXT;
+
+  return `Custom Codex memory container.
+
+Purpose: ${customContainer.description}
+
+EXTRACT:
+- Memories that match this container's purpose
+- Stable facts, preferences, decisions, workflows, and implementation lessons relevant to this container
+
+SKIP:
+- Unrelated project or user context that belongs in another container
+- One-off assistant suggestions the user did not accept`;
 }
 
 async function main(): Promise<void> {
@@ -46,7 +65,6 @@ async function main(): Promise<void> {
   const projectName = getProjectName(process.cwd());
   const effectiveTag = containerTag || projectTag;
 
-
   try {
     const metadata = {
       type: "project-knowledge" as const,
@@ -55,12 +73,14 @@ async function main(): Promise<void> {
       timestamp: new Date().toISOString(),
     };
 
-    const result = await client.addMemory(content, effectiveTag, metadata);
+    const result = await client.addMemory(content, effectiveTag, metadata, {
+      entityContext: getEntityContext(containerTag),
+    });
 
     if (result.success) {
       if (!containerTag) {
         await client.updateContainerTagName(projectTag, `Codex · ${projectName}`);
-      } 
+      }
       const tagLabel = containerTag ? `container '${containerTag}'` : `project '${effectiveTag}'`;
       console.log(`Memory saved (id: ${result.id}) to ${tagLabel}`);
     } else {

@@ -4,7 +4,10 @@
  * and saves to the user container.
  */
 import { existsSync } from "node:fs";
-import { SupermemoryClient } from "./client.js";
+import {
+  SupermemoryClient,
+  USER_ENTITY_CONTEXT,
+} from "./client.js";
 import { log } from "./logger.js";
 import {
   parseTranscript,
@@ -141,7 +144,10 @@ export async function captureEntries(
   // knowledge is still saved via the supermemory-save skill.
   // Use customId so all session turns go into the same document.
   try {
-    await client.addMemory(content, tags.user, metadata, { customId: sessionId });
+    await client.addMemory(content, tags.user, metadata, {
+      customId: sessionId,
+      entityContext: USER_ENTITY_CONTEXT,
+    });
 
     const lastEntry = newEntries[newEntries.length - 1];
     setLastCapturedIndex(sessionId, lastEntry.index);

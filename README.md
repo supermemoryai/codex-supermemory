@@ -19,6 +19,9 @@ and the lessons learned across every project — automatically.
   when saving, searching, or forgetting memories.
 - 🏷️ **Project + user scoping** — automatic session memories are stored per-user,
   while explicit project knowledge is tagged per-repo so context never leaks across repos.
+- **Entity-aware extraction** - user and project containers get purpose-specific
+  extraction context so Supermemory stores durable preferences separately from
+  project/codebase facts.
 - 🔒 **Privacy-aware** — anything wrapped in `<private>...</private>` is redacted
   before being sent to Supermemory.
 - ⚡ **Zero-config install** — one command sets up `~/.codex/config.toml` and
@@ -107,6 +110,14 @@ User tags are auto-derived from your `git config user.email`. Project tags are
 derived from the Git common directory when available, so linked worktrees and
 Conductor workspaces for the same repository share one project container by default.
 Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to keep each worktree isolated.
+
+### Entity context
+
+Codex sends an `entityContext` whenever it saves memories. The user container is
+guided toward durable user preferences and workflows; the project container is
+guided toward repo architecture, conventions, setup, decisions, and implementation
+lessons. Supermemory stores this context on the container tag and uses it to guide
+memory extraction.
 
 ### Signal extraction (optional)
 
