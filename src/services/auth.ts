@@ -107,7 +107,7 @@ export function startAuthFlow(): Promise<string> {
           url.searchParams.get("api_url") || url.searchParams.get("api_base_url");
 
         if (apiKey?.startsWith("sm_")) {
-          saveCredentials(apiKey, apiBaseUrl);
+          saveCredentials(apiKey, apiBaseUrl ?? undefined);
           res.writeHead(200, { "Content-Type": "text/html" });
           res.end(AUTH_SUCCESS_HTML);
           resolved = true;

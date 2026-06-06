@@ -1,5 +1,4 @@
 import Supermemory from "supermemory";
-import { CONFIG, isConfigured, getApiBaseUrl, getApiKeyValue } from "../config.js";
 import { CONFIG, isConfigured, getApiBaseUrl, getApiKeyValue, PLUGIN_VERSION } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
