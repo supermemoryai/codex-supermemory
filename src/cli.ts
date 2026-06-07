@@ -45,8 +45,15 @@ const SKILLS = [
   { name: "supermemory-search", script: "search-memory.js" },
   { name: "supermemory-save", script: "save-memory.js" },
   { name: "supermemory-forget", script: "forget-memory.js" },
+  { name: "supermemory-status", script: "status.js" },
   { name: "supermemory-profile", script: "profile-memory.js" },
   { name: "supermemory-login", script: "login.js" },
+  { name: "supermemory-logout", script: "logout.js" },
+] as const;
+
+const LEGACY_SUPERMEMORY_SCRIPTS = [
+  "capture.js",
+  "tags.js",
 ] as const;
 
 const SCRIPT_DIR = getScriptDir();
@@ -267,10 +274,10 @@ function install() {
   copyFileSync(flushSrc, FLUSH_SCRIPT);
   copyFileSync(sessionStartSrc, SESSION_START_SCRIPT);
 
-  // Remove old capture.js if it exists
-  const oldCapture = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
-  if (existsSync(oldCapture)) {
-    rmSync(oldCapture);
+  // Remove script names left by older package layouts.
+  for (const script of LEGACY_SUPERMEMORY_SCRIPTS) {
+    const oldScript = join(SUPERMEMORY_HOOKS_DIR, script);
+    if (existsSync(oldScript)) rmSync(oldScript);
   }
 
   // Copy skill scripts and SKILL.md files
@@ -302,7 +309,7 @@ Installation complete!
 
 You now have:
   • Session-start profile recall (${getRecallModeSummary()})
-  • Explicit memory — supermemory-search, supermemory-save, supermemory-forget, supermemory-profile, supermemory-login
+  • Explicit memory — supermemory-search, supermemory-save, supermemory-forget, supermemory-profile, supermemory-status, supermemory-login, and supermemory-logout skills
 
 ${hadExistingConfig
     ? "Existing install: legacy per-prompt recall/capture preserved in ~/.codex/supermemory.json.\nTo opt into new defaults, set autoRecallEveryPrompt=false and captureEveryNTurns=0.\n"
@@ -316,7 +323,7 @@ Next steps:
      /supermemory-login      (inside Codex)
      export SUPERMEMORY_CODEX_API_KEY="sm_..."   (in your shell profile)
 
-  2. Get an API key at: https://console.supermemory.ai/keys (if needed)
+  2. Get an API key at: https://app.supermemory.ai/?view=integrations (if needed)
 
 Optional: Enable debug logging:
   export SUPERMEMORY_DEBUG=true

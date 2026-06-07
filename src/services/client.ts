@@ -1,5 +1,5 @@
 import Supermemory from "supermemory";
-import { CONFIG, isConfigured, getApiKeyValue, PLUGIN_VERSION } from "../config.js";
+import { CONFIG, isConfigured, getApiBaseUrl, getApiKeyValue, PLUGIN_VERSION } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 
@@ -74,6 +74,7 @@ export class SupermemoryClient {
       // writes to the Codex plugin in PostHog / `document.source`.
       this.client = new Supermemory({
         apiKey: getApiKeyValue(),
+        baseURL: getApiBaseUrl(),
         defaultHeaders: { "x-sm-source": CODEX_SOURCE },
       });
     }

@@ -25,8 +25,9 @@ and the lessons learned across every project — automatically.
   `~/.codex/hooks.json` for you.
 - 🪶 **No runtime deps in hooks** — the hook scripts are pre-bundled with esbuild for
   fast cold starts.
-- 🔧 **Fallback skills** — explicit `/supermemory-search`, `/supermemory-save`, and
-  `/supermemory-forget` commands available when hooks don't cover your use case.
+- 🔧 **Fallback skills** — explicit `/supermemory-search`, `/supermemory-save`,
+  `/supermemory-forget`, `/supermemory-status`, and `/supermemory-logout` commands available when hooks
+  don't cover your use case.
 
 ## Quick start
 
@@ -132,7 +133,10 @@ All memory skills support `--container <tag>` to target a specific custom contai
 | `/supermemory-search`  | `/supermemory-search [--container <tag>] <query>`           | Search memories manually.                |
 | `/supermemory-save`    | `/supermemory-save [--container <tag>] <content>`           | Save a specific memory explicitly.       |
 | `/supermemory-forget`  | `/supermemory-forget [--container <tag>] <content>`         | Remove a memory.                         |
+| `/supermemory-profile` | `/supermemory-profile`                                      | Show remembered profile facts.           |
+| `/supermemory-status`  | `/supermemory-status`                                       | Show connection and account status.      |
 | `/supermemory-login`   | `/supermemory-login`                                        | Re-authenticate with Supermemory.        |
+| `/supermemory-logout`  | `/supermemory-logout`                                       | Remove saved local credentials.          |
 
 Skills are fallback commands — the hooks handle most use cases automatically.
 

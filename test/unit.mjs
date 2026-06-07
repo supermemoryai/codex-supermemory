@@ -34,7 +34,7 @@ function setupCodexHome(t) {
 
 function runCli(cliBin, cmd, tmpDir) {
   return spawnSync("node", [cliBin, cmd], {
-    env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+    env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
     encoding: "utf-8",
   });
 }
@@ -229,6 +229,16 @@ describe("stripPrivateContent", () => {
   });
 });
 
+describe("browser auth opener", () => {
+  test("login bundle uses Windows-safe URL opener", () => {
+    const content = readFileSync(new URL("../dist/skills/login.js", import.meta.url), "utf-8");
+    assert.ok(content.includes("Refusing to open non-http URL"));
+    assert.ok(content.includes("rundll32.exe"));
+    assert.ok(content.includes("url.dll,FileProtocolHandler"));
+    assert.ok(!content.includes("explorer.exe"));
+  });
+});
+
 // ─── hooks.json format ──────────────────────────────────────────────────────
 
 describe("hooks.json format", () => {
@@ -342,7 +352,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(result.status, 0, `install should exit 0: ${result.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-login"]) {
+    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
       const skillMd = join(skillsDir, skillName, "SKILL.md");
       assert.ok(existsSync(skillMd), `${skillName}/SKILL.md should exist`);
       const content = readFileSync(skillMd, "utf-8");
@@ -362,7 +372,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(uninstallResult.status, 0, `uninstall should exit 0: ${uninstallResult.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-login"]) {
+    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
       assert.ok(
         !existsSync(join(skillsDir, skillName)),
         `${skillName} skill dir should be removed`
@@ -391,16 +401,17 @@ describe("integration: install/uninstall", () => {
 describe("recall hook output envelope", () => {
   const recallBin = fileURLToPath(new URL("../dist/hooks/recall.js", import.meta.url));
 
-  // Helper: run recall hook with an isolated HOME and a short auth timeout so
-  // the first-invocation browser flow times out in 2s rather than 60s.
+  // Helper: run recall hook with an isolated HOME. Pre-create the auth marker
+  // so the unit test exercises the hook envelope without launching a browser.
   function runRecallUnconfigured(t, input) {
     const tmpDir = makeTmpDir();
-    mkdirSync(join(tmpDir, ".codex", "supermemory"), { recursive: true });
+    const supermemoryDir = join(tmpDir, ".codex", "supermemory");
+    mkdirSync(supermemoryDir, { recursive: true });
+    writeFileSync(join(supermemoryDir, ".auth-attempted"), new Date().toISOString());
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     return spawnSync("node", [recallBin], {
       input,
-      // Use a 2s auth timeout so the browser flow times out quickly in CI.
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "", SUPERMEMORY_AUTH_TIMEOUT: "2000" },
+      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
       timeout: 5_000,
     });
@@ -412,6 +423,24 @@ describe("recall hook output envelope", () => {
     assert.ok("hookSpecificOutput" in parsed, "must have hookSpecificOutput key");
     assert.equal(parsed.hookSpecificOutput.hookEventName, "UserPromptSubmit");
     assert.equal(typeof parsed.hookSpecificOutput.additionalContext, "string");
+  });
+
+  test("exits silently after explicit logout marker", (t) => {
+    const tmpDir = makeTmpDir();
+    const supermemoryDir = join(tmpDir, ".codex", "supermemory");
+    mkdirSync(supermemoryDir, { recursive: true });
+    writeFileSync(join(supermemoryDir, ".logged-out"), new Date().toISOString());
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+    const result = spawnSync("node", [recallBin], {
+      input: JSON.stringify({ session_id: "s1", prompt: "$supermemory-status" }),
+      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      encoding: "utf-8",
+      timeout: 5_000,
+    });
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "");
   });
 
   test("emits no envelope on empty prompt (so Codex doesn't render an empty hook context line)", () => {
@@ -445,7 +474,7 @@ describe("recall hook output envelope", () => {
 
     const result = spawnSync("node", [recallBin], {
       input: JSON.stringify({ prompt: "test" }),
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
     const parsed = JSON.parse(result.stdout);
@@ -462,7 +491,7 @@ describe("recall hook output envelope", () => {
 
     const result = spawnSync("node", [recallBin], {
       input: JSON.stringify({ prompt: "test" }),
-      env: { ...process.env, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
     assert.equal(result.status, 0);
@@ -538,16 +567,18 @@ describe("flush hook Stop payload", () => {
   });
 });
 
-// ─── skill scripts (search/save/forget) ─────────────────────────────────────
+// ─── skill scripts (search/save/forget/status/logout) ───────────────────────
 //
 // These scripts (dist/skills/*.js) are entry-points invoked by Codex skills.
 // They reuse SupermemoryClient + tags, so we only smoke-test the CLI shape:
 // argument parsing, the unconfigured-fallback message, and clean exit codes.
 
-describe("skill scripts: search/save/forget", () => {
+describe("skill scripts: search/save/forget/status/logout", () => {
   const searchBin = fileURLToPath(new URL("../dist/skills/search-memory.js", import.meta.url));
   const saveBin = fileURLToPath(new URL("../dist/skills/save-memory.js", import.meta.url));
   const forgetBin = fileURLToPath(new URL("../dist/skills/forget-memory.js", import.meta.url));
+  const statusBin = fileURLToPath(new URL("../dist/skills/status.js", import.meta.url));
+  const logoutBin = fileURLToPath(new URL("../dist/skills/logout.js", import.meta.url));
 
   // Run a script with a fresh empty $HOME (no config file) and an empty
   // SUPERMEMORY_CODEX_API_KEY so isConfigured() is false. Returns the spawn result.
@@ -556,7 +587,7 @@ describe("skill scripts: search/save/forget", () => {
     mkdirSync(join(tmpDir, ".codex"), { recursive: true });
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     return spawnSync("node", [bin, ...args], {
-      env: { PATH: process.env.PATH, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      env: { PATH: process.env.PATH, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
     });
   }
@@ -568,7 +599,7 @@ describe("skill scripts: search/save/forget", () => {
     mkdirSync(join(tmpDir, ".codex"), { recursive: true });
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     return spawnSync("node", [bin], {
-      env: { PATH: process.env.PATH, HOME: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      env: { PATH: process.env.PATH, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
       encoding: "utf-8",
     });
   }
@@ -590,6 +621,36 @@ describe("skill scripts: search/save/forget", () => {
     const result = runSkillUnconfigured(t, forgetBin, ["some content"]);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Supermemory is not authenticated/);
+  });
+
+  test("status prints disconnected state and exits 0 when no API key", (t) => {
+    const result = runSkillUnconfigured(t, statusBin, []);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Connected: no/);
+    assert.match(result.stdout, /supermemory-login/);
+  });
+
+  test("logout removes saved credentials and config apiKey", (t) => {
+    const tmpDir = makeTmpDir();
+    const codexDir = join(tmpDir, ".codex");
+    const supermemoryDir = join(codexDir, "supermemory");
+    mkdirSync(supermemoryDir, { recursive: true });
+    writeFileSync(join(supermemoryDir, "credentials.json"), JSON.stringify({ apiKey: "sm_test" }));
+    writeFileSync(join(supermemoryDir, ".auth-attempted"), new Date().toISOString());
+    writeFileSync(join(codexDir, "supermemory.json"), JSON.stringify({ apiKey: "sm_config", maxMemories: 3 }));
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+    const result = spawnSync("node", [logoutBin], {
+      env: { PATH: process.env.PATH, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      encoding: "utf-8",
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Logged out/);
+    assert.ok(!existsSync(join(supermemoryDir, "credentials.json")), "credentials should be removed");
+    assert.ok(!existsSync(join(supermemoryDir, ".auth-attempted")), "auth marker should be removed");
+    assert.ok(existsSync(join(supermemoryDir, ".logged-out")), "logged-out marker should be created");
+    assert.deepEqual(JSON.parse(readFileSync(join(codexDir, "supermemory.json"), "utf-8")), { maxMemories: 3 });
   });
 
   test("search-memory prints usage and exits 0 when no query is given", (t) => {
