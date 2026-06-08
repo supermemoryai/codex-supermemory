@@ -1,15 +1,17 @@
 import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { isConfigured, CONFIG, reloadApiKey } from "../config.js";
+import { isConfigured, CONFIG, PLUGIN_VERSION, reloadApiKey } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
 import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
+import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
+const UPDATE_COMMAND = "npx codex-supermemory@latest install";
 
 interface CodexHookPayload {
   session_id?: string;
@@ -29,6 +31,10 @@ function exitWithContext(additionalContext: string): never {
     );
   }
   process.exit(0);
+}
+
+function combineContextParts(parts: Array<string | null | undefined>): string {
+  return parts.map((part) => part?.trim()).filter(Boolean).join("\n\n");
 }
 
 async function main() {
@@ -77,6 +83,8 @@ async function main() {
   const cwd = payload.cwd || process.cwd();
   const tags = getTags(cwd);
   const client = new SupermemoryClient();
+  const updateCheck = checkNpmUpdate("codex-supermemory", PLUGIN_VERSION, UPDATE_COMMAND)
+    .then((info) => (info ? formatUpdateNotice(info) : null));
 
   log("session-start: begin", { sessionId, tags });
 
@@ -97,13 +105,17 @@ async function main() {
 
     if (newFacts.length > 0) {
       addSeenFacts(sessionId, newFacts);
-      exitWithContext(`[SUPERMEMORY CONTEXT]\n${text}\n[END SUPERMEMORY CONTEXT]`);
+      const updateNotice = await updateCheck;
+      exitWithContext(combineContextParts([
+        `[SUPERMEMORY CONTEXT]\n${text}\n[END SUPERMEMORY CONTEXT]`,
+        updateNotice,
+      ]));
     }
 
-    exitWithContext("");
+    exitWithContext(await updateCheck ?? "");
   } catch (error) {
     log("session-start: error", { error: String(error) });
-    exitWithContext("");
+    exitWithContext(await updateCheck ?? "");
   }
 }
 
