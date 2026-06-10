@@ -241,6 +241,27 @@ describe("browser auth opener", () => {
 
 // ─── hooks.json format ──────────────────────────────────────────────────────
 
+describe("entity context wiring", () => {
+  test("client addMemory forwards entityContext into the API payload", () => {
+    const content = readFileSync(new URL("../src/services/client.ts", import.meta.url), "utf-8");
+    assert.ok(content.includes("USER_ENTITY_CONTEXT"));
+    assert.ok(content.includes("PROJECT_ENTITY_CONTEXT"));
+    assert.ok(content.includes("entityContext?: string"));
+    assert.ok(content.includes("payload.entityContext = options.entityContext"));
+  });
+
+  test("automatic capture writes user entity context", () => {
+    const content = readFileSync(new URL("../src/services/capture.ts", import.meta.url), "utf-8");
+    assert.ok(content.includes("entityContext: USER_ENTITY_CONTEXT"));
+  });
+
+  test("manual save writes project entity context", () => {
+    const content = readFileSync(new URL("../src/skills/save-memory.ts", import.meta.url), "utf-8");
+    assert.ok(content.includes("PROJECT_ENTITY_CONTEXT"));
+    assert.ok(content.includes("entityContext: getEntityContext(containerTag)"));
+  });
+});
+
 describe("hooks.json format", () => {
   test("wrapped hooks.json shape is valid JSON", () => {
     const recallScript = "/home/user/.codex/supermemory/recall.js";

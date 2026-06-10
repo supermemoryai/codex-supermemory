@@ -62,6 +62,33 @@ export interface ProfileWithSearchResult {
   error?: string;
 }
 
+export const USER_ENTITY_CONTEXT = `Developer coding session transcript for a persistent user profile.
+
+EXTRACT:
+- User preferences: preferred languages, frameworks, libraries, editors, workflows, and communication style
+- Stable habits: testing style, code review expectations, formatting preferences, privacy preferences
+- Repeated personal decisions: tools the user consistently chooses or avoids
+- Long-lived learnings: concepts the user learned or wants remembered across projects
+
+SKIP:
+- Project-specific architecture unless it reflects a durable user preference
+- One-off assistant suggestions the user did not accept
+- Low-level implementation details that only matter inside the current repository`;
+
+export const PROJECT_ENTITY_CONTEXT = `Project/codebase knowledge from Codex coding sessions.
+
+EXTRACT:
+- Architecture: repo structure, services, modules, data flow, and integration boundaries
+- Conventions: naming, component patterns, API patterns, testing practices, and style rules
+- Decisions: chosen approaches, tradeoffs, migrations, and rejected alternatives
+- Setup: commands, environment requirements, deployment notes, and debugging workflows
+- Implementation lessons: bugs fixed, root causes, and reusable project-specific context
+
+SKIP:
+- Generic user preferences that are not specific to this project
+- Verbatim assistant explanations unless they became an accepted project decision
+- Transient command output with no lasting project value`;
+
 export class SupermemoryClient {
   private client: Supermemory | null = null;
 
@@ -191,12 +218,13 @@ export class SupermemoryClient {
     content: string,
     containerTag: string,
     metadata?: { type?: MemoryType; tool?: string; [key: string]: unknown },
-    options?: { customId?: string }
+    options?: { customId?: string; entityContext?: string }
   ) {
     log("addMemory: start", {
       containerTag,
       contentLength: content.length,
       customId: options?.customId,
+      hasEntityContext: !!options?.entityContext,
     });
     try {
       // Always stamp `sm_source` so mono's `document.source` column attributes
@@ -214,6 +242,7 @@ export class SupermemoryClient {
         containerTag: string;
         metadata?: Record<string, string | number | boolean | string[]>;
         customId?: string;
+        entityContext?: string;
       } = {
         content,
         containerTag,
@@ -221,6 +250,9 @@ export class SupermemoryClient {
       };
       if (options?.customId) {
         payload.customId = options.customId;
+      }
+      if (options?.entityContext) {
+        payload.entityContext = options.entityContext;
       }
       const result = await withTimeout(
         this.getClient().memories.add(payload),
