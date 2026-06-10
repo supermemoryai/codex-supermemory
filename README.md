@@ -81,6 +81,7 @@ anything else fails, they exit cleanly without breaking your Codex session.
 | Variable                       | Purpose                                                |
 | ------------------------------ | ------------------------------------------------------ |
 | `SUPERMEMORY_CODEX_API_KEY`    | Your Supermemory API key (browser auth is preferred).  |
+| `SUPERMEMORY_API_URL`          | Override the Supermemory API base URL (takes precedence over config). |
 | `SUPERMEMORY_DEBUG`            | Set to any truthy value to enable debug logging to `~/.codex-supermemory.log`. |
 
 ### `~/.codex/supermemory.json` (optional)
@@ -90,6 +91,7 @@ Drop this file in to override defaults:
 | Key                      | Type       | Default        | Description                                                                                  |
 | ------------------------ | ---------- | -------------- | -------------------------------------------------------------------------------------------- |
 | `apiKey`                 | `string`   | —              | API key (env var takes precedence, browser auth is preferred).                               |
+| `baseUrl`                | `string`   | `https://api.supermemory.ai` | Supermemory API base URL (`SUPERMEMORY_API_URL`/`SUPERMEMORY_BASE_URL` env vars take precedence). |
 | `similarityThreshold`    | `number`   | `0.6`          | Minimum similarity score for retrieved memories.                                             |
 | `maxMemories`            | `number`   | `5`            | Max memories injected per prompt.                                                            |
 | `maxProfileItems`        | `number`   | `5`            | Max profile items considered.                                                                |

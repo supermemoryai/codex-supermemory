@@ -1,14 +1,10 @@
 import Supermemory from "supermemory";
-import { CONFIG, isConfigured, getApiBaseUrl, getApiKeyValue, PLUGIN_VERSION } from "../config.js";
+import { CONFIG, isConfigured, getApiKeyValue, getBaseUrl, PLUGIN_VERSION } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 
 const TIMEOUT_MS = 30000;
 const SPACE_NAME_TIMEOUT_MS = 5000;
-const API_URL =
-  process.env.SUPERMEMORY_API_URL ||
-  process.env.SUPERMEMORY_BASE_URL ||
-  "https://api.supermemory.ai";
 const CODEX_SOURCE = "codex";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -101,7 +97,7 @@ export class SupermemoryClient {
       // writes to the Codex plugin in PostHog / `document.source`.
       this.client = new Supermemory({
         apiKey: getApiKeyValue(),
-        baseURL: getApiBaseUrl(),
+        baseURL: getBaseUrl(),
         defaultHeaders: { "x-sm-source": CODEX_SOURCE },
       });
     }
@@ -270,8 +266,9 @@ export class SupermemoryClient {
   async updateContainerTagName(containerTag: string, name: string) {
     log("updateContainerTagName: start", { containerTag, name });
     try {
+      const baseUrl = getBaseUrl();
       const currentResponse = await withTimeout(
-        fetch(`${API_URL}/v3/container-tags/${encodeURIComponent(containerTag)}`, {
+        fetch(`${baseUrl}/v3/container-tags/${encodeURIComponent(containerTag)}`, {
           headers: {
             Authorization: `Bearer ${getApiKeyValue()}`,
           },
@@ -303,7 +300,7 @@ export class SupermemoryClient {
       }
 
       const response = await withTimeout(
-        fetch(`${API_URL}/v3/container-tags/${encodeURIComponent(containerTag)}`, {
+        fetch(`${baseUrl}/v3/container-tags/${encodeURIComponent(containerTag)}`, {
           method: "PATCH",
           headers: {
             Authorization: `Bearer ${getApiKeyValue()}`,
