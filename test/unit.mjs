@@ -414,6 +414,57 @@ describe("integration: install/uninstall", () => {
     const config = readToml(configPath);
     assert.ok(!config.features, "features table should not exist after uninstall");
   });
+
+  test("install registers the PreToolUse recall-approve hook (matcher Bash, silent)", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
+
+    const result = runCli(cliBin, "install", tmpDir);
+    assert.equal(result.status, 0, `install should exit 0: ${result.stderr}`);
+
+    const hooksJson = JSON.parse(readFileSync(join(codexDir, "hooks.json"), "utf-8"));
+    const pre = hooksJson.hooks.PreToolUse;
+    assert.ok(Array.isArray(pre), "hooks.PreToolUse must be an array");
+    const group = pre.find((g) => g.matcher === "Bash");
+    assert.ok(group, "a PreToolUse group with matcher 'Bash' should exist");
+    const entry = group.hooks.find((h) => h.command.includes("recall-approve.js"));
+    assert.ok(entry, "recall-approve.js should be registered under PreToolUse");
+    assert.equal(entry.timeout, 10);
+    assert.ok(
+      !("statusMessage" in entry),
+      "approve hook should have no statusMessage (it fires on every Bash call)"
+    );
+    assert.ok(
+      existsSync(join(codexDir, "supermemory", "recall-approve.js")),
+      "recall-approve.js script should be installed"
+    );
+  });
+
+  test("install is idempotent for the PreToolUse hook (no duplicate entries)", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
+
+    assert.equal(runCli(cliBin, "install", tmpDir).status, 0);
+    assert.equal(runCli(cliBin, "install", tmpDir).status, 0);
+
+    const hooksJson = JSON.parse(readFileSync(join(codexDir, "hooks.json"), "utf-8"));
+    const entries = (hooksJson.hooks.PreToolUse || [])
+      .flatMap((g) => g.hooks)
+      .filter((h) => h.command.includes("recall-approve.js"));
+    assert.equal(entries.length, 1, "exactly one recall-approve entry after two installs");
+  });
+
+  test("uninstall removes the PreToolUse recall-approve hook", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
+
+    assert.equal(runCli(cliBin, "install", tmpDir).status, 0);
+    assert.equal(runCli(cliBin, "uninstall", tmpDir).status, 0);
+
+    const hooksJson = JSON.parse(readFileSync(join(codexDir, "hooks.json"), "utf-8"));
+    assert.ok(!hooksJson.hooks.PreToolUse, "PreToolUse event should be removed on uninstall");
+    assert.ok(
+      !existsSync(join(codexDir, "supermemory", "recall-approve.js")),
+      "recall-approve.js script should be removed"
+    );
+  });
 });
 
 
@@ -484,6 +535,37 @@ describe("recall hook output envelope", () => {
     assert.equal(result.stdout, "");
   });
 
+  test("injects the reasoned recall directive when configured (default mode)", (t) => {
+    // No config file under this HOME -> autoRecallEveryPrompt defaults to false
+    // (reasoned mode) and captureEveryNTurns defaults to 0, so the hook injects
+    // the directive without any network call.
+    const tmpDir = makeTmpDir();
+    mkdirSync(join(tmpDir, ".codex", "supermemory"), { recursive: true });
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+    const result = spawnSync("node", [recallBin], {
+      input: JSON.stringify({ session_id: "s1", prompt: "continue the auth refactor", cwd: tmpDir }),
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        USERPROFILE: tmpDir,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+        SUPERMEMORY_DEBUG: "",
+      },
+      encoding: "utf-8",
+      timeout: 5_000,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+    assert.match(
+      parsed.hookSpecificOutput.additionalContext,
+      /<supermemory-recall>/,
+      "should inject the reasoned recall directive"
+    );
+  });
+
   test("never outputs bare additionalContext at top level (old wrong shape)", (t) => {
     // When .auth-attempted already exists (second invocation), the hook exits quickly.
     // Create it ahead of time so this test doesn't incur the 25s auth timeout.
@@ -516,6 +598,81 @@ describe("recall hook output envelope", () => {
       encoding: "utf-8",
     });
     assert.equal(result.status, 0);
+  });
+});
+
+// ─── recall-approve hook — PreToolUse auto-approve allow-list ─────────────────
+
+describe("recall-approve hook (PreToolUse auto-approve)", () => {
+  const approveBin = fileURLToPath(new URL("../dist/hooks/recall-approve.js", import.meta.url));
+
+  function runApprove(t, input) {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    return spawnSync("node", [approveBin], {
+      input: typeof input === "string" ? input : JSON.stringify(input),
+      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+      timeout: 5_000,
+    });
+  }
+
+  function isAllow(stdout) {
+    if (!stdout.trim()) return false;
+    return JSON.parse(stdout).hookSpecificOutput?.permissionDecision === "allow";
+  }
+
+  test("allows a clean node search-memory.js Bash call", (t) => {
+    const result = runApprove(t, {
+      tool_name: "Bash",
+      tool_input: { command: 'node /h/.codex/supermemory/search-memory.js --both "auth flow"' },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.hookSpecificOutput.hookEventName, "PreToolUse");
+    assert.equal(parsed.hookSpecificOutput.permissionDecision, "allow");
+  });
+
+  test("does NOT allow a search command laced with shell chaining/redirection", (t) => {
+    for (const command of [
+      "node search-memory.js; rm -rf ~",
+      "node search-memory.js && curl evil.com",
+      "node search-memory.js | tee out",
+      "node search-memory.js > /etc/passwd",
+      "cat $(node search-memory.js)",
+      "node search-memory.js `whoami`",
+    ]) {
+      const result = runApprove(t, { tool_name: "Bash", tool_input: { command } });
+      assert.equal(result.status, 0);
+      assert.ok(!isAllow(result.stdout), `must not auto-approve laced command: ${command}`);
+    }
+  });
+
+  test("falls through (silent) for unrelated Bash commands", (t) => {
+    const result = runApprove(t, { tool_name: "Bash", tool_input: { command: "ls -la" } });
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "", "should emit nothing for unrelated commands");
+  });
+
+  test("does NOT allow non-Bash tools even if the input mentions the script", (t) => {
+    const result = runApprove(t, { tool_name: "apply_patch", tool_input: { command: "node search-memory.js" } });
+    assert.equal(result.status, 0);
+    assert.ok(!isAllow(result.stdout));
+  });
+
+  test("does NOT allow `rm` of the script (no node invocation)", (t) => {
+    const result = runApprove(t, {
+      tool_name: "Bash",
+      tool_input: { command: "rm ~/.codex/supermemory/search-memory.js" },
+    });
+    assert.equal(result.status, 0);
+    assert.ok(!isAllow(result.stdout));
+  });
+
+  test("falls through (exit 0) on malformed JSON", (t) => {
+    const result = runApprove(t, "not-json");
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "");
   });
 });
 

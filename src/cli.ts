@@ -33,10 +33,12 @@ const CODEX_CONFIG_TOML = join(CODEX_DIR, "config.toml");
 const CODEX_HOOKS_JSON = join(CODEX_DIR, "hooks.json");
 const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
+const RECALL_APPROVE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall-approve.js");
 const FLUSH_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "flush.js");
 const SESSION_START_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "session-start.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
 const RECALL_TIMEOUT_SECONDS = 90;
+const RECALL_APPROVE_TIMEOUT_SECONDS = 10;
 const FLUSH_TIMEOUT_SECONDS = 60;
 const SESSION_START_TIMEOUT_SECONDS = 60;
 
@@ -110,6 +112,7 @@ interface MatcherGroup {
 
 interface HookEvents {
   UserPromptSubmit?: MatcherGroup[];
+  PreToolUse?: MatcherGroup[];
   Stop?: MatcherGroup[];
   [key: string]: MatcherGroup[] | undefined;
 }
@@ -130,7 +133,7 @@ function normalizeHookEvents(raw: unknown): HookEvents {
       ? maybeWrapped.hooks
       : (maybeWrapped as HookEvents);
 
-  for (const key of ["UserPromptSubmit", "Stop"] as const) {
+  for (const key of ["UserPromptSubmit", "PreToolUse", "Stop"] as const) {
     const val = events[key];
     if (val !== undefined && !Array.isArray(val)) {
       events[key] = [val as unknown as MatcherGroup];
@@ -143,13 +146,19 @@ function normalizeHookEvents(raw: unknown): HookEvents {
 /**
  * Ensure a hook is registered in the given event's MatcherGroup array.
  * If the command already exists, update its timeout and statusMessage.
- * Otherwise, append it to an existing global (no-matcher) group or create one.
+ * Otherwise, append it to the matching group (by `matcher`, or the global
+ * no-matcher group when `matcher` is omitted) or create one.
+ *
+ * `statusMessage` is optional: a hook that fires on every tool call (e.g. the
+ * PreToolUse approver) should omit it so Codex doesn't flash a status line on
+ * unrelated commands.
  */
 function ensureHookRegistered(
   groups: MatcherGroup[],
   command: string,
   timeout: number,
-  statusMessage: string,
+  statusMessage?: string,
+  matcher?: string,
 ): void {
   const exists = groups.some((g) => g.hooks.some((h) => h.command === command));
   if (exists) {
@@ -157,17 +166,20 @@ function ensureHookRegistered(
       for (const hook of group.hooks) {
         if (hook.command === command) {
           hook.timeout = timeout;
-          hook.statusMessage = statusMessage;
+          if (statusMessage !== undefined) hook.statusMessage = statusMessage;
         }
       }
     }
   } else {
-    const globalGroup = groups.find((g) => !g.matcher);
-    const entry: HookEntry = { type: "command", command, timeout, statusMessage };
-    if (globalGroup) {
-      globalGroup.hooks.push(entry);
+    const targetGroup = matcher
+      ? groups.find((g) => g.matcher === matcher)
+      : groups.find((g) => !g.matcher);
+    const entry: HookEntry = { type: "command", command, timeout };
+    if (statusMessage !== undefined) entry.statusMessage = statusMessage;
+    if (targetGroup) {
+      targetGroup.hooks.push(entry);
     } else {
-      groups.push({ hooks: [entry] });
+      groups.push(matcher ? { matcher, hooks: [entry] } : { hooks: [entry] });
     }
   }
 }
@@ -203,6 +215,7 @@ function mergeHooksJson(add: boolean) {
 
   if (add) {
     const recallCmd = `node ${RECALL_SCRIPT}`;
+    const recallApproveCmd = `node ${RECALL_APPROVE_SCRIPT}`;
     const flushCmd = `node ${FLUSH_SCRIPT}`;
     const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
     const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
@@ -215,9 +228,21 @@ function mergeHooksJson(add: boolean) {
       "Loading memory profile...",
     );
 
-    // Register UserPromptSubmit hook for optional per-prompt recall / turn capture
+    // Register UserPromptSubmit hook for per-turn recall directive / turn capture
     if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
     ensureHookRegistered(hooks.UserPromptSubmit, recallCmd, RECALL_TIMEOUT_SECONDS, "Searching memories...");
+
+    // Register PreToolUse hook to auto-approve the reasoned-recall search.
+    // Matcher "Bash" scopes it to shell calls; no statusMessage so it stays
+    // silent on every unrelated command (it only acts on the genuine search).
+    if (!hooks.PreToolUse) hooks.PreToolUse = [];
+    ensureHookRegistered(
+      hooks.PreToolUse,
+      recallApproveCmd,
+      RECALL_APPROVE_TIMEOUT_SECONDS,
+      undefined,
+      "Bash",
+    );
 
     // Remove old capture.js Stop hook from previous installs
     if (hooks.Stop) {
@@ -231,6 +256,7 @@ function mergeHooksJson(add: boolean) {
   } else {
     // Remove our hooks from every MatcherGroup, then drop empty groups.
     const recallCmd = `node ${RECALL_SCRIPT}`;
+    const recallApproveCmd = `node ${RECALL_APPROVE_SCRIPT}`;
     const flushCmd = `node ${FLUSH_SCRIPT}`;
     const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
     const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
@@ -242,6 +268,10 @@ function mergeHooksJson(add: boolean) {
     if (hooks.UserPromptSubmit) {
       hooks.UserPromptSubmit = removeHookCommands(hooks.UserPromptSubmit, [recallCmd]);
       if (hooks.UserPromptSubmit.length === 0) delete hooks.UserPromptSubmit;
+    }
+    if (hooks.PreToolUse) {
+      hooks.PreToolUse = removeHookCommands(hooks.PreToolUse, [recallApproveCmd]);
+      if (hooks.PreToolUse.length === 0) delete hooks.PreToolUse;
     }
     if (hooks.Stop) {
       hooks.Stop = removeHookCommands(hooks.Stop, [flushCmd, oldCaptureCmd]);
@@ -262,15 +292,22 @@ function install() {
 
   // Copy hook scripts
   const recallSrc = join(DIST_HOOKS_DIR, "recall.js");
+  const recallApproveSrc = join(DIST_HOOKS_DIR, "recall-approve.js");
   const flushSrc = join(DIST_HOOKS_DIR, "flush.js");
   const sessionStartSrc = join(DIST_HOOKS_DIR, "session-start.js");
 
-  if (!existsSync(recallSrc) || !existsSync(flushSrc) || !existsSync(sessionStartSrc)) {
+  if (
+    !existsSync(recallSrc) ||
+    !existsSync(recallApproveSrc) ||
+    !existsSync(flushSrc) ||
+    !existsSync(sessionStartSrc)
+  ) {
     console.error("Error: Hook scripts not found. Please reinstall the package.");
     process.exit(1);
   }
 
   copyFileSync(recallSrc, RECALL_SCRIPT);
+  copyFileSync(recallApproveSrc, RECALL_APPROVE_SCRIPT);
   copyFileSync(flushSrc, FLUSH_SCRIPT);
   copyFileSync(sessionStartSrc, SESSION_START_SCRIPT);
 
@@ -368,6 +405,7 @@ function status() {
 
   const hooksInstalled =
     existsSync(RECALL_SCRIPT) &&
+    existsSync(RECALL_APPROVE_SCRIPT) &&
     existsSync(FLUSH_SCRIPT) &&
     existsSync(SESSION_START_SCRIPT);
   const hooksJsonExists = existsSync(CODEX_HOOKS_JSON);
@@ -378,10 +416,14 @@ function status() {
     try {
       const hooks = normalizeHookEvents(JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")));
       const recallCmd = `node ${RECALL_SCRIPT}`;
+      const recallApproveCmd = `node ${RECALL_APPROVE_SCRIPT}`;
       const flushCmd = `node ${FLUSH_SCRIPT}`;
       const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
       const recallRegistered = hooks.UserPromptSubmit?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === recallCmd)
+      );
+      const recallApproveRegistered = hooks.PreToolUse?.some((g: MatcherGroup) =>
+        g.hooks.some((h: HookEntry) => h.command === recallApproveCmd)
       );
       const flushRegistered = hooks.Stop?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === flushCmd)
@@ -389,7 +431,12 @@ function status() {
       const sessionStartRegistered = hooks.SessionStart?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === sessionStartCmd)
       );
-      hooksEnabled = !!(recallRegistered && flushRegistered && sessionStartRegistered);
+      hooksEnabled = !!(
+        recallRegistered &&
+        recallApproveRegistered &&
+        flushRegistered &&
+        sessionStartRegistered
+      );
     } catch {
       // ignore
     }

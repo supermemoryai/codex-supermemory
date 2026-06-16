@@ -8,8 +8,11 @@ and the lessons learned across every project — automatically.
 
 ## Features
 
-- 🧠 **Automatic recall** — relevant memories are injected into every prompt via the
-  `UserPromptSubmit` hook.
+- 🧠 **Reasoned recall** — before each turn a short directive is injected (via the
+  `UserPromptSubmit` hook) that lets the model decide whether recalling saved memory
+  would actually help this message. When it decides yes, it runs the
+  `supermemory-search` skill — which a `PreToolUse` hook auto-approves so the search
+  stays silent, just like the save path.
 - 💾 **Automatic capture** — conversations are stored incrementally (every N turns) and
   at session end via the `Stop` hook.
 - 🏷️ **Project + user scoping** — memories are tagged per-project and per-user so
@@ -52,12 +55,20 @@ and the lessons learned across every project — automatically.
 ## How it works
 
 Codex CLI supports a hooks system that lets external scripts run at specific
-lifecycle events. `codex-supermemory` registers two hooks:
+lifecycle events. `codex-supermemory` registers these hooks:
 
-| Hook              | Event                  | What it does                                                        |
-| ----------------- | ---------------------- | ------------------------------------------------------------------- |
-| `recall`          | `UserPromptSubmit`     | Captures new turns (every N prompts), then searches Supermemory for relevant memories and your profile, injecting them into the prompt as `additionalContext`. |
-| `flush`           | `Stop`                 | Captures any remaining turns at session end so the final conversation turns are never lost. |
+| Hook             | Event              | What it does                                                        |
+| ---------------- | ------------------ | ------------------------------------------------------------------- |
+| `session-start`  | `SessionStart`     | Loads your user profile and injects it once at the start of the session. |
+| `recall`         | `UserPromptSubmit` | Captures new turns (every N prompts), then injects the reasoned-recall directive so the model decides per turn whether to search. (Legacy `autoRecallEveryPrompt` mode instead searches eagerly on every prompt and injects the results.) |
+| `recall-approve` | `PreToolUse`       | Auto-approves **only** a clean `supermemory-search` call (`node … search-memory.js`, no shell chaining) so reasoned recall runs without a permission prompt. Everything else falls through to Codex's normal approval flow. |
+| `flush`          | `Stop`             | Captures any remaining turns at session end so the final conversation turns are never lost. |
+
+**Reasoned recall**: In the default mode the recall hook doesn't search itself — it
+injects a directive and lets the model decide, per message, whether pulling saved
+memory would help. The `recall-approve` hook then rubber-stamps the resulting search
+so it feels as silent as the save path. Tune the directive text with `recallDirective`
+(see below). Set `autoRecallEveryPrompt: true` to fall back to the legacy eager search.
 
 **Incremental capture**: Memories are saved every N turns (default: 3) during the session.
 This means memories from earlier in your session are immediately available for recall
@@ -102,6 +113,8 @@ Drop this file in to override defaults:
 | `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
 | `autoSaveEveryTurns`     | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
+| `autoRecallEveryPrompt`  | `boolean`  | `false`        | Legacy eager recall: search and inject results on every prompt instead of reasoned recall. (Defaults to `true` for installs upgraded from older versions.) |
+| `recallDirective`        | `string`   | (built-in)     | Override the reasoned-recall directive text injected before each turn.                        |
 | `signalExtraction`       | `boolean`  | `false`        | Enable signal-based filtering (only capture turns with keywords like "prefer", "decided").   |
 | `signalKeywords`         | `string[]` | (defaults)     | Keywords that trigger signal extraction.                                                     |
 | `signalTurnsBefore`      | `number`   | `3`            | Include N turns before a signal for context.                                                 |
