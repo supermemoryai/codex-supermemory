@@ -536,9 +536,6 @@ describe("recall hook output envelope", () => {
   });
 
   test("injects the reasoned recall directive when configured (default mode)", (t) => {
-    // No config file under this HOME -> autoRecallEveryPrompt defaults to false
-    // (reasoned mode) and captureEveryNTurns defaults to 0, so the hook injects
-    // the directive without any network call.
     const tmpDir = makeTmpDir();
     mkdirSync(join(tmpDir, ".codex", "supermemory"), { recursive: true });
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));

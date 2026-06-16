@@ -14,17 +14,6 @@ import { getSessionId } from "../services/session.js";
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
 
-// ---------------------------------------------------------------------------
-// Reasoned recall directive.
-//
-// Injected before every user turn (in the default, non-eager mode) so the model
-// REASONS about whether recalling saved memory would help THIS message, instead
-// of the hook eagerly searching on every prompt. The decision is the model's,
-// per message; this hook only delivers the directive (no network call here).
-//
-// Edit this text to tune behavior, or override it globally via the
-// `recallDirective` setting in ~/.codex/supermemory.json.
-// ---------------------------------------------------------------------------
 const DEFAULT_RECALL_DIRECTIVE = `<supermemory-recall>
 Before responding, silently decide whether recalling saved memory (past sessions, decisions, conventions, the user's preferences) would materially improve your answer to THIS message. Reason first — don't search reflexively, and don't narrate the decision.
 
@@ -38,10 +27,6 @@ Skip recall when the message is self-contained, trivial, a greeting/meta, fully 
 Cadence is per-message: it's fine to recall on several turns in a row, and fine to never recall in a session. When you do recall, run it before answering and fold the results into your response.
 </supermemory-recall>`;
 
-// Appended to the directive only when debug is on. Forces the model to surface
-// its recall decision as one visible line, so you can see — per turn — whether
-// reasoned recall fired and why. (The hook can't observe the model's internal
-// decision; this makes the model report it.)
 const RECALL_DEBUG_SUFFIX = `<recall-debug>
 DEBUG MODE: Begin your reply with exactly one line, then continue normally:
 [recall-decision] yes|no — <short reason>
@@ -153,9 +138,6 @@ async function main() {
   }
 
   if (!CONFIG.autoRecallEveryPrompt) {
-    // Reasoned mode (default): don't search in the hook. Inject the recall
-    // directive so the model decides per-turn whether to call the
-    // supermemory-search skill (auto-approved by the PreToolUse hook).
     const { directive } = getRecallConfig(cwd);
     let additionalContext = directive || DEFAULT_RECALL_DIRECTIVE;
     const debugDecision = !!(CONFIG.debug || process.env.SUPERMEMORY_DEBUG);

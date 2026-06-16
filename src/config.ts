@@ -256,17 +256,6 @@ export function getRecallModeSummary(): string {
   return "reasoned: session-start profile + per-turn reasoned recall + session-end flush";
 }
 
-/**
- * Resolve the reasoned-recall directive override.
- *
- * Reasoned recall is always on — a built-in optimization, not a toggle. The
- * only knob is an optional override of the injected directive text via
- * `recallDirective` in ~/.codex/supermemory.json; a null/absent value tells the
- * recall hook to fall back to its built-in DEFAULT_RECALL_DIRECTIVE.
- *
- * `cwd` is accepted for forward-compatibility with per-project overrides but is
- * currently unused — Codex has no per-project supermemory config.
- */
 export function getRecallConfig(_cwd?: string): { directive: string | null } {
   return { directive: CONFIG.recallDirective ?? null };
 }

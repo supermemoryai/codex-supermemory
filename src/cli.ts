@@ -148,10 +148,6 @@ function normalizeHookEvents(raw: unknown): HookEvents {
  * If the command already exists, update its timeout and statusMessage.
  * Otherwise, append it to the matching group (by `matcher`, or the global
  * no-matcher group when `matcher` is omitted) or create one.
- *
- * `statusMessage` is optional: a hook that fires on every tool call (e.g. the
- * PreToolUse approver) should omit it so Codex doesn't flash a status line on
- * unrelated commands.
  */
 function ensureHookRegistered(
   groups: MatcherGroup[],
@@ -232,9 +228,7 @@ function mergeHooksJson(add: boolean) {
     if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
     ensureHookRegistered(hooks.UserPromptSubmit, recallCmd, RECALL_TIMEOUT_SECONDS, "Searching memories...");
 
-    // Register PreToolUse hook to auto-approve the reasoned-recall search.
-    // Matcher "Bash" scopes it to shell calls; no statusMessage so it stays
-    // silent on every unrelated command (it only acts on the genuine search).
+    // Register PreToolUse hook to auto-approve the reasoned-recall search
     if (!hooks.PreToolUse) hooks.PreToolUse = [];
     ensureHookRegistered(
       hooks.PreToolUse,
