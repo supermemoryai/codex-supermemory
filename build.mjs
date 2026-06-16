@@ -12,7 +12,7 @@ const sharedConfig = {
 
 const executableEntries = [
   { in: "src/cli.ts", out: "dist/cli.js" },
-  ...["recall", "flush", "session-start"].map((n) => ({
+  ...["recall", "recall-approve", "flush", "session-start"].map((n) => ({
     in: `src/hooks/${n}.ts`,
     out: `dist/hooks/${n}.js`,
   })),
