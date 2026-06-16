@@ -31,6 +31,7 @@ interface CodexSupermemoryConfig {
   autoSaveEveryTurns?: number;
   autoRecallEveryPrompt?: boolean;
   captureEveryNTurns?: number;
+  recallDirective?: string | null;
   enableCustomContainers?: boolean;
   customContainers?: CustomContainer[];
   customContainerInstructions?: string;
@@ -118,6 +119,7 @@ export const CONFIG = {
   autoSaveEveryTurns: fileConfig.autoSaveEveryTurns ?? DEFAULTS.autoSaveEveryTurns,
   autoRecallEveryPrompt: resolveAutoRecallEveryPrompt(fileConfig),
   captureEveryNTurns: resolveCaptureEveryNTurns(fileConfig),
+  recallDirective: fileConfig.recallDirective ?? null,
   enableCustomContainers: fileConfig.enableCustomContainers ?? false,
   customContainers: (fileConfig.customContainers ?? []).filter(
     (c): c is CustomContainer =>
@@ -246,10 +248,25 @@ export function writeInstallDefaults(isExistingInstall: boolean): void {
 
 export function getRecallModeSummary(): string {
   if (CONFIG.autoRecallEveryPrompt) {
-    return "legacy: recall on every prompt";
+    return "legacy: eager search on every prompt";
   }
   if (CONFIG.captureEveryNTurns > 0) {
-    return `unified: session-start profile + capture every ${CONFIG.captureEveryNTurns} turns + session-end flush`;
+    return `reasoned: session-start profile + per-turn reasoned recall + capture every ${CONFIG.captureEveryNTurns} turns + session-end flush`;
   }
-  return "unified: session-start profile + session-end flush only";
+  return "reasoned: session-start profile + per-turn reasoned recall + session-end flush";
+}
+
+/**
+ * Resolve the reasoned-recall directive override.
+ *
+ * Reasoned recall is always on — a built-in optimization, not a toggle. The
+ * only knob is an optional override of the injected directive text via
+ * `recallDirective` in ~/.codex/supermemory.json; a null/absent value tells the
+ * recall hook to fall back to its built-in DEFAULT_RECALL_DIRECTIVE.
+ *
+ * `cwd` is accepted for forward-compatibility with per-project overrides but is
+ * currently unused — Codex has no per-project supermemory config.
+ */
+export function getRecallConfig(_cwd?: string): { directive: string | null } {
+  return { directive: CONFIG.recallDirective ?? null };
 }
