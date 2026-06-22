@@ -35,6 +35,7 @@ const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
 const FLUSH_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "flush.js");
 const SESSION_START_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "session-start.js");
+const AUTH_BACKGROUND_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "auth-background.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
 const RECALL_TIMEOUT_SECONDS = 90;
 const FLUSH_TIMEOUT_SECONDS = 60;
@@ -264,8 +265,9 @@ function install() {
   const recallSrc = join(DIST_HOOKS_DIR, "recall.js");
   const flushSrc = join(DIST_HOOKS_DIR, "flush.js");
   const sessionStartSrc = join(DIST_HOOKS_DIR, "session-start.js");
+  const authBackgroundSrc = join(DIST_HOOKS_DIR, "auth-background.js");
 
-  if (!existsSync(recallSrc) || !existsSync(flushSrc) || !existsSync(sessionStartSrc)) {
+  if (!existsSync(recallSrc) || !existsSync(flushSrc) || !existsSync(sessionStartSrc) || !existsSync(authBackgroundSrc)) {
     console.error("Error: Hook scripts not found. Please reinstall the package.");
     process.exit(1);
   }
@@ -273,6 +275,7 @@ function install() {
   copyFileSync(recallSrc, RECALL_SCRIPT);
   copyFileSync(flushSrc, FLUSH_SCRIPT);
   copyFileSync(sessionStartSrc, SESSION_START_SCRIPT);
+  copyFileSync(authBackgroundSrc, AUTH_BACKGROUND_SCRIPT);
 
   // Remove script names left by older package layouts.
   for (const script of LEGACY_SUPERMEMORY_SCRIPTS) {

@@ -85,10 +85,21 @@ function saveCredentials(apiKey: string, apiBaseUrl?: string): void {
   );
 }
 
-export function startAuthFlow(): Promise<string> {
-  return new Promise((resolve, reject) => {
+export interface AuthSession {
+  authUrl: string;
+  callback: () => Promise<string>;
+}
+
+export function createAuthSession(): Promise<AuthSession> {
+  return new Promise((resolveSession, rejectSession) => {
     let resolved = false;
     const stateToken = randomBytes(16).toString("hex");
+    let resolveAuth: (apiKey: string) => void;
+    let rejectAuth: (error: Error) => void;
+    const result = new Promise<string>((resolve, reject) => {
+      resolveAuth = resolve;
+      rejectAuth = reject;
+    });
 
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       const url = new URL(req.url || "/", "http://localhost");
@@ -113,7 +124,7 @@ export function startAuthFlow(): Promise<string> {
           resolved = true;
           clearTimeout(timer);
           server.close();
-          resolve(apiKey);
+          resolveAuth(apiKey);
         } else {
           res.writeHead(400, { "Content-Type": "text/html" });
           res.end(AUTH_ERROR_HTML);
@@ -124,8 +135,6 @@ export function startAuthFlow(): Promise<string> {
       }
     });
 
-    // Listen on an ephemeral port to avoid conflicts; embed the state token in
-    // the callback URL so the console redirects it back through the redirect.
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;
       const callbackUrl = `http://127.0.0.1:${port}/callback?state=${stateToken}`;
@@ -138,29 +147,32 @@ export function startAuthFlow(): Promise<string> {
         cli_version: "1.0.0",
       });
       const authUrl = `${AUTH_BASE_URL}?${params.toString()}`;
-      openUrl(authUrl).catch((error) => {
-        if (!resolved) {
-          clearTimeout(timer);
-          server.close();
-          reject(new Error(`Failed to open browser: ${error.message}`));
-        }
+      resolveSession({
+        authUrl,
+        callback: () => result,
       });
     });
 
     server.on("error", (err) => {
       if (!resolved) {
         clearTimeout(timer);
-        reject(new Error(`Failed to start auth server: ${err.message}`));
+        rejectSession(new Error(`Failed to start auth server: ${err.message}`));
+        rejectAuth(new Error(`Failed to start auth server: ${err.message}`));
       }
     });
 
     const timer = setTimeout(() => {
       if (!resolved) {
         server.close();
-        reject(new Error("AUTH_TIMEOUT"));
+        rejectAuth(new Error("AUTH_TIMEOUT"));
       }
     }, AUTH_TIMEOUT);
   });
 }
 
+export async function startAuthFlow(): Promise<string> {
+  const session = await createAuthSession();
+  await openUrl(session.authUrl);
+  return session.callback();
+}
 export { AUTH_BASE_URL, CREDENTIALS_FILE };

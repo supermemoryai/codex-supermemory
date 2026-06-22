@@ -1,17 +1,37 @@
-import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { isConfigured, CONFIG, PLUGIN_VERSION, reloadApiKey } from "../config.js";
+import { spawn } from "node:child_process";
+import { isConfigured, CONFIG, PLUGIN_VERSION } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
-import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
+const AUTH_RETRY_MS = 10 * 60_000;
 const UPDATE_COMMAND = "npx codex-supermemory@latest install";
+
+function hasRecentAuthAttempt(): boolean {
+  try {
+    return Date.now() - statSync(AUTH_ATTEMPTED_FILE).mtimeMs < AUTH_RETRY_MS;
+  } catch {
+    return false;
+  }
+}
+
+function startAuthBackground(): void {
+  const hookDir = dirname(process.argv[1] || "");
+  const script = join(hookDir, "auth-background.js");
+  const child = spawn(process.execPath, [script], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+}
 
 interface CodexHookPayload {
   session_id?: string;
@@ -46,30 +66,22 @@ async function main() {
   }
 
   if (!isConfigured()) {
-    const alreadyAttempted = existsSync(AUTH_ATTEMPTED_FILE);
-    if (!alreadyAttempted) {
+    if (!hasRecentAuthAttempt()) {
       try {
         mkdirSync(dirname(AUTH_ATTEMPTED_FILE), { recursive: true });
         writeFileSync(AUTH_ATTEMPTED_FILE, new Date().toISOString());
       } catch {}
-
-      try {
-        await startAuthFlow();
-        reloadApiKey();
-        try { unlinkSync(AUTH_ATTEMPTED_FILE); } catch {}
-      } catch {
-        exitWithContext(
-          "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-          `Visit: ${AUTH_BASE_URL}\n` +
-          "Run /supermemory-login to authenticate."
-        );
-      }
-    } else {
+      startAuthBackground();
       exitWithContext(
-        "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-        "Run /supermemory-login to authenticate."
+        "[SUPERMEMORY] Memory is installed but not connected. I opened the login page in your browser. " +
+        "Complete login there, then continue in Codex. You can also run /supermemory-login manually."
       );
     }
+
+    exitWithContext(
+      "[SUPERMEMORY] Memory is installed but not connected. A login page was opened recently. " +
+      "Complete login there, or run /supermemory-login to authenticate."
+    );
   }
 
   let payload: CodexHookPayload = {};
