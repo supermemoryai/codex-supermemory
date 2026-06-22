@@ -191,6 +191,55 @@ export class SupermemoryClient {
     }
   }
 
+  async searchMemoriesAcrossContainers(query: string, containerTags: string[]): Promise<SearchResponse> {
+    const uniqueTags = [...new Set(containerTags)].filter((tag) => tag.length > 0);
+    log("searchMemoriesAcrossContainers: start", { containerTags: uniqueTags });
+
+    if (uniqueTags.length === 0) {
+      return { success: false, error: "At least one containerTag is required", results: [], total: 0, timing: 0 };
+    }
+
+    const results = await Promise.all(
+      uniqueTags.map((tag) => this.searchMemories(query, tag))
+    );
+    const successes = results.filter((result) => result.success);
+
+    if (successes.length === 0) {
+      return {
+        success: false,
+        error: results.find((result) => result.error)?.error ?? "Failed to search memories",
+        results: [],
+        total: 0,
+        timing: 0,
+      };
+    }
+
+    const seen = new Set<string>();
+    const merged: SearchResultItem[] = [];
+
+    for (const result of successes) {
+      for (const item of result.results ?? []) {
+        const text = item.memory ?? item.chunk ?? item.content ?? String(item.context ?? "");
+        const key = item.id ? `id:${item.id}` : `content:${text.toLowerCase().trim()}`;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        merged.push(item);
+      }
+    }
+
+    log("searchMemoriesAcrossContainers: success", {
+      containerCount: uniqueTags.length,
+      resultCount: merged.length,
+    });
+
+    return {
+      success: true,
+      results: merged,
+      total: merged.length,
+      timing: successes.reduce((sum, result) => sum + (result.timing ?? 0), 0),
+    };
+  }
+
   async getProfile(containerTag: string, query?: string) {
     log("getProfile: start", { containerTag });
     try {

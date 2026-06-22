@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { CONFIG, getApiBaseUrl, getApiKeyValue, isConfigured } from "../config.js";
 import { CREDENTIALS_FILE, loadCredentials } from "../services/auth.js";
 import { SupermemoryClient } from "../services/client.js";
-import { getTags } from "../services/tags.js";
+import { getLegacyProjectTag, getTags } from "../services/tags.js";
 
 const API_URL =
   getApiBaseUrl();
@@ -94,6 +94,7 @@ async function getAccountInfo(): Promise<{ email?: string; name?: string; userId
 async function main(): Promise<void> {
   const cwd = process.cwd();
   const tags = getTags(cwd);
+  const legacyProjectTag = getLegacyProjectTag(cwd);
   const apiKey = getApiKeyValue();
   const lines: string[] = [];
 
@@ -106,6 +107,9 @@ async function main(): Promise<void> {
   lines.push(`Recall mode: auto-recall on every prompt`);
   lines.push(`Capture cadence: ${CONFIG.autoSaveEveryTurns > 0 ? `every ${CONFIG.autoSaveEveryTurns} turn${CONFIG.autoSaveEveryTurns === 1 ? "" : "s"} + session end` : "session end only"}`);
   lines.push(`Project tag: ${tags.project}`);
+  if (legacyProjectTag !== tags.project) {
+    lines.push(`Legacy project tag searched: ${legacyProjectTag}`);
+  }
   lines.push(`User tag: ${tags.user}`);
 
   if (!isConfigured()) {

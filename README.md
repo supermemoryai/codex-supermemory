@@ -96,9 +96,9 @@ Drop this file in to override defaults:
 | `maxMemories`            | `number`   | `5`            | Max memories injected per prompt.                                                            |
 | `maxProfileItems`        | `number`   | `5`            | Max profile items considered.                                                                |
 | `injectProfile`          | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
-| `containerTagPrefix`     | `string`   | `"codex"`      | Prefix for auto-generated container tags.                                                    |
+| `containerTagPrefix`     | `string`   | `"codex"`      | Prefix for auto-generated user tags and legacy Codex project tags.                           |
 | `userContainerTag`       | `string`   | auto           | Override the user container tag.                                                             |
-| `projectContainerTag`    | `string`   | auto (per-repo) | Override the project container tag.                                                         |
+| `projectContainerTag`    | `string`   | auto (`repo_<repo-name>`) | Override the project container tag.                                                         |
 | `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
 | `autoSaveEveryTurns`     | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
@@ -109,10 +109,15 @@ Drop this file in to override defaults:
 | `customContainers`             | `array`    | `[]`           | Custom containers with `tag` and `description` (see below).                            |
 | `customContainerInstructions`  | `string`   | `""`           | Free-text instructions for the AI on how to route memories to containers.  
 
-User tags are auto-derived from your `git config user.email`. Project tags are
-derived from the Git common directory when available, so linked worktrees and
-Conductor workspaces for the same repository share one project container by default.
-Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to keep each worktree isolated.
+User tags are auto-derived from your `git config user.email`. Project tags now
+match Claude Code's shared repo format: `repo_<sanitized-repo-name>`, using the
+git remote repo name when available and falling back to the workspace folder
+name. This lets Codex and Claude Code read and write project memories in the
+same Supermemory container by default.
+
+During the transition from older Codex versions, project recall/search also
+checks the legacy Codex tag: `codex_project_<hash(git-common-dir-or-root)>`.
+New project memories are saved only to the `repo_<repo-name>` tag.
 
 ### Entity context
 

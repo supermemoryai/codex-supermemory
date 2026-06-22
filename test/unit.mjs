@@ -85,7 +85,68 @@ describe("container tags", () => {
     return result.stdout.trim();
   }
 
-  test("project tag uses the shared git common directory for worktrees", (t) => {
+  function getLegacyProjectTagFor(cwd, home, extraEnv = {}) {
+    const script = `
+      import { getLegacyProjectTag } from ${JSON.stringify(tagsModule)};
+      console.log(getLegacyProjectTag(process.argv.at(-1)));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, cwd], {
+      env: {
+        ...process.env,
+        HOME: home,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+        ...extraEnv,
+      },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, `getLegacyProjectTag failed: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+
+  function getProjectSearchTagsFor(cwd, home, extraEnv = {}) {
+    const script = `
+      import { getProjectSearchTags } from ${JSON.stringify(tagsModule)};
+      console.log(JSON.stringify(getProjectSearchTags(process.argv.at(-1))));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, cwd], {
+      env: {
+        ...process.env,
+        HOME: home,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+        ...extraEnv,
+      },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, `getProjectSearchTags failed: ${result.stderr}`);
+    return JSON.parse(result.stdout.trim());
+  }
+
+  test("project tag uses the Claude-compatible git remote repo name", (t) => {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+    const repoDir = join(tmpDir, "repo");
+    const worktreeDir = join(tmpDir, "worktree");
+    const homeDir = join(tmpDir, "home");
+    mkdirSync(repoDir, { recursive: true });
+    mkdirSync(homeDir, { recursive: true });
+
+    runGit(["init"], repoDir);
+    runGit(["config", "user.email", "test@example.com"], repoDir);
+    runGit(["config", "user.name", "Test User"], repoDir);
+    runGit(["remote", "add", "origin", "git@github.com:supermemoryai/shared-memory-plugin.git"], repoDir);
+    writeFileSync(join(repoDir, "README.md"), "# test\n");
+    runGit(["add", "README.md"], repoDir);
+    runGit(["commit", "-m", "initial"], repoDir);
+    runGit(["worktree", "add", "--detach", worktreeDir, "HEAD"], repoDir);
+
+    assert.equal(
+      getProjectTagFor(worktreeDir, homeDir),
+      "repo_shared_memory_plugin"
+    );
+  });
+
+  test("legacy project tag preserves the old Codex git common directory hash", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -111,17 +172,16 @@ describe("container tags", () => {
         : runGit(["rev-parse", "--show-toplevel"], worktreeDir);
 
     assert.equal(
-      getProjectTagFor(worktreeDir, homeDir),
+      getLegacyProjectTagFor(worktreeDir, homeDir),
       `codex_project_${hash16(expectedBasePath)}`
     );
   });
 
-  test("project tag can still isolate individual worktrees when requested", (t) => {
+  test("project search tags include new and legacy containers", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
 
     const repoDir = join(tmpDir, "repo");
-    const worktreeDir = join(tmpDir, "worktree");
     const homeDir = join(tmpDir, "home");
     mkdirSync(repoDir, { recursive: true });
     mkdirSync(homeDir, { recursive: true });
@@ -129,15 +189,18 @@ describe("container tags", () => {
     runGit(["init"], repoDir);
     runGit(["config", "user.email", "test@example.com"], repoDir);
     runGit(["config", "user.name", "Test User"], repoDir);
+    runGit(["remote", "add", "origin", "https://github.com/supermemoryai/codex-supermemory.git"], repoDir);
     writeFileSync(join(repoDir, "README.md"), "# test\n");
     runGit(["add", "README.md"], repoDir);
     runGit(["commit", "-m", "initial"], repoDir);
-    runGit(["worktree", "add", "--detach", worktreeDir, "HEAD"], repoDir);
-    const worktreeRoot = runGit(["rev-parse", "--show-toplevel"], worktreeDir);
+    const gitRoot = runGit(["rev-parse", "--show-toplevel"], repoDir);
 
-    assert.equal(
-      getProjectTagFor(worktreeDir, homeDir, { SUPERMEMORY_ISOLATE_WORKTREES: "true" }),
-      `codex_project_${hash16(worktreeRoot)}`
+    assert.deepEqual(
+      getProjectSearchTagsFor(repoDir, homeDir),
+      [
+        "repo_codex_supermemory",
+        `codex_project_${hash16(gitRoot)}`,
+      ]
     );
   });
 });

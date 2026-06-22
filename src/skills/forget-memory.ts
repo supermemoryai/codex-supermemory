@@ -1,6 +1,6 @@
 import { isConfigured, validateContainerTag } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
-import { getProjectTag, getUserTag } from "../services/tags.js";
+import { getProjectSearchTags, getUserTag } from "../services/tags.js";
 
 function parseArgs(args: string[]): { content: string; containerTag?: string } {
   let containerTag: string | undefined;
@@ -54,22 +54,25 @@ async function main(): Promise<void> {
         console.log(`Failed to forget memory from container '${containerTag}': ${result.error}`);
       }
     } else {
-      const projectTag = getProjectTag(process.cwd());
+      const projectTags = getProjectSearchTags(process.cwd());
       const userTag = getUserTag();
 
-      const [projectResult, userResult] = await Promise.all([
-        client.forgetMemory(content, projectTag),
+      const [projectResults, userResult] = await Promise.all([
+        Promise.all(projectTags.map((tag) => client.forgetMemory(content, tag))),
         client.forgetMemory(content, userTag),
       ]);
 
       const forgotten: string[] = [];
       const errors: string[] = [];
 
-      if (projectResult.success) {
-        forgotten.push(projectResult.id ? `project (id: ${projectResult.id})` : "project");
-      } else {
-        errors.push(`project: ${projectResult.error}`);
-      }
+      projectResults.forEach((projectResult, index) => {
+        const label = index === 0 ? "project" : "legacy project";
+        if (projectResult.success) {
+          forgotten.push(projectResult.id ? `${label} (id: ${projectResult.id})` : label);
+        } else {
+          errors.push(`${label}: ${projectResult.error}`);
+        }
+      });
 
       if (userResult.success) {
         forgotten.push(userResult.id ? `user (id: ${userResult.id})` : "user");

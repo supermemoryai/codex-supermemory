@@ -3,7 +3,7 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { isConfigured, CONFIG, reloadApiKey, getContainerCatalog } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
-import { getTags } from "../services/tags.js";
+import { getProjectSearchTags, getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
 import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
@@ -99,11 +99,13 @@ async function main() {
 
   const cwd = payload.cwd || process.cwd();
   const tags = getTags(cwd);
+  const projectSearchTags = getProjectSearchTags(cwd);
   const sessionId = getSessionId(payload.session_id, tags.project);
 
   log("recall: start", {
     query: query.slice(0, 100),
     tags,
+    projectSearchTags,
     sessionId,
     autoRecallEveryPrompt: CONFIG.autoRecallEveryPrompt,
   });
@@ -125,7 +127,7 @@ async function main() {
   try {
     const [profileResult, projectSearchResult] = await Promise.all([
       client.getProfileWithSearch(tags.user, query),
-      client.searchMemories(query, tags.project),
+      client.searchMemoriesAcrossContainers(query, projectSearchTags),
     ]);
 
     const seen = getSeenFacts(sessionId);

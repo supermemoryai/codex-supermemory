@@ -82,6 +82,14 @@ function getGitRepoName(directory: string): string | null {
   }
 }
 
+function sanitizeRepoName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
 export function getUserTag(): string {
   if (CONFIG.userContainerTag) return CONFIG.userContainerTag;
   const email = getGitEmail();
@@ -93,7 +101,17 @@ export function getUserTag(): string {
 export function getProjectTag(directory: string): string {
   if (CONFIG.projectContainerTag) return CONFIG.projectContainerTag;
   const basePath = getGitRoot(directory) || directory;
+  const repoName = getGitRepoName(basePath) || basename(basePath) || "unknown";
+  return `repo_${sanitizeRepoName(repoName)}`;
+}
+
+export function getLegacyProjectTag(directory: string): string {
+  const basePath = getGitRoot(directory) || directory;
   return `${CONFIG.containerTagPrefix}_project_${sha256(basePath)}`;
+}
+
+export function getProjectSearchTags(directory: string): string[] {
+  return [...new Set([getProjectTag(directory), getLegacyProjectTag(directory)])];
 }
 
 export function getProjectName(directory: string): string {
