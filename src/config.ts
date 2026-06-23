@@ -15,6 +15,7 @@ export interface CustomContainer {
 interface CodexSupermemoryConfig {
   apiKey?: string;
   baseUrl?: string;
+  authUrl?: string;
   similarityThreshold?: number;
   maxMemories?: number;
   maxProfileItems?: number;
@@ -222,6 +223,30 @@ export function validateContainerTag(tag: string): string | null {
 
   const validList = validTags.map((t) => `'${t}'`).join(", ");
   return `Unknown container tag '${tag}'. Valid containers: ${validList}`;
+}
+
+/** Persist SUPERMEMORY_API_URL / SUPERMEMORY_AUTH_URL from install env into config. */
+export function persistInstallEnvUrls(): void {
+  const apiUrl = process.env.SUPERMEMORY_API_URL || process.env.SUPERMEMORY_BASE_URL;
+  const authUrl = process.env.SUPERMEMORY_AUTH_URL;
+  if (!apiUrl && !authUrl) return;
+
+  const { config: current } = loadRawConfig();
+  const next: CodexSupermemoryConfig = { ...current };
+
+  const normalizedApiUrl = apiUrl ? normalizeBaseUrl(apiUrl) : null;
+  if (normalizedApiUrl) next.baseUrl = normalizedApiUrl;
+
+  if (authUrl) {
+    try {
+      const url = new URL(authUrl);
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        next.authUrl = authUrl.trim().replace(/\/$/, "");
+      }
+    } catch {}
+  }
+
+  writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2));
 }
 
 /** Persist explicit recall/capture defaults for fresh installs or legacy upgrades. */

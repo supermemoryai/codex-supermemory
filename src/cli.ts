@@ -7,7 +7,7 @@ import {
   rmSync,
 } from "node:fs";
 import { loadCredentials } from "./services/auth.js";
-import { writeInstallDefaults, CONFIG_FILE, getRecallModeSummary, CONFIG } from "./config.js";
+import { writeInstallDefaults, persistInstallEnvUrls, CONFIG_FILE, getRecallModeSummary, CONFIG } from "./config.js";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -259,6 +259,7 @@ function install() {
 
   const hadExistingConfig = existsSync(CONFIG_FILE);
   writeInstallDefaults(hadExistingConfig);
+  persistInstallEnvUrls();
 
   // Copy hook scripts
   const recallSrc = join(DIST_HOOKS_DIR, "recall.js");

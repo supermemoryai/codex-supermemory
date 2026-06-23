@@ -8,15 +8,63 @@ import { openUrl } from "./openUrl.js";
 
 const SUPERMEMORY_DIR = join(homedir(), ".codex", "supermemory");
 const CREDENTIALS_FILE = join(SUPERMEMORY_DIR, "credentials.json");
+const DEFAULT_AUTH_BASE_URL = "https://app.supermemory.ai/auth/agent-connect";
+
+function configFilePath(): string {
+  return join(homedir(), ".codex", "supermemory.json");
+}
 export interface Credentials {
   apiKey?: string;
   apiBaseUrl?: string;
   savedAt?: string;
 }
 
-const AUTH_BASE_URL =
-  process.env.SUPERMEMORY_AUTH_URL || "https://app.supermemory.ai/auth/agent-connect";
 const AUTH_TIMEOUT = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT) || 5 * 60_000;
+
+function readFileConfig(): { baseUrl?: string; authUrl?: string } {
+  try {
+    const configPath = configFilePath();
+    if (existsSync(configPath)) {
+      return JSON.parse(readFileSync(configPath, "utf-8")) as {
+        baseUrl?: string;
+        authUrl?: string;
+      };
+    }
+  } catch {}
+  return {};
+}
+
+function isLocalHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0";
+}
+
+/** Resolve auth URL: env → config → derive from local API URL → prod default. */
+export function getAuthBaseUrl(): string {
+  if (process.env.SUPERMEMORY_AUTH_URL) {
+    return process.env.SUPERMEMORY_AUTH_URL.replace(/\/$/, "");
+  }
+
+  const fileConfig = readFileConfig();
+  if (fileConfig.authUrl) return fileConfig.authUrl;
+
+  const apiUrl =
+    process.env.SUPERMEMORY_API_URL ||
+    process.env.SUPERMEMORY_BASE_URL ||
+    fileConfig.baseUrl ||
+    loadCredentialData()?.apiBaseUrl;
+
+  if (apiUrl) {
+    try {
+      const url = new URL(apiUrl);
+      if (isLocalHost(url.hostname)) {
+        const webPort = url.port === "8787" ? "3000" : url.port || "3000";
+        return `${url.protocol}//${url.hostname}:${webPort}/auth/agent-connect`;
+      }
+    } catch {}
+  }
+
+  return DEFAULT_AUTH_BASE_URL;
+}
 
 const AUTH_SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><title>Connected - Supermemory</title><style>
@@ -137,7 +185,7 @@ export function startAuthFlow(): Promise<string> {
         cwd: process.cwd(),
         cli_version: "1.0.0",
       });
-      const authUrl = `${AUTH_BASE_URL}?${params.toString()}`;
+      const authUrl = `${getAuthBaseUrl()}?${params.toString()}`;
       openUrl(authUrl).catch((error) => {
         if (!resolved) {
           clearTimeout(timer);
@@ -163,4 +211,4 @@ export function startAuthFlow(): Promise<string> {
   });
 }
 
-export { AUTH_BASE_URL, CREDENTIALS_FILE };
+export { CREDENTIALS_FILE };

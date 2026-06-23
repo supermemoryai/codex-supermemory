@@ -1,12 +1,12 @@
 /**
  * Shared capture logic used by both recall and flush hooks.
  * Reads transcript entries since last capture, filters by signals,
- * and saves to the user container.
+ * and saves to the shared repo container.
  */
 import { existsSync } from "node:fs";
 import {
   SupermemoryClient,
-  USER_ENTITY_CONTEXT,
+  PROJECT_ENTITY_CONTEXT,
 } from "./client.js";
 import { log } from "./logger.js";
 import {
@@ -39,7 +39,7 @@ export function resolveTranscriptPath(
 
 /**
  * Capture new transcript entries since last capture, filter by signals,
- * and save to the user container.
+ * and save to the shared repo container.
  *
  * @param caller   Label for log messages (e.g. "recall" or "flush")
  * @param client   Supermemory API client
@@ -133,20 +133,20 @@ export async function captureEntries(
     .trim();
 
   const metadata = {
-    type: "conversation" as const,
+    type: "session_turn" as const,
     sessionId,
     entryCount: newEntries.length,
     timestamp: new Date().toISOString(),
     sm_capture_mode: caller === "flush" ? "session_end" : "turn",
   };
 
-  // Save automatic transcript capture to the user container. Explicit project
-  // knowledge is still saved via the supermemory-save skill.
+  // Save automatic transcript capture to the shared repo container. Explicit
+  // project knowledge is still saved via the supermemory-save skill.
   // Use customId so all session turns go into the same document.
   try {
-    await client.addMemory(content, tags.user, metadata, {
+    await client.addMemory(content, tags.project, metadata, {
       customId: sessionId,
-      entityContext: USER_ENTITY_CONTEXT,
+      entityContext: PROJECT_ENTITY_CONTEXT,
     });
 
     const lastEntry = newEntries[newEntries.length - 1];

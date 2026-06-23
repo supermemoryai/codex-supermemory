@@ -3,10 +3,10 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { isConfigured, CONFIG, reloadApiKey, getContainerCatalog } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
-import { getProjectSearchTags, getTags } from "../services/tags.js";
+import { getRepoSearchTags, getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
-import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
+import { startAuthFlow, getAuthBaseUrl } from "../services/auth.js";
 import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
@@ -73,7 +73,7 @@ async function main() {
           (isTimeout
             ? "Authentication timed out. Please complete login in the browser.\n"
             : "Authentication failed.\n") +
-          `If the browser did not open, visit: ${AUTH_BASE_URL}\n` +
+          `If the browser did not open, visit: ${getAuthBaseUrl()}\n` +
           "Run /supermemory-login to try again, or set SUPERMEMORY_CODEX_API_KEY manually."
         );
       }
@@ -99,7 +99,7 @@ async function main() {
 
   const cwd = payload.cwd || process.cwd();
   const tags = getTags(cwd);
-  const projectSearchTags = getProjectSearchTags(cwd);
+  const projectSearchTags = getRepoSearchTags(cwd);
   const sessionId = getSessionId(payload.session_id, tags.project);
 
   log("recall: start", {
@@ -126,7 +126,7 @@ async function main() {
 
   try {
     const [profileResult, projectSearchResult] = await Promise.all([
-      client.getProfileWithSearch(tags.user, query),
+      client.getProfileWithSearch(tags.project, query),
       client.searchMemoriesAcrossContainers(query, projectSearchTags),
     ]);
 
