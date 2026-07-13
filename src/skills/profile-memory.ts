@@ -12,7 +12,7 @@ async function main() {
   const cwd = process.cwd();
   const tags = getTags(cwd);
   const client = new SupermemoryClient();
-  const result = await client.getProfile(tags.user);
+  const result = await client.getProfileMany(tags.personalReads);
 
   if (!result.success || !result.profile) {
     console.log("No profile available yet.");

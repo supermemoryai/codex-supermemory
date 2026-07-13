@@ -124,8 +124,8 @@ async function main() {
 
   try {
     const [profileResult, projectSearchResult] = await Promise.all([
-      client.getProfileWithSearch(tags.user, query),
-      client.searchMemories(query, tags.project),
+      client.getProfileWithSearchMany(tags.personalReads, query),
+      client.searchMemoriesMany(query, tags.projectReads),
     ]);
 
     const seen = getSeenFacts(sessionId);

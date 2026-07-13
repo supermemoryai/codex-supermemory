@@ -75,8 +75,9 @@ export function formatCombinedContext(
   const seenKeys = new Set<string>();
 
   function dedupKey(id: string | undefined, text: string): string {
-    if (id) return `id:${id}`;
-    return `content:${text.toLowerCase().trim()}`;
+    const normalized = text.toLowerCase().trim();
+    if (normalized) return `content:${normalized}`;
+    return id ? `id:${id}` : "";
   }
 
   const userMemories: string[] = [];

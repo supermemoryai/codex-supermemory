@@ -2,6 +2,7 @@ import Supermemory from "supermemory";
 import { CONFIG, isConfigured, getApiKeyValue, getBaseUrl, PLUGIN_VERSION } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
+import { mergeProfileResults, mergeSearchResponses } from "./resultMerge.js";
 
 const TIMEOUT_MS = 30000;
 const SPACE_NAME_TIMEOUT_MS = 5000;
@@ -27,6 +28,7 @@ export interface SearchResultItem {
   title?: string;
   updatedAt?: string;
   metadata?: Record<string, unknown> | null;
+  containerTag?: string;
 }
 
 /** Response shape returned by search APIs. */
@@ -58,18 +60,18 @@ export interface ProfileWithSearchResult {
   error?: string;
 }
 
-export const USER_ENTITY_CONTEXT = `Developer coding session transcript for a persistent user profile.
+export const USER_ENTITY_CONTEXT = `Developer coding session transcript. Focus on USER message and intent.
 
 EXTRACT:
-- User preferences: preferred languages, frameworks, libraries, editors, workflows, and communication style
-- Stable habits: testing style, code review expectations, formatting preferences, privacy preferences
-- Repeated personal decisions: tools the user consistently chooses or avoids
-- Long-lived learnings: concepts the user learned or wants remembered across projects
+- Actions and goals the user worked on in this project
+- Preferences, accepted decisions, and durable workflows
+- Learnings the user wants available in later sessions
+- Concise outcomes from assistant responses that the user used
 
 SKIP:
-- Project-specific architecture unless it reflects a durable user preference
-- One-off assistant suggestions the user did not accept
-- Low-level implementation details that only matter inside the current repository`;
+- Every granular fact the assistant mentioned
+- Generic assistant suggestions the user did not accept
+- Transient command output and low-value implementation chatter`;
 
 export const PROJECT_ENTITY_CONTEXT = `Project/codebase knowledge from Codex coding sessions.
 
@@ -167,6 +169,17 @@ export class SupermemoryClient {
     }
   }
 
+  async getProfileWithSearchMany(
+    containerTags: string[],
+    query?: string,
+  ): Promise<ProfileWithSearchResult> {
+    const uniqueTags = [...new Set(containerTags.filter(Boolean))];
+    const results = await Promise.all(
+      uniqueTags.map((containerTag) => this.getProfileWithSearch(containerTag, query)),
+    );
+    return mergeProfileResults(results, CONFIG.maxMemories);
+  }
+
   // Keep old methods for backward compatibility
 
   async searchMemories(query: string, containerTag: string): Promise<SearchResponse> {
@@ -183,12 +196,24 @@ export class SupermemoryClient {
         TIMEOUT_MS
       );
       log("searchMemories: success", { count: result.results?.length || 0 });
-      return { success: true, results: result.results as SearchResultItem[], total: result.total, timing: result.timing };
+      const results = (result.results as SearchResultItem[]).map((item) => ({
+        ...item,
+        containerTag,
+      }));
+      return { success: true, results, total: result.total, timing: result.timing };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log("searchMemories: error", { error: errorMessage });
       return { success: false, error: errorMessage, results: [], total: 0, timing: 0 };
     }
+  }
+
+  async searchMemoriesMany(query: string, containerTags: string[]): Promise<SearchResponse> {
+    const uniqueTags = [...new Set(containerTags.filter(Boolean))];
+    const results = await Promise.all(
+      uniqueTags.map((containerTag) => this.searchMemories(query, containerTag)),
+    );
+    return mergeSearchResponses(results, CONFIG.maxMemories);
   }
 
   async getProfile(containerTag: string, query?: string) {
@@ -208,6 +233,10 @@ export class SupermemoryClient {
       log("getProfile: error", { error: errorMessage });
       return { success: false as const, error: errorMessage, profile: null };
     }
+  }
+
+  async getProfileMany(containerTags: string[], query?: string): Promise<ProfileWithSearchResult> {
+    return this.getProfileWithSearchMany(containerTags, query);
   }
 
   async addMemory(
@@ -289,7 +318,8 @@ export class SupermemoryClient {
       if (
         currentName &&
         currentName !== `Space ${containerTag}` &&
-        !currentName.startsWith("Codex · ")
+        !currentName.startsWith("Codex · ") &&
+        !currentName.startsWith("Agents · ")
       ) {
         log("updateContainerTagName: kept custom name", { containerTag, currentName });
         return { success: true as const };

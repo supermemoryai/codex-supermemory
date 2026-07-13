@@ -17,6 +17,7 @@ import {
 } from "./transcript.js";
 import { getLastCapturedIndex, setLastCapturedIndex } from "./tracker.js";
 import { filterBySignals, groupEntriesIntoTurns } from "./signals.js";
+import type { ResolvedTags } from "./tags.js";
 
 export interface CaptureOptions {
   /** Minimum number of new entries required before capturing. Default: 0 */
@@ -53,7 +54,7 @@ export async function captureEntries(
   client: SupermemoryClient,
   sessionId: string,
   transcriptPath: string | null,
-  tags: { project: string; user: string },
+  tags: Pick<ResolvedTags, "project" | "user" | "projectName">,
   options: CaptureOptions = {},
 ): Promise<void> {
   const { requireMinEntries = 0, requireMinTurns = 0 } = options;
@@ -134,9 +135,11 @@ export async function captureEntries(
 
   const metadata = {
     type: "conversation" as const,
+    project: tags.projectName,
     sessionId,
     entryCount: newEntries.length,
     timestamp: new Date().toISOString(),
+    sm_scope: "personal",
     sm_capture_mode: caller === "flush" ? "session_end" : "turn",
   };
 

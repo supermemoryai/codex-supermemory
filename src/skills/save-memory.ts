@@ -70,6 +70,8 @@ async function main(): Promise<void> {
       type: "project-knowledge" as const,
       source: "skill",
       project: projectName,
+      sm_scope: "project",
+      sm_capture_mode: "explicit",
       timestamp: new Date().toISOString(),
     };
 
@@ -79,7 +81,7 @@ async function main(): Promise<void> {
 
     if (result.success) {
       if (!containerTag) {
-        await client.updateContainerTagName(projectTag, `Codex · ${projectName}`);
+        await client.updateContainerTagName(projectTag, `Agents · ${projectName} · Project`);
       }
       const tagLabel = containerTag ? `container '${containerTag}'` : `project '${effectiveTag}'`;
       console.log(`Memory saved (id: ${result.id}) to ${tagLabel}`);

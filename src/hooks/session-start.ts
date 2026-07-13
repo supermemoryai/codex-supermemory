@@ -89,7 +89,7 @@ async function main() {
   log("session-start: begin", { sessionId, tags });
 
   try {
-    const profileResult = await client.getProfile(tags.user);
+    const profileResult = await client.getProfileMany(tags.personalReads);
     const seen = getSeenFacts(sessionId);
     const { text, newFacts } = formatCombinedContext(
       {

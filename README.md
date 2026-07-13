@@ -12,13 +12,13 @@ and the lessons learned across every project — automatically.
   `UserPromptSubmit` hook.
 - 💾 **Automatic capture** — conversations are stored incrementally (every N turns) and
   at session end via the `Stop` hook.
-- 🏷️ **Project + user scoping** — memories are tagged per-project and per-user so
-  context never leaks across repos.
+- 🏷️ **Shared Agents scoping** — Codex and Claude Code use the same path-scoped
+  personal and repo-scoped project containers.
 - 📦 **Custom container tags** — define custom memory containers (e.g., `work`, `personal`,
   `code_style`). The AI automatically picks the right container based on your instructions
   when saving, searching, or forgetting memories.
-- 🏷️ **Project + user scoping** — automatic session memories are stored per-user,
-  while explicit project knowledge is tagged per-repo so context never leaks across repos.
+- 🏷️ **Personal + project routing** — automatic capture and `/supermemory-add` use
+  personal memory for the current project; `/supermemory-save` uses project knowledge.
 - **Entity-aware extraction** - user and project containers get purpose-specific
   extraction context so Supermemory stores durable preferences separately from
   project/codebase facts.
@@ -28,7 +28,7 @@ and the lessons learned across every project — automatically.
   `~/.codex/hooks.json` for you.
 - 🪶 **No runtime deps in hooks** — the hook scripts are pre-bundled with esbuild for
   fast cold starts.
-- 🔧 **Fallback skills** — explicit `/supermemory-search`, `/supermemory-save`,
+- 🔧 **Fallback skills** — explicit `/supermemory-search`, `/supermemory-add`, `/supermemory-save`,
   `/supermemory-forget`, `/supermemory-status`, and `/supermemory-logout` commands available when hooks
   don't cover your use case.
 
@@ -74,6 +74,23 @@ The installer:
 The hooks are tolerant: if Supermemory is unreachable, the API key is missing, or
 anything else fails, they exit cleanly without breaking your Codex session.
 
+### Shared Agents containers
+
+Codex and Claude Code use the same two containers for a repository:
+
+- `user_project_<path-hash>` stores automatic session capture and explicit personal memories.
+- `repo_<project-name>` stores explicitly saved project knowledge.
+
+By default, Codex writes only to these shared containers and reads from them plus the previous
+`codex_user_*`, `codex_project_*`, and `claudecode_project_*` containers. Existing
+memories remain searchable without duplicating or migrating them. Linked worktrees
+share the same path-scoped personal container unless
+`SUPERMEMORY_ISOLATE_WORKTREES=true` is set.
+
+Explicit `userContainerTag`/`projectContainerTag` overrides are preserved and are
+also honored by Claude Code, so existing custom setups remain shared after updating.
+Per-project Claude Code overrides take precedence when both are configured.
+
 ## Configuration
 
 ### Environment variables
@@ -96,9 +113,9 @@ Drop this file in to override defaults:
 | `maxMemories`            | `number`   | `5`            | Max memories injected per prompt.                                                            |
 | `maxProfileItems`        | `number`   | `5`            | Max profile items considered.                                                                |
 | `injectProfile`          | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
-| `containerTagPrefix`     | `string`   | `"codex"`      | Prefix for auto-generated container tags.                                                    |
-| `userContainerTag`       | `string`   | auto           | Override the user container tag.                                                             |
-| `projectContainerTag`    | `string`   | auto (per-repo) | Override the project container tag.                                                         |
+| `containerTagPrefix`     | `string`   | `"codex"`      | Legacy prefix retained when reading containers created by older versions.                    |
+| `userContainerTag`       | `string`   | auto           | Explicit personal-container override, also honored by Claude Code.                           |
+| `projectContainerTag`    | `string`   | auto (per-repo) | Explicit project-container override, also honored by Claude Code.                            |
 | `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
 | `autoSaveEveryTurns`     | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
@@ -109,10 +126,10 @@ Drop this file in to override defaults:
 | `customContainers`             | `array`    | `[]`           | Custom containers with `tag` and `description` (see below).                            |
 | `customContainerInstructions`  | `string`   | `""`           | Free-text instructions for the AI on how to route memories to containers.  
 
-User tags are auto-derived from your `git config user.email`. Project tags are
-derived from the Git common directory when available, so linked worktrees and
-Conductor workspaces for the same repository share one project container by default.
-Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to keep each worktree isolated.
+Personal tags are derived from the Git common directory. Project tags use the
+sanitized repository name. Linked worktrees and Conductor workspaces for the same
+repository therefore share both containers by default. Set
+`SUPERMEMORY_ISOLATE_WORKTREES=true` to isolate the path-scoped personal container.
 
 ### Entity context
 
@@ -139,11 +156,12 @@ npx codex-supermemory status      # show current install status
 ## Skills (fallback commands)
 
 These Codex skills are available as explicit commands when you need more control.
-All memory skills support `--container <tag>` to target a specific custom container.
+The search, save, and forget skills support `--container <tag>` to target a specific custom container.
 
 | Skill                  | Usage                                                       | Description                              |
 | ---------------------- | ----------------------------------------------------------- | ---------------------------------------- |
 | `/supermemory-search`  | `/supermemory-search [--container <tag>] <query>`           | Search memories manually.                |
+| `/supermemory-add`     | `/supermemory-add <content>`                                | Add a personal memory for this project.  |
 | `/supermemory-save`    | `/supermemory-save [--container <tag>] <content>`           | Save a specific memory explicitly.       |
 | `/supermemory-forget`  | `/supermemory-forget [--container <tag>] <content>`         | Remove a memory.                         |
 | `/supermemory-profile` | `/supermemory-profile`                                      | Show remembered profile facts.           |
