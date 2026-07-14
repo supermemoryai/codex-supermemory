@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import * as TOML from "@iarna/toml";
@@ -85,7 +85,7 @@ describe("container tags", () => {
     return result.stdout.trim();
   }
 
-  test("personal tag uses the shared git common directory for worktrees", (t) => {
+  test("canonical tag uses the shared git common directory for worktrees", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -102,21 +102,13 @@ describe("container tags", () => {
     runGit(["add", "README.md"], repoDir);
     runGit(["commit", "-m", "initial"], repoDir);
     runGit(["worktree", "add", "--detach", worktreeDir, "HEAD"], repoDir);
-    const gitCommonDir = runGit(["rev-parse", "--git-common-dir"], worktreeDir);
-    const resolvedCommonDir = resolve(worktreeDir, gitCommonDir);
-    const expectedBasePath =
-      basename(resolvedCommonDir) === ".git" &&
-      !resolvedCommonDir.includes(`${sep}.git${sep}`)
-        ? dirname(resolvedCommonDir)
-        : runGit(["rev-parse", "--show-toplevel"], worktreeDir);
-
     assert.equal(
       getPersonalTagFor(worktreeDir, homeDir),
-      `user_project_${hash16(expectedBasePath)}`
+      getPersonalTagFor(repoDir, homeDir),
     );
   });
 
-  test("personal tag can still isolate individual worktrees when requested", (t) => {
+  test("canonical tag can still isolate individual worktrees when requested", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -133,11 +125,9 @@ describe("container tags", () => {
     runGit(["add", "README.md"], repoDir);
     runGit(["commit", "-m", "initial"], repoDir);
     runGit(["worktree", "add", "--detach", worktreeDir, "HEAD"], repoDir);
-    const worktreeRoot = runGit(["rev-parse", "--show-toplevel"], worktreeDir);
-
-    assert.equal(
+    assert.notEqual(
       getPersonalTagFor(worktreeDir, homeDir, { SUPERMEMORY_ISOLATE_WORKTREES: "true" }),
-      `user_project_${hash16(worktreeRoot)}`
+      getPersonalTagFor(repoDir, homeDir),
     );
   });
 
@@ -167,15 +157,21 @@ describe("container tags", () => {
     assert.equal(result.status, 0, result.stderr);
     const tags = JSON.parse(result.stdout);
     const pathHash = hash16(root);
-    assert.equal(tags.user, `user_project_${pathHash}`);
-    assert.equal(tags.project, "repo_example_project");
+    const projectHash = hash16("github.com/acme/example.project");
+    const canonicalTag = `repo_example_project__${projectHash}`;
+    assert.equal(tags.user, canonicalTag);
+    assert.equal(tags.project, canonicalTag);
+    assert.equal(tags.canonical, canonicalTag);
+    assert.equal(tags.projectId, projectHash);
     assert.equal(tags.projectName, "Example.Project");
     assert.deepEqual(tags.personalReads, [
+      canonicalTag,
       `user_project_${pathHash}`,
       `claudecode_project_${pathHash}`,
       `codex_user_${hash16("test@example.com")}`,
     ]);
     assert.deepEqual(tags.projectReads, [
+      canonicalTag,
       "repo_example_project",
       `codex_project_${pathHash}`,
     ]);
@@ -213,9 +209,10 @@ describe("container tags", () => {
     });
     assert.equal(result.status, 0, result.stderr);
     const tags = JSON.parse(result.stdout);
-    assert.equal(tags.user, "shared_personal");
+    assert.equal(tags.user, "shared_project");
     assert.equal(tags.project, "shared_project");
-    assert.equal(tags.personalReads[0], "shared_personal");
+    assert.equal(tags.personalReads[0], "shared_project");
+    assert.ok(tags.personalReads.includes("shared_personal"));
     assert.equal(tags.projectReads[0], "shared_project");
   });
 });
@@ -367,7 +364,7 @@ describe("entity context wiring", () => {
 
   test("personal add writes the unified personal scope", () => {
     const content = readFileSync(new URL("../src/skills/add-memory.ts", import.meta.url), "utf-8");
-    assert.ok(content.includes("getPersonalTag"));
+    assert.ok(content.includes("getProjectTag"));
     assert.ok(content.includes('sm_scope: "personal"'));
     assert.ok(content.includes("entityContext: USER_ENTITY_CONTEXT"));
   });

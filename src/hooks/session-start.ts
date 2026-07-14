@@ -89,7 +89,7 @@ async function main() {
   log("session-start: begin", { sessionId, tags });
 
   try {
-    const profileResult = await client.getProfileMany(tags.personalReads);
+    const profileResult = await client.getProfileMany(tags.allReads);
     const seen = getSeenFacts(sessionId);
     const { text, newFacts } = formatCombinedContext(
       {
@@ -99,7 +99,6 @@ async function main() {
       },
       0,
       CONFIG.maxProfileItems,
-      undefined,
       seen,
     );
 

@@ -136,6 +136,7 @@ export async function captureEntries(
   const metadata = {
     type: "conversation" as const,
     project: tags.projectName,
+    sm_project_id: tags.projectId,
     sessionId,
     entryCount: newEntries.length,
     timestamp: new Date().toISOString(),
@@ -143,11 +144,11 @@ export async function captureEntries(
     sm_capture_mode: caller === "flush" ? "session_end" : "turn",
   };
 
-  // Save automatic transcript capture to the user container. Explicit project
-  // knowledge is still saved via the supermemory-save skill.
+  // Automatic capture and explicit saves share one project container. Scope
+  // metadata preserves optional personal/project filtering.
   // Use customId so all session turns go into the same document.
   try {
-    await client.addMemory(content, tags.user, metadata, {
+    await client.addMemory(content, tags.canonical, metadata, {
       customId: sessionId,
       entityContext: USER_ENTITY_CONTEXT,
     });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { CONFIG } from "../config.js";
@@ -8,6 +8,11 @@ import { CONFIG } from "../config.js";
 function sha256(input: string): string {
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }
+
+const repoInfoCache = new Map<
+  string,
+  { name: string | null; normalizedRemote: string | null }
+>();
 
 function getGitRoot(directory: string): string | null {
   const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
@@ -70,19 +75,69 @@ function getGitEmail(directory: string): string | null {
   }
 }
 
-function getGitRepoName(directory: string): string | null {
+export function normalizeGitRemote(remoteUrl: string): string | null {
+  const raw = remoteUrl.trim();
+  if (!raw) return null;
+
+  let normalized: string;
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      normalized = parsed.protocol === "file:"
+        ? `file:${decodeURIComponent(parsed.pathname)}`
+        : `${parsed.hostname.toLowerCase()}${parsed.port ? `:${parsed.port}` : ""}/${parsed.pathname.replace(/^\/+/, "")}`;
+    } catch {
+      normalized = raw;
+    }
+  } else {
+    const scpStyle = raw.match(/^(?:[^@/]+@)?([^:]+):(.+)$/);
+    normalized = scpStyle
+      ? `${scpStyle[1].toLowerCase()}/${scpStyle[2]}`
+      : `file:${resolve(raw)}`;
+  }
+
+  return normalized
+    .replace(/[?#].*$/, "")
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
+    .replace(/\/{2,}/g, "/")
+    .toLowerCase();
+}
+
+function getGitRepoInfo(directory: string): {
+  name: string | null;
+  normalizedRemote: string | null;
+} {
+  const cached = repoInfoCache.get(directory);
+  if (cached) return cached;
+
   try {
     const remoteUrl = execSync("git remote get-url origin", {
       cwd: directory,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
-    const normalized = remoteUrl.replace(/\/+$/, "").replace(/\.git$/i, "");
-    const separator = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf(":"));
-    return normalized.slice(separator + 1) || null;
+    const normalizedRemote = normalizeGitRemote(remoteUrl);
+    const displayRemote = remoteUrl.replace(/\/+$/, "").replace(/\.git$/i, "");
+    const separator = Math.max(
+      displayRemote.lastIndexOf("/"),
+      displayRemote.lastIndexOf(":"),
+    );
+    const result = {
+      name: displayRemote.slice(separator + 1) || null,
+      normalizedRemote,
+    };
+    repoInfoCache.set(directory, result);
+    return result;
   } catch {
-    return null;
+    const result = { name: null, normalizedRemote: null };
+    repoInfoCache.set(directory, result);
+    return result;
   }
+}
+
+function getGitRepoName(directory: string): string | null {
+  return getGitRepoInfo(directory).name;
 }
 
 function loadClaudeProjectConfig(directory: string): {
@@ -120,11 +175,7 @@ export function getGeneratedPersonalTag(directory: string): string {
 }
 
 export function getPersonalTag(directory: string): string {
-  return (
-    loadClaudeProjectConfig(directory)?.personalContainerTag ||
-    CONFIG.userContainerTag ||
-    getGeneratedPersonalTag(directory)
-  );
+  return getProjectTag(directory);
 }
 
 /** Backwards-compatible alias retained for callers that still say "user". */
@@ -135,7 +186,29 @@ export function getUserTag(directory = process.cwd()): string {
 export function getGeneratedProjectTag(directory: string): string {
   const basePath = getProjectBasePath(directory);
   const repoName = getGitRepoName(basePath) || basename(basePath) || "unknown";
+  const shortName = sanitizeRepoName(repoName).slice(0, 72).replace(/_+$/g, "");
+  return `repo_${shortName || "unknown"}__${getProjectIdentity(directory)}`;
+}
+
+export function getLegacyGeneratedProjectTag(directory: string): string {
+  const basePath = getProjectBasePath(directory);
+  const repoName = getGitRepoName(basePath) || basename(basePath) || "unknown";
   return `repo_${sanitizeRepoName(repoName)}`;
+}
+
+export function getProjectIdentity(directory: string): string {
+  const basePath = getProjectBasePath(directory);
+  const { normalizedRemote } = getGitRepoInfo(basePath);
+  const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
+  let localIdentity = basePath;
+  try {
+    localIdentity = realpathSync.native(basePath);
+  } catch {}
+  return sha256(
+    !isolateWorktrees && normalizedRemote
+      ? normalizedRemote
+      : `path:${localIdentity}`,
+  );
 }
 
 export function getProjectTag(directory: string): string {
@@ -169,14 +242,24 @@ function getLegacyCodexProjectTags(directory: string): string[] {
   ].filter((tag): tag is string => !!tag);
 }
 
-function uniqueTags(tags: string[]): string[] {
-  return [...new Set(tags.filter((tag) => tag.trim().length > 0))];
+function uniqueTags(tags: Array<string | null | undefined>): string[] {
+  return [
+    ...new Set(
+      tags.filter(
+        (tag): tag is string =>
+          typeof tag === "string" && tag.trim().length > 0,
+      ),
+    ),
+  ];
 }
 
 export function getPersonalReadTags(directory: string): string[] {
   const projectHash = sha256(getProjectBasePath(directory));
+  const claudeConfig = loadClaudeProjectConfig(directory);
   return uniqueTags([
     getPersonalTag(directory),
+    claudeConfig?.personalContainerTag,
+    CONFIG.userContainerTag,
     getGeneratedPersonalTag(directory),
     `claudecode_project_${projectHash}`,
     ...getLegacyCodexUserTags(directory),
@@ -187,24 +270,39 @@ export function getProjectReadTags(directory: string): string[] {
   return uniqueTags([
     getProjectTag(directory),
     getGeneratedProjectTag(directory),
+    getLegacyGeneratedProjectTag(directory),
     ...getLegacyCodexProjectTags(directory),
   ]);
 }
 
+export function getAllReadTags(directory: string): string[] {
+  return uniqueTags([
+    ...getPersonalReadTags(directory),
+    ...getProjectReadTags(directory),
+  ]);
+}
+
 export interface ResolvedTags {
+  canonical: string;
   user: string;
   project: string;
+  projectId: string;
   projectName: string;
   personalReads: string[];
   projectReads: string[];
+  allReads: string[];
 }
 
 export function getTags(directory: string): ResolvedTags {
+  const canonical = getProjectTag(directory);
   return {
-    user: getPersonalTag(directory),
-    project: getProjectTag(directory),
+    canonical,
+    user: canonical,
+    project: canonical,
+    projectId: getProjectIdentity(directory),
     projectName: getProjectName(directory),
     personalReads: getPersonalReadTags(directory),
     projectReads: getProjectReadTags(directory),
+    allReads: getAllReadTags(directory),
   };
 }

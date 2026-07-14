@@ -8,6 +8,18 @@ const TIMEOUT_MS = 30000;
 const SPACE_NAME_TIMEOUT_MS = 5000;
 const CODEX_SOURCE = "codex";
 
+export type MemoryScope = "personal" | "project";
+
+function getScopeFilters(scope: MemoryScope) {
+  return {
+    AND: [{ key: "sm_scope", value: scope, filterType: "metadata" as const }],
+  };
+}
+
+function supportsScopedCanonicalTag(containerTag: string): boolean {
+  return /^repo_.+__[0-9a-f]{16}$/i.test(containerTag);
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let id: ReturnType<typeof setTimeout>;
   const timeout = new Promise<T>((_, reject) => {
@@ -60,32 +72,22 @@ export interface ProfileWithSearchResult {
   error?: string;
 }
 
-export const USER_ENTITY_CONTEXT = `Developer coding session transcript. Focus on USER message and intent.
+export const AGENT_ENTITY_CONTEXT = `Shared coding-agent memory for one software repository.
 
 EXTRACT:
-- Actions and goals the user worked on in this project
-- Preferences, accepted decisions, and durable workflows
-- Learnings the user wants available in later sessions
-- Concise outcomes from assistant responses that the user used
+- User preferences, accepted decisions, durable workflows, actions, and learnings
+- Repository architecture, services, modules, and data flow
+- Naming, component, API, testing, and style conventions
+- Setup requirements, debugging workflows, and implementation lessons
+- Concise outcomes from assistant responses that became useful project knowledge
 
 SKIP:
 - Every granular fact the assistant mentioned
 - Generic assistant suggestions the user did not accept
 - Transient command output and low-value implementation chatter`;
 
-export const PROJECT_ENTITY_CONTEXT = `Project/codebase knowledge from Codex coding sessions.
-
-EXTRACT:
-- Architecture: repo structure, services, modules, data flow, and integration boundaries
-- Conventions: naming, component patterns, API patterns, testing practices, and style rules
-- Decisions: chosen approaches, tradeoffs, migrations, and rejected alternatives
-- Setup: commands, environment requirements, deployment notes, and debugging workflows
-- Implementation lessons: bugs fixed, root causes, and reusable project-specific context
-
-SKIP:
-- Generic user preferences that are not specific to this project
-- Verbatim assistant explanations unless they became an accepted project decision
-- Transient command output with no lasting project value`;
+export const USER_ENTITY_CONTEXT = AGENT_ENTITY_CONTEXT;
+export const PROJECT_ENTITY_CONTEXT = AGENT_ENTITY_CONTEXT;
 
 export class SupermemoryClient {
   private client: Supermemory | null = null;
@@ -107,17 +109,21 @@ export class SupermemoryClient {
   }
 
   /**
-   * Get user profile with embedded search results from a single container.
-   * The recall hook pairs this with a separate `searchMemories()` call to
-   * the project container so both user and project memories are surfaced.
+   * Get a profile with embedded search results from one container. A scope is
+   * optional because default recall searches the unified project container.
    */
-  async getProfileWithSearch(containerTag: string, query?: string): Promise<ProfileWithSearchResult> {
+  async getProfileWithSearch(
+    containerTag: string,
+    query?: string,
+    scope?: MemoryScope,
+  ): Promise<ProfileWithSearchResult> {
     log("getProfileWithSearch: start", { containerTag, hasQuery: !!query });
     try {
       const result = await withTimeout(
         this.getClient().profile({
           containerTag,
           q: query,
+          filters: scope ? getScopeFilters(scope) : undefined,
         }),
         TIMEOUT_MS
       );
@@ -180,9 +186,35 @@ export class SupermemoryClient {
     return mergeProfileResults(results, CONFIG.maxMemories);
   }
 
+  async getProfileWithSearchScoped(
+    canonicalTag: string,
+    containerTags: string[],
+    scope: MemoryScope,
+    query?: string,
+  ): Promise<ProfileWithSearchResult> {
+    const legacyTags = [...new Set(
+      containerTags.filter((tag) => tag && tag !== canonicalTag),
+    )];
+    const results = await Promise.all([
+      this.getProfileWithSearch(
+        canonicalTag,
+        query,
+        supportsScopedCanonicalTag(canonicalTag) ? scope : undefined,
+      ),
+      ...legacyTags.map((containerTag) =>
+        this.getProfileWithSearch(containerTag, query),
+      ),
+    ]);
+    return mergeProfileResults(results, CONFIG.maxMemories);
+  }
+
   // Keep old methods for backward compatibility
 
-  async searchMemories(query: string, containerTag: string): Promise<SearchResponse> {
+  async searchMemories(
+    query: string,
+    containerTag: string,
+    scope?: MemoryScope,
+  ): Promise<SearchResponse> {
     log("searchMemories: start", { containerTag });
     try {
       const result = await withTimeout(
@@ -192,6 +224,7 @@ export class SupermemoryClient {
           threshold: CONFIG.similarityThreshold,
           limit: CONFIG.maxMemories,
           searchMode: "hybrid",
+          filters: scope ? getScopeFilters(scope) : undefined,
         }),
         TIMEOUT_MS
       );
@@ -216,13 +249,36 @@ export class SupermemoryClient {
     return mergeSearchResponses(results, CONFIG.maxMemories);
   }
 
-  async getProfile(containerTag: string, query?: string) {
+  async searchMemoriesScoped(
+    query: string,
+    canonicalTag: string,
+    containerTags: string[],
+    scope: MemoryScope,
+  ): Promise<SearchResponse> {
+    const legacyTags = [...new Set(
+      containerTags.filter((tag) => tag && tag !== canonicalTag),
+    )];
+    const results = await Promise.all([
+      this.searchMemories(
+        query,
+        canonicalTag,
+        supportsScopedCanonicalTag(canonicalTag) ? scope : undefined,
+      ),
+      ...legacyTags.map((containerTag) =>
+        this.searchMemories(query, containerTag),
+      ),
+    ]);
+    return mergeSearchResponses(results, CONFIG.maxMemories);
+  }
+
+  async getProfile(containerTag: string, query?: string, scope?: MemoryScope) {
     log("getProfile: start", { containerTag });
     try {
       const result = await withTimeout(
         this.getClient().profile({
           containerTag,
           q: query,
+          filters: scope ? getScopeFilters(scope) : undefined,
         }),
         TIMEOUT_MS
       );
@@ -237,6 +293,20 @@ export class SupermemoryClient {
 
   async getProfileMany(containerTags: string[], query?: string): Promise<ProfileWithSearchResult> {
     return this.getProfileWithSearchMany(containerTags, query);
+  }
+
+  async getProfileScopedMany(
+    canonicalTag: string,
+    containerTags: string[],
+    scope: MemoryScope,
+    query?: string,
+  ): Promise<ProfileWithSearchResult> {
+    return this.getProfileWithSearchScoped(
+      canonicalTag,
+      containerTags,
+      scope,
+      query,
+    );
   }
 
   async addMemory(

@@ -12,16 +12,15 @@ and the lessons learned across every project — automatically.
   `UserPromptSubmit` hook.
 - 💾 **Automatic capture** — conversations are stored incrementally (every N turns) and
   at session end via the `Stop` hook.
-- 🏷️ **Shared Agents scoping** — Codex and Claude Code use the same path-scoped
-  personal and repo-scoped project containers.
+- 🏷️ **Shared Agents scoping** — Codex and Claude Code use one collision-safe
+  repository container.
 - 📦 **Custom container tags** — define custom memory containers (e.g., `work`, `personal`,
   `code_style`). The AI automatically picks the right container based on your instructions
   when saving, searching, or forgetting memories.
-- 🏷️ **Personal + project routing** — automatic capture and `/supermemory-add` use
-  personal memory for the current project; `/supermemory-save` uses project knowledge.
-- **Entity-aware extraction** - user and project containers get purpose-specific
-  extraction context so Supermemory stores durable preferences separately from
-  project/codebase facts.
+- 🏷️ **Personal + project routing** — `sm_scope` metadata keeps automatic/personal
+  memories distinguishable from explicit project knowledge in the shared container.
+- **Entity-aware extraction** - the shared container uses one coding-agent context
+  covering durable preferences and project/codebase facts.
 - 🔒 **Privacy-aware** — anything wrapped in `<private>...</private>` is redacted
   before being sent to Supermemory.
 - ⚡ **Zero-config install** — one command sets up `~/.codex/config.toml` and
@@ -76,20 +75,21 @@ anything else fails, they exit cleanly without breaking your Codex session.
 
 ### Shared Agents containers
 
-Codex and Claude Code use the same two containers for a repository:
+Codex and Claude Code use one container for a repository:
 
-- `user_project_<path-hash>` stores automatic session capture and explicit personal memories.
-- `repo_<project-name>` stores explicitly saved project knowledge.
+- `repo_<project-name>__<remote-hash>` stores automatic capture and every explicit save.
+- `sm_scope` metadata preserves optional personal/project filtering.
 
-By default, Codex writes only to these shared containers and reads from them plus the previous
-`codex_user_*`, `codex_project_*`, and `claudecode_project_*` containers. Existing
-memories remain searchable without duplicating or migrating them. Linked worktrees
-share the same path-scoped personal container unless
-`SUPERMEMORY_ISOLATE_WORKTREES=true` is set.
+The hash comes from the normalized Git remote, so clones share memory while
+same-named repositories do not collide. Repositories without a remote fall back to
+a local path identity. Codex also reads the previous `user_project_*`,
+`repo_<project-name>`, `codex_user_*`, `codex_project_*`, and
+`claudecode_project_*` containers, so existing memories remain searchable without
+duplicating or migrating them. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use
+the worktree path instead of the remote identity.
 
-Explicit `userContainerTag`/`projectContainerTag` overrides are preserved and are
-also honored by Claude Code, so existing custom setups remain shared after updating.
-Per-project Claude Code overrides take precedence when both are configured.
+Explicit `projectContainerTag`/`repoContainerTag` overrides remain the canonical
+write destination. Older user/personal overrides remain in the legacy read set.
 
 ## Configuration
 
@@ -114,8 +114,8 @@ Drop this file in to override defaults:
 | `maxProfileItems`        | `number`   | `5`            | Max profile items considered.                                                                |
 | `injectProfile`          | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
 | `containerTagPrefix`     | `string`   | `"codex"`      | Legacy prefix retained when reading containers created by older versions.                    |
-| `userContainerTag`       | `string`   | auto           | Explicit personal-container override, also honored by Claude Code.                           |
-| `projectContainerTag`    | `string`   | auto (per-repo) | Explicit project-container override, also honored by Claude Code.                            |
+| `userContainerTag`       | `string`   | auto           | Legacy personal container retained for backward-compatible reads.                            |
+| `projectContainerTag`    | `string`   | auto (per-repo) | Explicit unified project-container override, also honored by Claude Code.                    |
 | `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
 | `autoSaveEveryTurns`     | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
@@ -126,18 +126,17 @@ Drop this file in to override defaults:
 | `customContainers`             | `array`    | `[]`           | Custom containers with `tag` and `description` (see below).                            |
 | `customContainerInstructions`  | `string`   | `""`           | Free-text instructions for the AI on how to route memories to containers.  
 
-Personal tags are derived from the Git common directory. Project tags use the
-sanitized repository name. Linked worktrees and Conductor workspaces for the same
-repository therefore share both containers by default. Set
-`SUPERMEMORY_ISOLATE_WORKTREES=true` to isolate the path-scoped personal container.
+Project tags combine the sanitized repository name with a normalized Git-remote
+hash. Linked worktrees and clones of the same remote therefore share one container;
+same-named repositories with different remotes do not collide. Without a remote,
+the Git common directory is used as the fallback identity.
 
 ### Entity context
 
-Codex sends an `entityContext` whenever it saves memories. The user container is
-guided toward durable user preferences and workflows; the project container is
-guided toward repo architecture, conventions, setup, decisions, and implementation
-lessons. Supermemory stores this context on the container tag and uses it to guide
-memory extraction.
+Codex sends one shared coding-agent `entityContext` whenever it saves memories. It
+covers durable preferences, workflows, architecture, conventions, setup, decisions,
+and implementation lessons without one save type overwriting another container-level
+context.
 
 ### Signal extraction (optional)
 

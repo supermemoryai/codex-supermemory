@@ -55,7 +55,7 @@ async function main(): Promise<void> {
       }
     } else {
       const tags = getTags(process.cwd());
-      const targetTags = [...new Set([...tags.personalReads, ...tags.projectReads])];
+      const targetTags = tags.allReads;
       const results = await Promise.all(
         targetTags.map(async (tag) => ({
           tag,

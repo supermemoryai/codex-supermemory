@@ -1,5 +1,9 @@
 import { CONFIG, isConfigured, validateContainerTag } from "../config.js";
-import { SupermemoryClient, type SearchResponse } from "../services/client.js";
+import {
+  SupermemoryClient,
+  type ProfileWithSearchResult,
+  type SearchResponse,
+} from "../services/client.js";
 import { formatContextForPrompt } from "../services/context.js";
 import { getTags } from "../services/tags.js";
 
@@ -78,17 +82,20 @@ async function main(): Promise<void> {
         return;
       }
     } else if (scope === "both") {
-      searchResult = await client.searchMemoriesMany(query, [
-        ...tags.personalReads,
-        ...tags.projectReads,
-      ]);
+      searchResult = await client.searchMemoriesMany(query, tags.allReads);
       if (!searchResult.success) {
         console.log(`Failed to search memories: ${searchResult.error}`);
         return;
       }
     } else {
       const readTags = scope === "user" ? tags.personalReads : tags.projectReads;
-      searchResult = await client.searchMemoriesMany(query, readTags);
+      const metadataScope = scope === "user" ? "personal" : "project";
+      searchResult = await client.searchMemoriesScoped(
+        query,
+        tags.canonical,
+        readTags,
+        metadataScope,
+      );
 
       // Surface error for single-scope search failure
       if (!searchResult.success) {
@@ -97,9 +104,27 @@ async function main(): Promise<void> {
       }
     }
 
-    const profileResult = includeProfile
-      ? await client.getProfileMany(tags.personalReads, query)
-      : { success: false as const, profile: null };
+    let profileResult: ProfileWithSearchResult = {
+      success: false,
+      profile: null,
+    };
+    if (includeProfile && scope === "both") {
+      profileResult = await client.getProfileMany(tags.allReads, query);
+    } else if (includeProfile && scope === "user") {
+      profileResult = await client.getProfileScopedMany(
+        tags.canonical,
+        tags.personalReads,
+        "personal",
+        query,
+      );
+    } else if (includeProfile && scope === "project") {
+      profileResult = await client.getProfileScopedMany(
+        tags.canonical,
+        tags.projectReads,
+        "project",
+        query,
+      );
+    }
 
     const output = formatContextForPrompt(
       searchResult,

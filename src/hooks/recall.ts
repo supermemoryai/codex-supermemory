@@ -123,17 +123,16 @@ async function main() {
   }
 
   try {
-    const [profileResult, projectSearchResult] = await Promise.all([
-      client.getProfileWithSearchMany(tags.personalReads, query),
-      client.searchMemoriesMany(query, tags.projectReads),
-    ]);
+    const profileResult = await client.getProfileWithSearchMany(
+      tags.allReads,
+      query,
+    );
 
     const seen = getSeenFacts(sessionId);
     const { text, newFacts } = formatCombinedContext(
       profileResult,
       CONFIG.maxMemories,
       CONFIG.maxProfileItems,
-      projectSearchResult,
       seen,
     );
 

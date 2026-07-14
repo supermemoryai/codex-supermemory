@@ -1,6 +1,10 @@
 import { isConfigured } from "../config.js";
 import { SupermemoryClient, USER_ENTITY_CONTEXT } from "../services/client.js";
-import { getPersonalTag, getProjectName } from "../services/tags.js";
+import {
+  getProjectIdentity,
+  getProjectName,
+  getProjectTag,
+} from "../services/tags.js";
 
 async function main(): Promise<void> {
   if (!isConfigured()) {
@@ -18,7 +22,7 @@ async function main(): Promise<void> {
   }
 
   const cwd = process.cwd();
-  const containerTag = getPersonalTag(cwd);
+  const containerTag = getProjectTag(cwd);
   const projectName = getProjectName(cwd);
   const client = new SupermemoryClient();
   const result = await client.addMemory(
@@ -27,6 +31,7 @@ async function main(): Promise<void> {
     {
       type: "manual",
       project: projectName,
+      sm_project_id: getProjectIdentity(cwd),
       sm_scope: "personal",
       sm_capture_mode: "explicit",
       timestamp: new Date().toISOString(),
