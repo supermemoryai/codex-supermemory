@@ -43,6 +43,7 @@ const SESSION_START_TIMEOUT_SECONDS = 60;
 // Skill metadata — single source of truth for install/uninstall/status.
 const SKILLS = [
   { name: "supermemory-search", script: "search-memory.js" },
+  { name: "supermemory-add", script: "add-memory.js" },
   { name: "supermemory-save", script: "save-memory.js" },
   { name: "supermemory-forget", script: "forget-memory.js" },
   { name: "supermemory-status", script: "status.js" },
@@ -309,7 +310,7 @@ Installation complete!
 
 You now have:
   • Session-start profile recall (${getRecallModeSummary()})
-  • Explicit memory — supermemory-search, supermemory-save, supermemory-forget, supermemory-profile, supermemory-status, supermemory-login, and supermemory-logout skills
+  • Explicit memory — supermemory-search, supermemory-add, supermemory-save, supermemory-forget, supermemory-profile, supermemory-status, supermemory-login, and supermemory-logout skills
 
 ${hadExistingConfig
     ? "Existing install: legacy per-prompt recall/capture preserved in ~/.codex/supermemory.json.\nTo opt into new defaults, set autoRecallEveryPrompt=false and captureEveryNTurns=0.\n"

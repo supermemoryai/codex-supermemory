@@ -5,6 +5,7 @@ export type MemoryType =
   | "preference"
   | "learned-pattern"
   | "conversation"
+  | "manual"
   | "project-knowledge";
 
 export type ConversationRole = "user" | "assistant" | "system" | "tool";

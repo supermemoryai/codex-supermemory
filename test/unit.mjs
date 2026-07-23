@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import * as TOML from "@iarna/toml";
@@ -67,10 +67,10 @@ describe("container tags", () => {
     return result.stdout.trim();
   }
 
-  function getProjectTagFor(cwd, home, extraEnv = {}) {
+  function getPersonalTagFor(cwd, home, extraEnv = {}) {
     const script = `
-      import { getProjectTag } from ${JSON.stringify(tagsModule)};
-      console.log(getProjectTag(process.argv.at(-1)));
+      import { getPersonalTag } from ${JSON.stringify(tagsModule)};
+      console.log(getPersonalTag(process.argv.at(-1)));
     `;
     const result = spawnSync("node", ["--input-type=module", "-e", script, cwd], {
       env: {
@@ -81,11 +81,11 @@ describe("container tags", () => {
       },
       encoding: "utf-8",
     });
-    assert.equal(result.status, 0, `getProjectTag failed: ${result.stderr}`);
+    assert.equal(result.status, 0, `getPersonalTag failed: ${result.stderr}`);
     return result.stdout.trim();
   }
 
-  test("project tag uses the shared git common directory for worktrees", (t) => {
+  test("canonical tag uses the shared git common directory for worktrees", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -102,21 +102,13 @@ describe("container tags", () => {
     runGit(["add", "README.md"], repoDir);
     runGit(["commit", "-m", "initial"], repoDir);
     runGit(["worktree", "add", "--detach", worktreeDir, "HEAD"], repoDir);
-    const gitCommonDir = runGit(["rev-parse", "--git-common-dir"], worktreeDir);
-    const resolvedCommonDir = resolve(worktreeDir, gitCommonDir);
-    const expectedBasePath =
-      basename(resolvedCommonDir) === ".git" &&
-      !resolvedCommonDir.includes(`${sep}.git${sep}`)
-        ? dirname(resolvedCommonDir)
-        : runGit(["rev-parse", "--show-toplevel"], worktreeDir);
-
     assert.equal(
-      getProjectTagFor(worktreeDir, homeDir),
-      `codex_project_${hash16(expectedBasePath)}`
+      getPersonalTagFor(worktreeDir, homeDir),
+      getPersonalTagFor(repoDir, homeDir),
     );
   });
 
-  test("project tag can still isolate individual worktrees when requested", (t) => {
+  test("canonical tag can still isolate individual worktrees when requested", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -133,12 +125,118 @@ describe("container tags", () => {
     runGit(["add", "README.md"], repoDir);
     runGit(["commit", "-m", "initial"], repoDir);
     runGit(["worktree", "add", "--detach", worktreeDir, "HEAD"], repoDir);
-    const worktreeRoot = runGit(["rev-parse", "--show-toplevel"], worktreeDir);
-
-    assert.equal(
-      getProjectTagFor(worktreeDir, homeDir, { SUPERMEMORY_ISOLATE_WORKTREES: "true" }),
-      `codex_project_${hash16(worktreeRoot)}`
+    assert.notEqual(
+      getPersonalTagFor(worktreeDir, homeDir, { SUPERMEMORY_ISOLATE_WORKTREES: "true" }),
+      getPersonalTagFor(repoDir, homeDir),
     );
+  });
+
+  test("uses unified tags and includes legacy Claude and Codex reads", (t) => {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    const repoDir = join(tmpDir, "Example Project");
+    const homeDir = join(tmpDir, "home");
+    mkdirSync(repoDir, { recursive: true });
+    mkdirSync(homeDir, { recursive: true });
+    runGit(["init"], repoDir);
+    runGit(["config", "user.email", "test@example.com"], repoDir);
+    runGit(["remote", "add", "origin", "git@github.com:acme/Example.Project.git"], repoDir);
+    const root = runGit(["rev-parse", "--show-toplevel"], repoDir);
+    const script = `
+      import { getTags } from ${JSON.stringify(tagsModule)};
+      console.log(JSON.stringify(getTags(process.argv.at(-1))));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, repoDir], {
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+      },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const tags = JSON.parse(result.stdout);
+    const pathHash = hash16(root);
+    const projectHash = hash16("github.com/acme/example.project");
+    const canonicalTag = `repo_example_project__${projectHash}`;
+    assert.equal(tags.user, canonicalTag);
+    assert.equal(tags.project, canonicalTag);
+    assert.equal(tags.canonical, canonicalTag);
+    assert.equal(tags.projectId, projectHash);
+    assert.equal(tags.projectName, "Example.Project");
+    assert.deepEqual(tags.personalReads, [
+      canonicalTag,
+      `user_project_${pathHash}`,
+      `claudecode_project_${pathHash}`,
+      `codex_user_${hash16("test@example.com")}`,
+    ]);
+    assert.deepEqual(tags.projectReads, [
+      canonicalTag,
+      "repo_example_project",
+      `codex_project_${pathHash}`,
+    ]);
+  });
+
+  test("preserves explicit Codex container overrides for shared writes", (t) => {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    const repoDir = join(tmpDir, "repo");
+    const homeDir = join(tmpDir, "home");
+    const codexDir = join(homeDir, ".codex");
+    mkdirSync(repoDir, { recursive: true });
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(
+      join(codexDir, "supermemory.json"),
+      JSON.stringify({
+        userContainerTag: "shared_personal",
+        projectContainerTag: "shared_project",
+      }),
+    );
+    runGit(["init"], repoDir);
+
+    const script = `
+      import { getTags } from ${JSON.stringify(tagsModule)};
+      console.log(JSON.stringify(getTags(process.argv.at(-1))));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, repoDir], {
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+      },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const tags = JSON.parse(result.stdout);
+    assert.equal(tags.user, "shared_project");
+    assert.equal(tags.project, "shared_project");
+    assert.equal(tags.personalReads[0], "shared_project");
+    assert.ok(tags.personalReads.includes("shared_personal"));
+    assert.equal(tags.projectReads[0], "shared_project");
+  });
+});
+
+describe("cross-container result merging", () => {
+  const mergeModule = new URL("../dist/services/resultMerge.js", import.meta.url).href;
+
+  test("globally ranks and deduplicates legacy results", () => {
+    const script = `
+      import { mergeSearchResponses } from ${JSON.stringify(mergeModule)};
+      const merged = mergeSearchResponses([
+        { success: true, results: [{ id: "old", memory: "A", similarity: 0.4 }] },
+        { success: true, results: [
+          { id: "best", memory: "B", similarity: 0.9 },
+          { id: "new", memory: "A", similarity: 0.8 }
+        ] }
+      ], 10);
+      console.log(JSON.stringify(merged.results.map((item) => item.id)));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), ["best", "new"]);
   });
 });
 
@@ -253,12 +351,22 @@ describe("entity context wiring", () => {
   test("automatic capture writes user entity context", () => {
     const content = readFileSync(new URL("../src/services/capture.ts", import.meta.url), "utf-8");
     assert.ok(content.includes("entityContext: USER_ENTITY_CONTEXT"));
+    assert.ok(content.includes('sm_scope: "personal"'));
+    assert.ok(content.includes("project: tags.projectName"));
   });
 
   test("manual save writes project entity context", () => {
     const content = readFileSync(new URL("../src/skills/save-memory.ts", import.meta.url), "utf-8");
     assert.ok(content.includes("PROJECT_ENTITY_CONTEXT"));
     assert.ok(content.includes("entityContext: getEntityContext(containerTag)"));
+    assert.ok(content.includes('sm_scope: "project"'));
+  });
+
+  test("personal add writes the unified personal scope", () => {
+    const content = readFileSync(new URL("../src/skills/add-memory.ts", import.meta.url), "utf-8");
+    assert.ok(content.includes("getProjectTag"));
+    assert.ok(content.includes('sm_scope: "personal"'));
+    assert.ok(content.includes("entityContext: USER_ENTITY_CONTEXT"));
   });
 });
 
@@ -373,7 +481,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(result.status, 0, `install should exit 0: ${result.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
+    for (const skillName of ["supermemory-search", "supermemory-add", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
       const skillMd = join(skillsDir, skillName, "SKILL.md");
       assert.ok(existsSync(skillMd), `${skillName}/SKILL.md should exist`);
       const content = readFileSync(skillMd, "utf-8");
@@ -393,7 +501,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(uninstallResult.status, 0, `uninstall should exit 0: ${uninstallResult.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
+    for (const skillName of ["supermemory-search", "supermemory-add", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
       assert.ok(
         !existsSync(join(skillsDir, skillName)),
         `${skillName} skill dir should be removed`
@@ -594,8 +702,9 @@ describe("flush hook Stop payload", () => {
 // They reuse SupermemoryClient + tags, so we only smoke-test the CLI shape:
 // argument parsing, the unconfigured-fallback message, and clean exit codes.
 
-describe("skill scripts: search/save/forget/status/logout", () => {
+describe("skill scripts: search/add/save/forget/status/logout", () => {
   const searchBin = fileURLToPath(new URL("../dist/skills/search-memory.js", import.meta.url));
+  const addBin = fileURLToPath(new URL("../dist/skills/add-memory.js", import.meta.url));
   const saveBin = fileURLToPath(new URL("../dist/skills/save-memory.js", import.meta.url));
   const forgetBin = fileURLToPath(new URL("../dist/skills/forget-memory.js", import.meta.url));
   const statusBin = fileURLToPath(new URL("../dist/skills/status.js", import.meta.url));
@@ -634,6 +743,12 @@ describe("skill scripts: search/save/forget/status/logout", () => {
 
   test("save-memory prints not-configured message and exits 1 when no API key", (t) => {
     const result = runSkillUnconfigured(t, saveBin, ["some content"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Supermemory is not authenticated/);
+  });
+
+  test("add-memory prints not-configured message and exits 1 when no API key", (t) => {
+    const result = runSkillUnconfigured(t, addBin, ["some content"]);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Supermemory is not authenticated/);
   });
@@ -686,6 +801,13 @@ describe("skill scripts: search/save/forget/status/logout", () => {
     assert.equal(result.status, 0);
     assert.match(result.stdout, /No content provided/);
     assert.match(result.stdout, /node save-memory\.js/);
+  });
+
+  test("add-memory prints usage and exits 0 when no content is given", (t) => {
+    const result = runSkillNoArgs(t, addBin);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /No content provided/);
+    assert.match(result.stdout, /node add-memory\.js/);
   });
 
   test("forget-memory prints usage and exits 0 when no content is given", (t) => {
@@ -784,12 +906,13 @@ describe("formatCombinedContext interleaving", () => {
   });
 });
 
-// ─── dedup by id — memory deduplication ──────────────────────────────────────
+// ─── memory deduplication across canonical and legacy containers ─────────────
 
-describe("memory deduplication by id", () => {
+describe("memory deduplication", () => {
   function dedupKey(id, text) {
-    if (id) return `id:${id}`;
-    return `content:${text.toLowerCase().trim()}`;
+    const normalized = text.toLowerCase().trim();
+    if (normalized) return `content:${normalized}`;
+    return id ? `id:${id}` : "";
   }
 
   test("deduplicates by id when available", () => {
@@ -807,7 +930,7 @@ describe("memory deduplication by id", () => {
       return true;
     });
 
-    assert.equal(result.length, 2, "should deduplicate by id");
+    assert.equal(result.length, 2, "should deduplicate identical content");
   });
 
   test("falls back to content-based dedup when id is missing", () => {
@@ -828,7 +951,7 @@ describe("memory deduplication by id", () => {
     assert.equal(result.length, 2, "should deduplicate by lowercased content");
   });
 
-  test("does not over-deduplicate when ids differ but content matches", () => {
+  test("deduplicates legacy copies when ids differ but content matches", () => {
     const seen = new Set();
     const memories = [
       { id: "mem-1", memory: "React components" },
@@ -842,6 +965,6 @@ describe("memory deduplication by id", () => {
       return true;
     });
 
-    assert.equal(result.length, 2, "should keep both since ids differ");
+    assert.equal(result.length, 1, "should keep one logical memory");
   });
 });

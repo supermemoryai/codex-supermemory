@@ -36,12 +36,7 @@ export interface FormattedContext {
 }
 
 /**
- * Format context from combined profile+search result.
- * Accepts an optional separate project search result to merge project-scoped
- * memories alongside user-scoped ones from the profile API.
- *
- * Memories from both containers are interleaved by alternating picks so that
- * neither source is entirely crowded out when the total exceeds maxMemories.
+ * Format context from the unified project profile and its embedded search.
  *
  * Facts already seen in this session (passed via `seenFacts`) are skipped
  * to avoid wasting tokens on repeated context.
@@ -50,7 +45,6 @@ export function formatCombinedContext(
   result: ProfileWithSearchResult,
   maxMemories: number,
   maxProfileItems: number,
-  projectSearchResult?: SearchResponse,
   seenFacts: Set<string> = new Set(),
 ): FormattedContext {
   const parts: string[] = [];
@@ -64,22 +58,22 @@ export function formatCombinedContext(
       .slice(0, maxProfileItems);
     if (items.length > 0) {
       parts.push(
-        `[User Profile]\n${items.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
+        `[Memory Profile]\n${items.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
       );
       newFacts.push(...items);
     }
   }
 
-  // Collect memories from both user (profile API) and project (search API)
-  // containers. Deduplicate by id when available, falling back to content.
+  // Deduplicate embedded search results by id, falling back to content.
   const seenKeys = new Set<string>();
 
   function dedupKey(id: string | undefined, text: string): string {
-    if (id) return `id:${id}`;
-    return `content:${text.toLowerCase().trim()}`;
+    const normalized = text.toLowerCase().trim();
+    if (normalized) return `content:${normalized}`;
+    return id ? `id:${id}` : "";
   }
 
-  const userMemories: string[] = [];
+  const allMemories: string[] = [];
   if (result.searchResults && result.searchResults.results.length > 0) {
     for (const r of result.searchResults.results) {
       const text = r.memory || "";
@@ -87,46 +81,20 @@ export function formatCombinedContext(
       const key = dedupKey(r.id, text);
       if (key && !seenKeys.has(key)) {
         seenKeys.add(key);
-        userMemories.push(text);
+        allMemories.push(text);
       }
-    }
-  }
-
-  const projectMemories: string[] = [];
-  if (projectSearchResult?.success && projectSearchResult.results && projectSearchResult.results.length > 0) {
-    for (const r of projectSearchResult.results) {
-      const text = r.memory ?? r.chunk ?? r.content ?? "";
-      if (!text || seenFacts.has(normalizeFact(text))) continue;
-      const key = dedupKey(r.id, text);
-      if (key && !seenKeys.has(key)) {
-        seenKeys.add(key);
-        projectMemories.push(text);
-      }
-    }
-  }
-
-  // Interleave user and project memories so neither source is dropped when
-  // the total exceeds maxMemories. Alternate picks: user, project, user, …
-  const allMemories: string[] = [];
-  let ui = 0;
-  let pi = 0;
-  while (allMemories.length < maxMemories && (ui < userMemories.length || pi < projectMemories.length)) {
-    if (ui < userMemories.length) {
-      allMemories.push(userMemories[ui++]);
-    }
-    if (allMemories.length < maxMemories && pi < projectMemories.length) {
-      allMemories.push(projectMemories[pi++]);
     }
   }
 
   if (allMemories.length > 0) {
-    const memories = allMemories
+    const limitedMemories = allMemories.slice(0, maxMemories);
+    const memories = limitedMemories
       .map((m, i) => `${i + 1}. ${m}`)
       .filter((m) => m.trim().length > 2)
       .join("\n");
     if (memories) {
       parts.push(`[Relevant Memories]\n${memories}`);
-      newFacts.push(...allMemories);
+      newFacts.push(...limitedMemories);
     }
   }
 
@@ -148,7 +116,7 @@ export function formatContextForPrompt(
   if (profileResult.success) {
     const profileText = formatProfile(profileResult.profile, maxProfileItems);
     if (profileText) {
-      parts.push(`[User Profile]\n${profileText}`);
+      parts.push(`[Memory Profile]\n${profileText}`);
     }
   }
 

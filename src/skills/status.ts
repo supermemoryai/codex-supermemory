@@ -102,11 +102,11 @@ async function main(): Promise<void> {
   lines.push(`Connected: ${isConfigured() ? "checking..." : "no"}`);
   lines.push(`API key: ${maskKey(apiKey)} (${getKeySource()})`);
   lines.push(`API URL: ${API_URL}`);
-  lines.push(`Memory scope: current project + user profile`);
+  lines.push(`Memory scope: one project container with metadata scopes`);
   lines.push(`Recall mode: auto-recall on every prompt`);
   lines.push(`Capture cadence: ${CONFIG.autoSaveEveryTurns > 0 ? `every ${CONFIG.autoSaveEveryTurns} turn${CONFIG.autoSaveEveryTurns === 1 ? "" : "s"} + session end` : "session end only"}`);
-  lines.push(`Project tag: ${tags.project}`);
-  lines.push(`User tag: ${tags.user}`);
+  lines.push(`Project container: ${tags.canonical}`);
+  lines.push(`Reads (including legacy): ${tags.allReads.join(", ")}`);
 
   if (!isConfigured()) {
     lines[2] = "Connected: no";
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
 
   const client = new SupermemoryClient();
   const [profileResult, accountInfo] = await Promise.all([
-    client.getProfile(tags.user),
+    client.getProfileMany(tags.allReads),
     getAccountInfo(),
   ]);
 

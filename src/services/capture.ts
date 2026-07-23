@@ -17,6 +17,7 @@ import {
 } from "./transcript.js";
 import { getLastCapturedIndex, setLastCapturedIndex } from "./tracker.js";
 import { filterBySignals, groupEntriesIntoTurns } from "./signals.js";
+import type { ResolvedTags } from "./tags.js";
 
 export interface CaptureOptions {
   /** Minimum number of new entries required before capturing. Default: 0 */
@@ -53,7 +54,7 @@ export async function captureEntries(
   client: SupermemoryClient,
   sessionId: string,
   transcriptPath: string | null,
-  tags: { project: string; user: string },
+  tags: Pick<ResolvedTags, "project" | "user" | "projectName">,
   options: CaptureOptions = {},
 ): Promise<void> {
   const { requireMinEntries = 0, requireMinTurns = 0 } = options;
@@ -134,17 +135,20 @@ export async function captureEntries(
 
   const metadata = {
     type: "conversation" as const,
+    project: tags.projectName,
+    sm_project_id: tags.projectId,
     sessionId,
     entryCount: newEntries.length,
     timestamp: new Date().toISOString(),
+    sm_scope: "personal",
     sm_capture_mode: caller === "flush" ? "session_end" : "turn",
   };
 
-  // Save automatic transcript capture to the user container. Explicit project
-  // knowledge is still saved via the supermemory-save skill.
+  // Automatic capture and explicit saves share one project container. Scope
+  // metadata preserves optional personal/project filtering.
   // Use customId so all session turns go into the same document.
   try {
-    await client.addMemory(content, tags.user, metadata, {
+    await client.addMemory(content, tags.canonical, metadata, {
       customId: sessionId,
       entityContext: USER_ENTITY_CONTEXT,
     });
