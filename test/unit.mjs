@@ -121,6 +121,42 @@ describe("container tags", () => {
     return JSON.parse(result.stdout.trim());
   }
 
+  function getRepoSearchTagsFor(cwd, home, extraEnv = {}) {
+    const script = `
+      import { getRepoSearchTags } from ${JSON.stringify(tagsModule)};
+      console.log(JSON.stringify(getRepoSearchTags(process.argv.at(-1))));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, cwd], {
+      env: {
+        ...process.env,
+        HOME: home,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+        ...extraEnv,
+      },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, `getRepoSearchTags failed: ${result.stderr}`);
+    return JSON.parse(result.stdout.trim());
+  }
+
+  function getUserTagFor(cwd, home, extraEnv = {}) {
+    const script = `
+      import { getUserTag } from ${JSON.stringify(tagsModule)};
+      console.log(getUserTag());
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, cwd], {
+      env: {
+        ...process.env,
+        HOME: home,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+        ...extraEnv,
+      },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, `getUserTag failed: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+
   test("project tag uses the Claude-compatible git remote repo name", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
@@ -177,7 +213,7 @@ describe("container tags", () => {
     );
   });
 
-  test("project search tags include new and legacy containers", (t) => {
+  test("repo search tags include shared, legacy project, and legacy user containers", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -194,12 +230,14 @@ describe("container tags", () => {
     runGit(["add", "README.md"], repoDir);
     runGit(["commit", "-m", "initial"], repoDir);
     const gitRoot = runGit(["rev-parse", "--show-toplevel"], repoDir);
+    const userTag = getUserTagFor(repoDir, homeDir);
 
     assert.deepEqual(
-      getProjectSearchTagsFor(repoDir, homeDir),
+      getRepoSearchTagsFor(repoDir, homeDir),
       [
         "repo_codex_supermemory",
         `codex_project_${hash16(gitRoot)}`,
+        userTag,
       ]
     );
   });
@@ -313,9 +351,11 @@ describe("entity context wiring", () => {
     assert.ok(content.includes("payload.entityContext = options.entityContext"));
   });
 
-  test("automatic capture writes user entity context", () => {
+  test("automatic capture writes repo entity context", () => {
     const content = readFileSync(new URL("../src/services/capture.ts", import.meta.url), "utf-8");
-    assert.ok(content.includes("entityContext: USER_ENTITY_CONTEXT"));
+    assert.ok(content.includes("entityContext: PROJECT_ENTITY_CONTEXT"));
+    assert.ok(content.includes("tags.project"));
+    assert.ok(content.includes('type: "session_turn"'));
   });
 
   test("manual save writes project entity context", () => {
@@ -906,5 +946,35 @@ describe("memory deduplication by id", () => {
     });
 
     assert.equal(result.length, 2, "should keep both since ids differ");
+  });
+});
+
+describe("getAuthBaseUrl", () => {
+  test("derives local auth URL from localhost API baseUrl in config", async () => {
+    const tmpDir = makeTmpDir();
+    const codexDir = join(tmpDir, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(
+      join(codexDir, "supermemory.json"),
+      JSON.stringify({ baseUrl: "http://localhost:8787" }),
+    );
+
+    const { getAuthBaseUrl } = await import("../dist/services/auth.js");
+    const prevHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    process.env.USERPROFILE = tmpDir;
+    delete process.env.SUPERMEMORY_AUTH_URL;
+    delete process.env.SUPERMEMORY_API_URL;
+
+    try {
+      assert.equal(
+        getAuthBaseUrl(),
+        "http://localhost:3000/auth/agent-connect",
+      );
+    } finally {
+      process.env.HOME = prevHome;
+      delete process.env.USERPROFILE;
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

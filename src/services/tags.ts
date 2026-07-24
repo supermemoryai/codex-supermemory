@@ -114,6 +114,11 @@ export function getProjectSearchTags(directory: string): string[] {
   return [...new Set([getProjectTag(directory), getLegacyProjectTag(directory)])];
 }
 
+/** Canonical repo tag plus legacy Codex project/user containers for read-compat. */
+export function getRepoSearchTags(directory: string): string[] {
+  return [...new Set([...getProjectSearchTags(directory), getUserTag()])];
+}
+
 export function getProjectName(directory: string): string {
   const gitRoot = getGitRoot(directory);
   const basePath = gitRoot || directory;

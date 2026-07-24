@@ -2,7 +2,7 @@ import { unlinkSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { isConfigured } from "../config.js";
-import { startAuthFlow, AUTH_BASE_URL, CREDENTIALS_FILE } from "../services/auth.js";
+import { startAuthFlow, getAuthBaseUrl, CREDENTIALS_FILE } from "../services/auth.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   } catch {}
 
   console.log("Opening browser to authenticate with Supermemory...");
-  console.log(`If the browser does not open, visit: ${AUTH_BASE_URL}`);
+  console.log(`If the browser does not open, visit: ${getAuthBaseUrl()}`);
 
   try {
     await startAuthFlow();

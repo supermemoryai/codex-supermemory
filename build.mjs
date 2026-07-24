@@ -25,6 +25,7 @@ const executableEntries = [
 rmSync("dist", { recursive: true, force: true });
 
 const libraryEntries = [
+  { in: "src/services/auth.ts", out: "dist/services/auth.js" },
   { in: "src/services/session.ts", out: "dist/services/session.js" },
   { in: "src/services/tags.ts", out: "dist/services/tags.js" },
 ];

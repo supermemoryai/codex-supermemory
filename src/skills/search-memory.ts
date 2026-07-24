@@ -1,7 +1,7 @@
 import { CONFIG, isConfigured, validateContainerTag } from "../config.js";
 import { SupermemoryClient, type SearchResponse } from "../services/client.js";
 import { formatContextForPrompt } from "../services/context.js";
-import { getProjectSearchTags, getUserTag } from "../services/tags.js";
+import { getProjectTag, getRepoSearchTags, getUserTag } from "../services/tags.js";
 
 type Scope = "user" | "project" | "both" | "custom";
 
@@ -58,7 +58,8 @@ async function main(): Promise<void> {
 
   const client = new SupermemoryClient();
   const userTag = getUserTag();
-  const projectSearchTags = getProjectSearchTags(process.cwd());
+  const repoTag = getProjectTag(process.cwd());
+  const repoSearchTags = getRepoSearchTags(process.cwd());
 
   if (containerTag) {
     const validationError = validateContainerTag(containerTag);
@@ -79,32 +80,16 @@ async function main(): Promise<void> {
         return;
       }
     } else if (scope === "both") {
-      const [userResult, projectResult] = await Promise.all([
-        client.searchMemories(query, userTag),
-        client.searchMemoriesAcrossContainers(query, projectSearchTags),
-      ]);
+      searchResult = await client.searchMemoriesAcrossContainers(query, repoSearchTags);
 
-      // Surface errors when all searches fail
-      if (!userResult.success && !projectResult.success) {
-        console.log(`Failed to search memories: ${userResult.error}`);
+      if (!searchResult.success) {
+        console.log(`Failed to search memories: ${searchResult.error}`);
         return;
       }
-
-      const combinedResults = [
-        ...(userResult.success ? userResult.results ?? [] : []),
-        ...(projectResult.success ? projectResult.results ?? [] : []),
-      ];
-
-      searchResult = {
-        success: true,
-        results: combinedResults,
-        total: combinedResults.length,
-        timing: 0,
-      };
     } else {
       searchResult = scope === "user"
         ? await client.searchMemories(query, userTag)
-        : await client.searchMemoriesAcrossContainers(query, projectSearchTags);
+        : await client.searchMemoriesAcrossContainers(query, repoSearchTags);
 
       // Surface error for single-scope search failure
       if (!searchResult.success) {
@@ -114,7 +99,7 @@ async function main(): Promise<void> {
     }
 
     const profileResult = includeProfile
-      ? await client.getProfile(userTag, query)
+      ? await client.getProfile(repoTag, query)
       : { success: false as const, profile: null };
 
     const output = formatContextForPrompt(

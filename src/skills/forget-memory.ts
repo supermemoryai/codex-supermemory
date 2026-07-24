@@ -1,6 +1,6 @@
 import { isConfigured, validateContainerTag } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
-import { getProjectSearchTags, getUserTag } from "../services/tags.js";
+import { getRepoSearchTags } from "../services/tags.js";
 
 function parseArgs(args: string[]): { content: string; containerTag?: string } {
   let containerTag: string | undefined;
@@ -54,31 +54,22 @@ async function main(): Promise<void> {
         console.log(`Failed to forget memory from container '${containerTag}': ${result.error}`);
       }
     } else {
-      const projectTags = getProjectSearchTags(process.cwd());
-      const userTag = getUserTag();
-
-      const [projectResults, userResult] = await Promise.all([
-        Promise.all(projectTags.map((tag) => client.forgetMemory(content, tag))),
-        client.forgetMemory(content, userTag),
-      ]);
+      const repoSearchTags = getRepoSearchTags(process.cwd());
+      const results = await Promise.all(
+        repoSearchTags.map((tag) => client.forgetMemory(content, tag)),
+      );
 
       const forgotten: string[] = [];
       const errors: string[] = [];
 
-      projectResults.forEach((projectResult, index) => {
-        const label = index === 0 ? "project" : "legacy project";
-        if (projectResult.success) {
-          forgotten.push(projectResult.id ? `${label} (id: ${projectResult.id})` : label);
+      results.forEach((result, index) => {
+        const label = repoSearchTags[index];
+        if (result.success) {
+          forgotten.push(result.id ? `${label} (id: ${result.id})` : label);
         } else {
-          errors.push(`${label}: ${projectResult.error}`);
+          errors.push(`${label}: ${result.error}`);
         }
       });
-
-      if (userResult.success) {
-        forgotten.push(userResult.id ? `user (id: ${userResult.id})` : "user");
-      } else {
-        errors.push(`user: ${userResult.error}`);
-      }
 
       if (forgotten.length > 0) {
         console.log(`Memory forgotten from: ${forgotten.join(", ")}`);
