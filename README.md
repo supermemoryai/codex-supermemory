@@ -12,7 +12,7 @@ and the lessons learned across every project — automatically.
   `UserPromptSubmit` hook.
 - 💾 **Automatic capture** — conversations are stored incrementally (every N turns) and
   at session end via the `Stop` hook.
-- 🏷️ **Shared Agents scoping** — Codex and Claude Code use one collision-safe
+- 🏷️ **Shared Agents scoping** — Codex, Claude Code, and OpenCode use one collision-safe
   repository container.
 - 📦 **Custom container tags** — define custom memory containers (e.g., `work`, `personal`,
   `code_style`). The AI automatically picks the right container based on your instructions
@@ -75,7 +75,7 @@ anything else fails, they exit cleanly without breaking your Codex session.
 
 ### Shared Agents containers
 
-Codex and Claude Code use one container for a repository:
+Codex, Claude Code, and OpenCode use one container for a repository:
 
 - `repo_<project-name>__<remote-hash>` stores automatic capture and every explicit save.
 - `sm_scope` metadata preserves optional personal/project filtering.
@@ -83,10 +83,11 @@ Codex and Claude Code use one container for a repository:
 The hash comes from the normalized Git remote, so clones share memory while
 same-named repositories do not collide. Repositories without a remote fall back to
 a local path identity. Codex also reads the previous `user_project_*`,
-`repo_<project-name>`, `codex_user_*`, `codex_project_*`, and
-`claudecode_project_*` containers, so existing memories remain searchable without
-duplicating or migrating them. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use
-the worktree path instead of the remote identity.
+`repo_<project-name>`, `codex_user_*`, `codex_project_*`,
+`claudecode_project_*`, `opencode_user_*`, and `opencode_project_*`
+containers, so existing memories remain searchable without duplicating or
+migrating them. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
+path instead of the remote identity.
 
 Explicit `projectContainerTag`/`repoContainerTag` overrides remain the canonical
 write destination. Older user/personal overrides remain in the legacy read set.

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { hostname } from "node:os";
+import { hostname, homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { CONFIG } from "../config.js";
 
@@ -161,6 +161,108 @@ function loadClaudeProjectConfig(directory: string): {
   }
 }
 
+function stripJsoncComments(content: string): string {
+  let result = "";
+  let index = 0;
+  let inString = false;
+  let singleLineComment = false;
+  let multiLineComment = false;
+
+  while (index < content.length) {
+    const char = content[index];
+    const next = content[index + 1];
+
+    if (!singleLineComment && !multiLineComment && char === '"') {
+      let backslashes = 0;
+      for (
+        let cursor = index - 1;
+        cursor >= 0 && content[cursor] === "\\";
+        cursor--
+      ) {
+        backslashes++;
+      }
+      if (backslashes % 2 === 0) inString = !inString;
+      result += char;
+      index++;
+      continue;
+    }
+
+    if (inString) {
+      result += char;
+      index++;
+      continue;
+    }
+
+    if (
+      !singleLineComment &&
+      !multiLineComment &&
+      char === "/" &&
+      next === "/"
+    ) {
+      singleLineComment = true;
+      index += 2;
+      continue;
+    }
+    if (
+      !singleLineComment &&
+      !multiLineComment &&
+      char === "/" &&
+      next === "*"
+    ) {
+      multiLineComment = true;
+      index += 2;
+      continue;
+    }
+    if (singleLineComment) {
+      if (char === "\n") {
+        singleLineComment = false;
+        result += char;
+      }
+      index++;
+      continue;
+    }
+    if (multiLineComment) {
+      if (char === "*" && next === "/") {
+        multiLineComment = false;
+        index += 2;
+        continue;
+      }
+      if (char === "\n") result += char;
+      index++;
+      continue;
+    }
+
+    result += char;
+    index++;
+  }
+
+  return result.replace(/,\s*([}\]])/g, "$1");
+}
+
+function loadLegacyOpenCodeConfig(): {
+  containerTagPrefix?: string;
+  userContainerTag?: string;
+  projectContainerTag?: string;
+} | null {
+  const configDir = join(homedir(), ".config", "opencode");
+  for (const filename of ["supermemory.jsonc", "supermemory.json"]) {
+    try {
+      const configPath = join(configDir, filename);
+      if (!existsSync(configPath)) continue;
+      return JSON.parse(
+        stripJsoncComments(readFileSync(configPath, "utf-8")),
+      ) as {
+        containerTagPrefix?: string;
+        userContainerTag?: string;
+        projectContainerTag?: string;
+      };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export function sanitizeRepoName(name: string): string {
   const sanitized = name
     .toLowerCase()
@@ -242,6 +344,39 @@ function getLegacyCodexProjectTags(directory: string): string[] {
   ].filter((tag): tag is string => !!tag);
 }
 
+export function getLegacyOpenCodeUserTags(directory: string): string[] {
+  const config = loadLegacyOpenCodeConfig();
+  const identity =
+    getGitEmail(directory) ||
+    process.env.USER ||
+    process.env.USERNAME ||
+    "anonymous";
+  const hash = sha256(identity);
+  return uniqueTags([
+    config?.userContainerTag,
+    `${config?.containerTagPrefix || "opencode"}_user_${hash}`,
+    `opencode_user_${hash}`,
+  ]);
+}
+
+export function getLegacyOpenCodeProjectTags(directory: string): string[] {
+  const config = loadLegacyOpenCodeConfig();
+  const hashes = [
+    ...new Set(
+      [directory, resolve(directory), getProjectBasePath(directory)].map(
+        (value) => sha256(value),
+      ),
+    ),
+  ];
+  return uniqueTags([
+    config?.projectContainerTag,
+    ...hashes.flatMap((hash) => [
+      `${config?.containerTagPrefix || "opencode"}_project_${hash}`,
+      `opencode_project_${hash}`,
+    ]),
+  ]);
+}
+
 function uniqueTags(tags: Array<string | null | undefined>): string[] {
   return [
     ...new Set(
@@ -258,11 +393,13 @@ export function getPersonalReadTags(directory: string): string[] {
   const claudeConfig = loadClaudeProjectConfig(directory);
   return uniqueTags([
     getPersonalTag(directory),
+    getGeneratedProjectTag(directory),
     claudeConfig?.personalContainerTag,
     CONFIG.userContainerTag,
     getGeneratedPersonalTag(directory),
     `claudecode_project_${projectHash}`,
     ...getLegacyCodexUserTags(directory),
+    ...getLegacyOpenCodeUserTags(directory),
   ]);
 }
 
@@ -272,6 +409,7 @@ export function getProjectReadTags(directory: string): string[] {
     getGeneratedProjectTag(directory),
     getLegacyGeneratedProjectTag(directory),
     ...getLegacyCodexProjectTags(directory),
+    ...getLegacyOpenCodeProjectTags(directory),
   ]);
 }
 
