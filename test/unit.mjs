@@ -131,7 +131,7 @@ describe("container tags", () => {
     );
   });
 
-  test("uses unified tags and includes legacy Claude, Codex, and OpenCode reads", (t) => {
+  test("uses unified tags and includes all agent legacy reads", (t) => {
     const tmpDir = makeTmpDir();
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
     const repoDir = join(tmpDir, "Example Project");
@@ -170,12 +170,16 @@ describe("container tags", () => {
       `claudecode_project_${pathHash}`,
       `codex_user_${hash16("test@example.com")}`,
       `opencode_user_${hash16("test@example.com")}`,
+      `cursor_user_${hash16("test@example.com")}`,
     ]);
     assert.deepEqual(tags.projectReads, [
       canonicalTag,
       "repo_example_project",
       `codex_project_${pathHash}`,
-      `opencode_project_${pathHash}`,
+      ...[...new Set([hash16(repoDir), pathHash])].map(
+        (hash) => `opencode_project_${hash}`,
+      ),
+      `cursor_project_${pathHash}`,
     ]);
   });
 

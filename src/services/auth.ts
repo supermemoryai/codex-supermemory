@@ -135,7 +135,7 @@ export function startAuthFlow(): Promise<string> {
         hostname: `codex - ${hostname()}`,
         os: `${platform()}-${arch()}`,
         cwd: process.cwd(),
-        cli_version: "1.0.0",
+        cli_version: "1.0.11",
       });
       const authUrl = `${AUTH_BASE_URL}?${params.toString()}`;
       openUrl(authUrl).catch((error) => {
