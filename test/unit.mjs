@@ -633,6 +633,30 @@ describe("recall hook output envelope", () => {
   });
 });
 
+// ─── session-start hook logout behavior ──────────────────────────────────────
+
+describe("session-start hook logout behavior", () => {
+  const sessionStartBin = fileURLToPath(new URL("../dist/hooks/session-start.js", import.meta.url));
+
+  test("exits silently after explicit logout marker", (t) => {
+    const tmpDir = makeTmpDir();
+    const supermemoryDir = join(tmpDir, ".codex", "supermemory");
+    mkdirSync(supermemoryDir, { recursive: true });
+    writeFileSync(join(supermemoryDir, ".logged-out"), new Date().toISOString());
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+    const result = spawnSync("node", [sessionStartBin], {
+      input: JSON.stringify({ session_id: "s1" }),
+      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      encoding: "utf-8",
+      timeout: 5_000,
+    });
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "");
+  });
+});
+
 // ─── flush hook — Stop payload handling ──────────────────────────────────────
 
 describe("flush hook Stop payload", () => {
