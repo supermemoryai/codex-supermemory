@@ -60,9 +60,54 @@ const LEGACY_SUPERMEMORY_SCRIPTS = [
 const SCRIPT_DIR = getScriptDir();
 const DIST_HOOKS_DIR = join(SCRIPT_DIR, "hooks");
 
+class ConfigParseError extends Error {
+  constructor(filePath: string, parser: string, cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    super(
+      [
+        `Failed to parse ${filePath}.`,
+        "",
+        `The existing configuration contains invalid ${parser}.`,
+        message,
+        "",
+        "No changes were made.",
+        "Please fix the syntax error and rerun the command.",
+      ].join("\n"),
+    );
+    this.name = "ConfigParseError";
+  }
+}
+
 function ensureCodexDir() {
   mkdirSync(CODEX_DIR, { recursive: true });
   mkdirSync(SUPERMEMORY_HOOKS_DIR, { recursive: true });
+}
+
+function readConfigToml(): Record<string, unknown> {
+  if (!existsSync(CODEX_CONFIG_TOML)) return {};
+
+  try {
+    const content = readFileSync(CODEX_CONFIG_TOML, "utf-8");
+    return TOML.parse(content) as Record<string, unknown>;
+  } catch (error) {
+    throw new ConfigParseError(CODEX_CONFIG_TOML, "TOML", error);
+  }
+}
+
+function readHooksJson(): HookEvents {
+  if (!existsSync(CODEX_HOOKS_JSON)) return {};
+
+  try {
+    const content = readFileSync(CODEX_HOOKS_JSON, "utf-8");
+    return normalizeHookEvents(JSON.parse(content));
+  } catch (error) {
+    throw new ConfigParseError(CODEX_HOOKS_JSON, "JSON", error);
+  }
+}
+
+function validateWritableCodexConfig(): void {
+  readConfigToml();
+  readHooksJson();
 }
 
 function mergeConfigToml(enable: boolean) {
@@ -71,15 +116,7 @@ function mergeConfigToml(enable: boolean) {
     return;
   }
 
-  let config: Record<string, unknown> = {};
-  if (existsSync(CODEX_CONFIG_TOML)) {
-    try {
-      const content = readFileSync(CODEX_CONFIG_TOML, "utf-8");
-      config = TOML.parse(content) as Record<string, unknown>;
-    } catch {
-      // start fresh
-    }
-  }
+  const config = readConfigToml();
 
   // Toggle the codex_hooks feature flag.
   if (!config.features) config.features = {};
@@ -192,15 +229,7 @@ function mergeHooksJson(add: boolean) {
     return;
   }
 
-  let hooks: HookEvents = {};
-  if (existsSync(CODEX_HOOKS_JSON)) {
-    try {
-      const content = readFileSync(CODEX_HOOKS_JSON, "utf-8");
-      hooks = normalizeHookEvents(JSON.parse(content));
-    } catch {
-      // start fresh
-    }
-  }
+  const hooks = readHooksJson();
 
   if (add) {
     const recallCmd = `node ${RECALL_SCRIPT}`;
@@ -256,6 +285,7 @@ function mergeHooksJson(add: boolean) {
 function install() {
   console.log("Installing codex-supermemory...\n");
 
+  validateWritableCodexConfig();
   ensureCodexDir();
 
   const hadExistingConfig = existsSync(CONFIG_FILE);
@@ -334,6 +364,7 @@ Optional: Enable debug logging:
 function uninstall() {
   console.log("Uninstalling codex-supermemory...\n");
 
+  validateWritableCodexConfig();
   mergeHooksJson(false);
   console.log(`✓ Removed hooks from ${CODEX_HOOKS_JSON}`);
 
@@ -416,17 +447,22 @@ function status() {
 }
 
 const command = process.argv[2];
-switch (command) {
-  case "install":
-    install();
-    break;
-  case "uninstall":
-    uninstall();
-    break;
-  case "status":
-    status();
-    break;
-  default:
-    console.log("Usage: codex-supermemory <install|uninstall|status>");
-    process.exit(1);
+try {
+  switch (command) {
+    case "install":
+      install();
+      break;
+    case "uninstall":
+      uninstall();
+      break;
+    case "status":
+      status();
+      break;
+    default:
+      console.log("Usage: codex-supermemory <install|uninstall|status>");
+      process.exit(1);
+  }
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
 }
