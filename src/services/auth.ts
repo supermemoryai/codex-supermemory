@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { homedir, hostname, platform, arch } from "node:os";
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
+import { PLUGIN_VERSION } from "../version.js";
 import { openUrl } from "./openUrl.js";
 
 const SUPERMEMORY_DIR = join(homedir(), ".codex", "supermemory");
@@ -135,7 +136,7 @@ export function startAuthFlow(): Promise<string> {
         hostname: `codex - ${hostname()}`,
         os: `${platform()}-${arch()}`,
         cwd: process.cwd(),
-        cli_version: "1.0.11",
+        cli_version: PLUGIN_VERSION,
       });
       const authUrl = `${AUTH_BASE_URL}?${params.toString()}`;
       openUrl(authUrl).catch((error) => {
