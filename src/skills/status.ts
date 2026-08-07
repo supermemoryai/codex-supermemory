@@ -39,6 +39,15 @@ function getDevTlsHint(): string | null {
   return "Dev API TLS: set NODE_EXTRA_CA_CERTS to your Portless CA before starting Codex.";
 }
 
+function getRecallStatus(): string {
+  return CONFIG.autoRecallEveryPrompt ? "every prompt" : "manual";
+}
+
+function getCaptureStatus(): string {
+  if (CONFIG.captureEveryNTurns <= 0) return "disabled";
+  return `every ${CONFIG.captureEveryNTurns} turn${CONFIG.captureEveryNTurns === 1 ? "" : "s"}`;
+}
+
 async function fetchJson(path: string): Promise<unknown | null> {
   const apiKey = getApiKeyValue();
   if (!apiKey) return null;
@@ -103,8 +112,8 @@ async function main(): Promise<void> {
   lines.push(`API key: ${maskKey(apiKey)} (${getKeySource()})`);
   lines.push(`API URL: ${API_URL}`);
   lines.push(`Memory scope: one project container with metadata scopes`);
-  lines.push(`Recall mode: auto-recall on every prompt`);
-  lines.push(`Capture cadence: ${CONFIG.autoSaveEveryTurns > 0 ? `every ${CONFIG.autoSaveEveryTurns} turn${CONFIG.autoSaveEveryTurns === 1 ? "" : "s"} + session end` : "session end only"}`);
+  lines.push(`Recall: ${getRecallStatus()}`);
+  lines.push(`Capture: ${getCaptureStatus()}`);
   lines.push(`Project container: ${tags.canonical}`);
   lines.push(`Reads (including legacy): ${tags.allReads.join(", ")}`);
 

@@ -752,6 +752,18 @@ describe("skill scripts: search/add/save/forget/status/logout", () => {
     });
   }
 
+  function runStatusWithConfig(t, config) {
+    const tmpDir = makeTmpDir();
+    const codexDir = join(tmpDir, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, "supermemory.json"), JSON.stringify(config));
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    return spawnSync("node", [statusBin], {
+      env: { PATH: process.env.PATH, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
+      encoding: "utf-8",
+    });
+  }
+
   // Run a script with a (fake) API key but no network. We expect arg-parsing
   // branches (missing query/content) to short-circuit before any network call.
   function runSkillNoArgs(t, bin) {
@@ -794,6 +806,31 @@ describe("skill scripts: search/add/save/forget/status/logout", () => {
     assert.equal(result.status, 0);
     assert.match(result.stdout, /Connected: no/);
     assert.match(result.stdout, /supermemory-login/);
+  });
+
+  test("status reports manual recall when auto recall is disabled", (t) => {
+    const result = runStatusWithConfig(t, { autoRecallEveryPrompt: false, captureEveryNTurns: 0 });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Recall: manual/);
+  });
+
+  test("status reports every-prompt recall when auto recall is enabled", (t) => {
+    const result = runStatusWithConfig(t, { autoRecallEveryPrompt: true, captureEveryNTurns: 0 });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Recall: every prompt/);
+  });
+
+  test("status reports disabled capture when captureEveryNTurns is zero", (t) => {
+    const result = runStatusWithConfig(t, { autoRecallEveryPrompt: false, captureEveryNTurns: 0 });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Capture: disabled/);
+  });
+
+  test("status reports configured capture cadence from captureEveryNTurns", (t) => {
+    const result = runStatusWithConfig(t, { autoRecallEveryPrompt: false, captureEveryNTurns: 5, autoSaveEveryTurns: 3 });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Capture: every 5 turns/);
+    assert.doesNotMatch(result.stdout, /every 3 turns/);
   });
 
   test("logout removes saved credentials and config apiKey", (t) => {
