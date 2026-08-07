@@ -11,6 +11,7 @@ import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
+const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
 const UPDATE_COMMAND = "npx codex-supermemory@latest install";
 
 interface CodexHookPayload {
@@ -46,6 +47,11 @@ async function main() {
   }
 
   if (!isConfigured()) {
+    if (existsSync(LOGGED_OUT_FILE)) {
+      log("session-start: logged out marker present, skipping browser auth");
+      exitWithContext("");
+    }
+
     const alreadyAttempted = existsSync(AUTH_ATTEMPTED_FILE);
     if (!alreadyAttempted) {
       try {
