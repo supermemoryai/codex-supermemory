@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { loadCredentialData, loadCredentials } from "./services/auth.js";
 
+export { PLUGIN_VERSION } from "./version.js";
+
 export const CONFIG_FILE = join(homedir(), ".codex", "supermemory.json");
-export const PLUGIN_VERSION = "1.0.11";
 export const DEFAULT_BASE_URL = "https://api.supermemory.ai";
 
 export interface CustomContainer {

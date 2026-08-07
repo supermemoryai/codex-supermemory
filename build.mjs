@@ -1,5 +1,12 @@
 import * as esbuild from "esbuild";
-import { mkdirSync, writeFileSync, chmodSync, copyFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, chmodSync, copyFileSync, readFileSync, rmSync } from "node:fs";
+
+const packageJson = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf-8")
+);
+if (typeof packageJson.version !== "string" || !packageJson.version) {
+  throw new Error("package.json must contain a version");
+}
 
 const sharedConfig = {
   bundle: true,
@@ -8,6 +15,11 @@ const sharedConfig = {
   target: "node18",
   minify: false,
   sourcemap: false,
+  // Embed the package version because installed hook bundles are copied out of
+  // the package directory and cannot read package.json at runtime.
+  define: {
+    __CODEX_SUPERMEMORY_VERSION__: JSON.stringify(packageJson.version),
+  },
 };
 
 const executableEntries = [
