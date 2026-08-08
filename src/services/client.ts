@@ -1,8 +1,18 @@
 import Supermemory from "supermemory";
+import type { ProfileParams } from "supermemory/resources/top-level.js";
 import { CONFIG, isConfigured, getApiKeyValue, getBaseUrl, PLUGIN_VERSION } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 import { mergeProfileResults, mergeSearchResponses } from "./resultMerge.js";
+
+// The installed SDK's `ProfileParams` doesn't declare `filters` even though
+// `/v4/profile` accepts one and the client sends whatever body it's given
+// (see `Supermemory#profile`, a raw pass-through) - the same shape
+// `search.memories` already types correctly. This just closes that gap
+// locally rather than leaving `tsc --noEmit` broken.
+type ProfileParamsWithFilters = ProfileParams & {
+  filters?: ReturnType<typeof getScopeFilters>;
+};
 
 const TIMEOUT_MS = 30000;
 const SPACE_NAME_TIMEOUT_MS = 5000;
@@ -130,7 +140,7 @@ export class SupermemoryClient {
           containerTag,
           q: query,
           filters: scope ? getScopeFilters(scope) : undefined,
-        }),
+        } satisfies ProfileParamsWithFilters as ProfileParams),
         TIMEOUT_MS
       );
 
@@ -285,7 +295,7 @@ export class SupermemoryClient {
           containerTag,
           q: query,
           filters: scope ? getScopeFilters(scope) : undefined,
-        }),
+        } satisfies ProfileParamsWithFilters as ProfileParams),
         TIMEOUT_MS
       );
       log("getProfile: success", { hasProfile: !!result?.profile });

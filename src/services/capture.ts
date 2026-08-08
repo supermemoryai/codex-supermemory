@@ -54,7 +54,7 @@ export async function captureEntries(
   client: SupermemoryClient,
   sessionId: string,
   transcriptPath: string | null,
-  tags: Pick<ResolvedTags, "project" | "user" | "projectName">,
+  tags: Pick<ResolvedTags, "canonical" | "project" | "user" | "projectName" | "projectId">,
   options: CaptureOptions = {},
 ): Promise<void> {
   const { requireMinEntries = 0, requireMinTurns = 0 } = options;
@@ -148,10 +148,22 @@ export async function captureEntries(
   // metadata preserves optional personal/project filtering.
   // Use customId so all session turns go into the same document.
   try {
-    await client.addMemory(content, tags.canonical, metadata, {
+    const result = await client.addMemory(content, tags.canonical, metadata, {
       customId: sessionId,
       entityContext: USER_ENTITY_CONTEXT,
     });
+
+    if (!result.success) {
+      // addMemory() catches its own errors rather than throwing, so this is
+      // the only place a failed upload is visible. Leave the tracker where
+      // it is: the next capture will re-include this delta instead of
+      // losing it permanently.
+      log(`${caller}: capture upload failed, tracker not advanced`, {
+        sessionId,
+        error: result.error,
+      });
+      return;
+    }
 
     const lastEntry = newEntries[newEntries.length - 1];
     setLastCapturedIndex(sessionId, lastEntry.index);
