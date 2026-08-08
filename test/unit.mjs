@@ -808,28 +808,28 @@ describe("skill scripts: search/add/save/forget/status/logout", () => {
     assert.match(result.stdout, /supermemory-login/);
   });
 
-  test("status reports manual recall when auto recall is disabled", (t) => {
+  test("status reports auto-recall off when auto recall is disabled", (t) => {
     const result = runStatusWithConfig(t, { autoRecallEveryPrompt: false, captureEveryNTurns: 0 });
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /Recall: manual/);
+    assert.match(result.stdout, /Auto-recall: off/);
   });
 
-  test("status reports every-prompt recall when auto recall is enabled", (t) => {
+  test("status reports every-prompt auto-recall when enabled", (t) => {
     const result = runStatusWithConfig(t, { autoRecallEveryPrompt: true, captureEveryNTurns: 0 });
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /Recall: every prompt/);
+    assert.match(result.stdout, /Auto-recall: every prompt/);
   });
 
-  test("status reports disabled capture when captureEveryNTurns is zero", (t) => {
+  test("status reports auto-capture off when captureEveryNTurns is zero", (t) => {
     const result = runStatusWithConfig(t, { autoRecallEveryPrompt: false, captureEveryNTurns: 0 });
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /Capture: disabled/);
+    assert.match(result.stdout, /Auto-capture: off/);
   });
 
-  test("status reports configured capture cadence from captureEveryNTurns", (t) => {
+  test("status reports configured auto-capture cadence from captureEveryNTurns", (t) => {
     const result = runStatusWithConfig(t, { autoRecallEveryPrompt: false, captureEveryNTurns: 5, autoSaveEveryTurns: 3 });
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /Capture: every 5 turns/);
+    assert.match(result.stdout, /Auto-capture: every 5 turns/);
     assert.doesNotMatch(result.stdout, /every 3 turns/);
   });
 
