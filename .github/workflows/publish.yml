@@ -2,24 +2,43 @@ name: Publish Package
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
 
 permissions:
-  id-token: write  # Required for OIDC
-  contents: read
+  id-token: write # Required for npm OIDC trusted publishing
+  contents: write # Commit the version bump back to main
 
 jobs:
   publish:
+    # Skip the follow-up push from this workflow's own release commit.
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Push the bump commit back to main (detached HEAD → main).
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
       - run: npm ci
+
+      - name: Bump patch version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npm version patch --no-git-tag-version
+          VERSION="$(node -p "require('./package.json').version")"
+          git add package.json package-lock.json
+          git commit -m "chore(release): ${VERSION}"
+
+      # Build after the bump so the embedded PLUGIN_VERSION matches the publish.
       - run: npm run build --if-present
       - run: npm test
       - run: npm publish
+
+      - name: Push version bump
+        run: git push origin HEAD:main
