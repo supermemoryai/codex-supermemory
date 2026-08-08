@@ -589,6 +589,153 @@ describe("direct recall policy", () => {
   });
 });
 
+// ─── transcript parsing ─────────────────────────────────────────────────────
+
+describe("Codex transcript parsing", () => {
+  const transcriptModule = new URL("../dist/services/transcript.js", import.meta.url).href;
+
+  function parseFixture(t, lines) {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    const transcriptFile = join(tmpDir, "rollout.jsonl");
+    writeFileSync(transcriptFile, lines.map((l) => JSON.stringify(l)).join("\n"));
+
+    const script = `
+      import { parseTranscript } from ${JSON.stringify(transcriptModule)};
+      console.log(JSON.stringify(parseTranscript(process.argv[1])));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, transcriptFile], {
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+
+  test("extracts response_item user messages from input_text blocks", (t) => {
+    const entries = parseFixture(t, [
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Please use pnpm, not npm." }],
+        },
+      },
+    ]);
+    assert.deepEqual(
+      entries.map((e) => [e.role, e.content]),
+      [["user", "Please use pnpm, not npm."]],
+    );
+  });
+
+  test("extracts response_item assistant messages from output_text and text blocks", (t) => {
+    const entries = parseFixture(t, [
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [
+            { type: "output_text", text: "Got it," },
+            { type: "text", text: "switching to pnpm." },
+          ],
+        },
+      },
+    ]);
+    assert.deepEqual(entries.map((e) => e.role), ["assistant"]);
+    assert.equal(entries[0].content, "Got it,\nswitching to pnpm.");
+  });
+
+  test("captures function_call and function_call_output as bounded tool entries", (t) => {
+    const entries = parseFixture(t, [
+      {
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          call_id: "call_1",
+          name: "run_command",
+          arguments: JSON.stringify({ cmd: "pnpm install" }),
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call_1",
+          output: "a".repeat(1000),
+        },
+      },
+    ]);
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0].role, "tool");
+    assert.ok(entries[0].content.startsWith("[tool_call] run_command("));
+    assert.ok(entries[0].content.includes("pnpm install"));
+    assert.equal(entries[1].role, "tool");
+    assert.ok(entries[1].content.startsWith("[tool_result] "));
+    // Bounded: the 1000-char output must not appear in full.
+    assert.ok(entries[1].content.length < 1000);
+    assert.ok(entries[1].content.includes("truncated"));
+  });
+
+  test("does not double-capture a turn logged as both event_msg and response_item", (t) => {
+    const entries = parseFixture(t, [
+      { type: "event_msg", payload: { type: "user_message", message: "What is 2+2?" } },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "What is 2+2?" }],
+        },
+      },
+      { type: "event_msg", payload: { type: "assistant_output_text", text: "4" } },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "4" }],
+        },
+      },
+    ]);
+    assert.deepEqual(
+      entries.map((e) => [e.role, e.content]),
+      [
+        ["user", "What is 2+2?"],
+        ["assistant", "4"],
+      ],
+    );
+  });
+
+  test("still parses legacy event_msg-only transcripts unchanged (regression guard)", (t) => {
+    const entries = parseFixture(t, [
+      { type: "event_msg", payload: { type: "user_message", message: "What is 2+2?" } },
+      { type: "event_msg", payload: { type: "assistant_output_text", text: "4" } },
+    ]);
+    assert.deepEqual(
+      entries.map((e) => [e.role, e.content]),
+      [
+        ["user", "What is 2+2?"],
+        ["assistant", "4"],
+      ],
+    );
+  });
+
+  test("an identical message repeated far apart is kept as two entries", (t) => {
+    const filler = Array.from({ length: 10 }, (_, idx) => ({
+      type: "event_msg",
+      payload: { type: "assistant_output_text", text: `filler ${idx}` },
+    }));
+    const entries = parseFixture(t, [
+      { type: "event_msg", payload: { type: "user_message", message: "retry" } },
+      ...filler,
+      { type: "event_msg", payload: { type: "user_message", message: "retry" } },
+    ]);
+    const retries = entries.filter((e) => e.content === "retry");
+    assert.equal(retries.length, 2);
+  });
+});
+
 // ─── session ids ────────────────────────────────────────────────────────────
 
 describe("session ids", () => {
