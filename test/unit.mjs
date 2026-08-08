@@ -528,6 +528,92 @@ describe("integration: install/uninstall", () => {
     const config = readToml(configPath);
     assert.ok(!config.features, "features table should not exist after uninstall");
   });
+
+  test("install aborts and preserves config.toml when TOML parsing fails", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
+    const invalidConfig = 'model = "gpt-5"\n[features\ncodex_hooks = true\n';
+    writeFileSync(configPath, invalidConfig);
+
+    const result = runCli(cliBin, "install", tmpDir);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Failed to parse/);
+    assert.match(result.stderr, /config\.toml/);
+    assert.match(result.stderr, /No changes were made/);
+    assert.equal(readFileSync(configPath, "utf-8"), invalidConfig);
+  });
+
+  test("uninstall aborts and preserves config.toml when TOML parsing fails", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
+    const invalidConfig = 'model = "gpt-5"\n[features\ncodex_hooks = true\n';
+    writeFileSync(configPath, invalidConfig);
+
+    const result = runCli(cliBin, "uninstall", tmpDir);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Failed to parse/);
+    assert.match(result.stderr, /config\.toml/);
+    assert.match(result.stderr, /No changes were made/);
+    assert.equal(readFileSync(configPath, "utf-8"), invalidConfig);
+  });
+
+  test("install aborts and preserves hooks.json when JSON parsing fails", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
+    const hooksPath = join(codexDir, "hooks.json");
+    const invalidHooks = '{ "hooks": { "Stop": [ }';
+    writeFileSync(hooksPath, invalidHooks);
+
+    const result = runCli(cliBin, "install", tmpDir);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Failed to parse/);
+    assert.match(result.stderr, /hooks\.json/);
+    assert.match(result.stderr, /No changes were made/);
+    assert.equal(readFileSync(hooksPath, "utf-8"), invalidHooks);
+  });
+
+  test("uninstall aborts and preserves hooks.json when JSON parsing fails", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
+    const hooksPath = join(codexDir, "hooks.json");
+    const invalidHooks = '{ "hooks": { "Stop": [ }';
+    writeFileSync(hooksPath, invalidHooks);
+
+    const result = runCli(cliBin, "uninstall", tmpDir);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Failed to parse/);
+    assert.match(result.stderr, /hooks\.json/);
+    assert.match(result.stderr, /No changes were made/);
+    assert.equal(readFileSync(hooksPath, "utf-8"), invalidHooks);
+  });
+
+  test("install aborts and preserves supermemory.json when JSON parsing fails", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
+    const supermemoryPath = join(codexDir, "supermemory.json");
+    const invalidConfig = '{ "apiKey": "sm_test", ';
+    writeFileSync(supermemoryPath, invalidConfig);
+
+    const result = runCli(cliBin, "install", tmpDir);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Failed to parse/);
+    assert.match(result.stderr, /supermemory\.json/);
+    assert.match(result.stderr, /No changes were made/);
+    assert.equal(readFileSync(supermemoryPath, "utf-8"), invalidConfig);
+  });
+
+  test("install merges into existing valid config.toml", (t) => {
+    const { tmpDir, configPath } = setupCodexHome(t);
+    writeFileSync(configPath, 'model = "gpt-5"\n\n[features]\nweb_search = true\n');
+
+    const result = runCli(cliBin, "install", tmpDir);
+
+    assert.equal(result.status, 0, `install should exit 0: ${result.stderr}`);
+    const config = readToml(configPath);
+    assert.equal(config.model, "gpt-5");
+    assert.equal(config.features.web_search, true);
+    assert.equal(config.features.codex_hooks, true);
+  });
 });
 
 

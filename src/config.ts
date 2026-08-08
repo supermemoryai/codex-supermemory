@@ -70,10 +70,36 @@ function loadRawConfig(): { config: CodexSupermemoryConfig; existed: boolean } {
       const content = readFileSync(CONFIG_FILE, "utf-8");
       return { config: JSON.parse(content) as CodexSupermemoryConfig, existed: true };
     } catch {
+      // Soft-fail for runtime reads (hooks/skills); writers must use loadRawConfigForWrite.
       return { config: {}, existed: true };
     }
   }
   return { config: {}, existed: false };
+}
+
+/** Parse supermemory.json for write paths — never treat invalid JSON as empty. */
+function loadRawConfigForWrite(): { config: CodexSupermemoryConfig; existed: boolean } {
+  if (!existsSync(CONFIG_FILE)) {
+    return { config: {}, existed: false };
+  }
+
+  try {
+    const content = readFileSync(CONFIG_FILE, "utf-8");
+    return { config: JSON.parse(content) as CodexSupermemoryConfig, existed: true };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      [
+        `Failed to parse ${CONFIG_FILE}.`,
+        "",
+        "The existing configuration contains invalid JSON.",
+        detail,
+        "",
+        "No changes were made.",
+        "Please fix the syntax error and rerun the command.",
+      ].join("\n"),
+    );
+  }
 }
 
 const { config: fileConfig, existed: configExisted } = loadRawConfig();
@@ -227,7 +253,7 @@ export function validateContainerTag(tag: string): string | null {
 
 /** Persist explicit recall/capture defaults for fresh installs or legacy upgrades. */
 export function writeInstallDefaults(isExistingInstall: boolean): void {
-  const current = loadRawConfig().config;
+  const current = loadRawConfigForWrite().config;
   const next: CodexSupermemoryConfig = { ...current };
 
   if (isExistingInstall) {
