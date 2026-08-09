@@ -6,7 +6,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -301,6 +301,42 @@ describe("session ids", () => {
 
     assert.notEqual(first, second);
   });
+
+  function sanitizeSessionIdFor(sessionId) {
+    const script = `
+      import { sanitizeSessionId } from ${JSON.stringify(sessionModule)};
+      console.log(sanitizeSessionId(process.argv[1]));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, sessionId], {
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, `sanitizeSessionId failed: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+
+  test("sanitizeSessionId passes through plain alphanumeric/underscore/hyphen ids unchanged", () => {
+    assert.equal(sanitizeSessionIdFor("codex_abc123-DEF_456"), "codex_abc123-DEF_456");
+  });
+
+  test("sanitizeSessionId hashes ids containing path traversal sequences", () => {
+    const malicious = "../../../../tmp/pwned";
+    const sanitized = sanitizeSessionIdFor(malicious);
+    assert.equal(sanitized, `unsafe_${hash16(malicious)}`);
+    assert.ok(!sanitized.includes("/"));
+    assert.ok(!sanitized.includes(".."));
+  });
+
+  test("sanitizeSessionId hashes ids containing path separators", () => {
+    for (const malicious of ["a/b", "a\\b", "..", "."]) {
+      const sanitized = sanitizeSessionIdFor(malicious);
+      assert.match(sanitized, /^unsafe_[a-f0-9]{16}$/);
+    }
+  });
+
+  test("sanitizeSessionId is deterministic for the same malicious input", () => {
+    const malicious = "../../etc/passwd";
+    assert.equal(sanitizeSessionIdFor(malicious), sanitizeSessionIdFor(malicious));
+  });
 });
 
 // ─── stripPrivateContent ────────────────────────────────────────────────────
@@ -373,6 +409,89 @@ describe("entity context wiring", () => {
     assert.ok(content.includes("getProjectTag"));
     assert.ok(content.includes('sm_scope: "personal"'));
     assert.ok(content.includes("entityContext: USER_ENTITY_CONTEXT"));
+  });
+});
+
+// ─── path traversal via session id ─────────────────────────────────────────
+// tracker.ts and factCache.ts key on-disk files by session id. Session ids
+// can arrive unsanitized from hook JSON payloads, so a crafted id containing
+// "../" segments must never let a write escape ~/.codex-supermemory/trackers.
+
+describe("tracker and factCache reject path traversal in session id", () => {
+  const trackerModule = new URL("../dist/services/tracker.js", import.meta.url).href;
+  const factCacheModule = new URL("../dist/services/factCache.js", import.meta.url).href;
+
+  function withFakeHome(t) {
+    const tmpDir = makeTmpDir();
+    const home = join(tmpDir, "home");
+    mkdirSync(home, { recursive: true });
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    const trackerDir = join(home, ".codex-supermemory", "trackers");
+    return { home, trackerDir };
+  }
+
+  test("setLastCapturedIndex with a traversal session id stays inside trackers dir", (t) => {
+    const { home, trackerDir } = withFakeHome(t);
+    const maliciousSessionId = "../../../../tmp/csm-path-traversal-canary";
+    // What the pre-fix code would have written to: join() normalizes the
+    // ".." segments, so this resolves well outside trackerDir.
+    const vulnerablePath = join(trackerDir, `${maliciousSessionId}.txt`);
+    assert.ok(!vulnerablePath.startsWith(trackerDir), "sanity: id must actually traverse outside trackerDir");
+
+    const script = `
+      const { setLastCapturedIndex } = await import(${JSON.stringify(trackerModule)});
+      setLastCapturedIndex(${JSON.stringify(maliciousSessionId)}, 7);
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+    });
+    assert.equal(result.status, 0, result.stderr);
+
+    assert.ok(!existsSync(vulnerablePath), "write must not escape the tracker directory");
+
+    // The tracker directory should contain a hashed file instead.
+    const files = readdirSync(trackerDir);
+    assert.ok(files.some((f) => /^unsafe_[a-f0-9]{16}\.txt$/.test(f)));
+  });
+
+  test("addSeenFacts with a traversal session id stays inside trackers dir", (t) => {
+    const { home, trackerDir } = withFakeHome(t);
+    const maliciousSessionId = "../../../../tmp/csm-facts-path-traversal-canary";
+    const vulnerablePath = join(trackerDir, `${maliciousSessionId}.facts.json`);
+    assert.ok(!vulnerablePath.startsWith(trackerDir), "sanity: id must actually traverse outside trackerDir");
+
+    const script = `
+      const { addSeenFacts } = await import(${JSON.stringify(factCacheModule)});
+      addSeenFacts(${JSON.stringify(maliciousSessionId)}, ["remember this"]);
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+    });
+    assert.equal(result.status, 0, result.stderr);
+
+    assert.ok(!existsSync(vulnerablePath), "write must not escape the tracker directory");
+
+    const files = readdirSync(trackerDir);
+    assert.ok(files.some((f) => /^unsafe_[a-f0-9]{16}\.facts\.json$/.test(f)));
+  });
+
+  test("getLastCapturedIndex round-trips through the same sanitized path for a traversal session id", (t) => {
+    const { home } = withFakeHome(t);
+    const maliciousSessionId = "../../etc/passwd";
+
+    const script = `
+      const { setLastCapturedIndex, getLastCapturedIndex } = await import(${JSON.stringify(trackerModule)});
+      setLastCapturedIndex(${JSON.stringify(maliciousSessionId)}, 3);
+      console.log(getLastCapturedIndex(${JSON.stringify(maliciousSessionId)}));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "3");
   });
 });
 

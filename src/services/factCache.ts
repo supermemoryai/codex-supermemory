@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { sanitizeSessionId } from "./session.js";
 
 const CACHE_DIR = join(homedir(), ".codex-supermemory", "trackers");
 
@@ -9,7 +10,7 @@ function ensureDir(): void {
 }
 
 function cacheFile(sessionId: string): string {
-  return join(CACHE_DIR, `${sessionId}.facts.json`);
+  return join(CACHE_DIR, `${sanitizeSessionId(sessionId)}.facts.json`);
 }
 
 export function normalizeFact(s: string): string {

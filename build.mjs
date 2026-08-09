@@ -40,6 +40,8 @@ const libraryEntries = [
   { in: "src/services/session.ts", out: "dist/services/session.js" },
   { in: "src/services/tags.ts", out: "dist/services/tags.js" },
   { in: "src/services/resultMerge.ts", out: "dist/services/resultMerge.js" },
+  { in: "src/services/tracker.ts", out: "dist/services/tracker.js" },
+  { in: "src/services/factCache.ts", out: "dist/services/factCache.js" },
 ];
 
 await Promise.all(
