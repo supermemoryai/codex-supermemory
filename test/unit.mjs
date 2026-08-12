@@ -6,11 +6,12 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import * as TOML from "@iarna/toml";
+import { buildSync } from "esbuild";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -357,7 +358,7 @@ describe("entity context wiring", () => {
   test("automatic capture writes user entity context", () => {
     const content = readFileSync(new URL("../src/services/capture.ts", import.meta.url), "utf-8");
     assert.ok(content.includes("entityContext: USER_ENTITY_CONTEXT"));
-    assert.ok(content.includes('sm_scope: "personal"'));
+    assert.ok(content.includes('agent_scope: "personal"'));
     assert.ok(content.includes("project: tags.projectName"));
   });
 
@@ -365,14 +366,112 @@ describe("entity context wiring", () => {
     const content = readFileSync(new URL("../src/skills/save-memory.ts", import.meta.url), "utf-8");
     assert.ok(content.includes("PROJECT_ENTITY_CONTEXT"));
     assert.ok(content.includes("entityContext: getEntityContext(containerTag)"));
-    assert.ok(content.includes('sm_scope: "project"'));
+    assert.ok(content.includes('agent_scope: "project"'));
   });
 
   test("personal add writes the unified personal scope", () => {
     const content = readFileSync(new URL("../src/skills/add-memory.ts", import.meta.url), "utf-8");
     assert.ok(content.includes("getProjectTag"));
-    assert.ok(content.includes('sm_scope: "personal"'));
+    assert.ok(content.includes('agent_scope: "personal"'));
     assert.ok(content.includes("entityContext: USER_ENTITY_CONTEXT"));
+  });
+});
+
+describe("agent scope filters", () => {
+  const clientSource = fileURLToPath(new URL("../src/services/client.ts", import.meta.url));
+  const canonicalTag = "repo_example__0123456789abcdef";
+  const configuredCanonicalTag = "shared_project_memory";
+
+  async function createClientWithRequests(t) {
+    const requests = { searches: [], profiles: [] };
+    const dir = mkdtempSync(join(tmpdir(), "csm-client-test-"));
+    const modulePath = join(dir, "client.mjs");
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    buildSync({
+      entryPoints: [clientSource],
+      outfile: modulePath,
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node22",
+      define: { __CODEX_SUPERMEMORY_VERSION__: JSON.stringify("test") },
+    });
+    const { SupermemoryClient } = await import(pathToFileURL(modulePath).href);
+    const client = new SupermemoryClient();
+    client.client = {
+      search: {
+        memories: async (request) => {
+          requests.searches.push(request);
+          return { results: [], total: 0, timing: 0 };
+        },
+      },
+      profile: async (request) => {
+        requests.profiles.push(request);
+        return {
+          profile: { static: [], dynamic: [] },
+          searchResults: { results: [], total: 0, timing: 0 },
+        };
+      },
+    };
+    return { client, requests };
+  }
+
+  const personalAgentScope = {
+    AND: [{ key: "agent_scope", value: "personal", filterType: "metadata" }],
+  };
+
+  test("filters direct scoped search and profile reads by agent_scope", async (t) => {
+    const { client, requests } = await createClientWithRequests(t);
+
+    await client.searchMemories("preferences", canonicalTag, "personal");
+    await client.getProfile(canonicalTag, "preferences", "personal");
+
+    assert.deepEqual(requests.searches[0].filters, personalAgentScope);
+    assert.deepEqual(requests.profiles[0].filters, personalAgentScope);
+  });
+
+  test("filters only canonical scoped reads and leaves legacy containers unfiltered", async (t) => {
+    const { client, requests } = await createClientWithRequests(t);
+
+    await client.searchMemoriesScoped(
+      "preferences",
+      canonicalTag,
+      [canonicalTag, "codex_user_legacy"],
+      "personal",
+    );
+    await client.getProfileWithSearchScoped(
+      canonicalTag,
+      [canonicalTag, "codex_user_legacy"],
+      "personal",
+      "preferences",
+    );
+
+    assert.deepEqual(requests.searches[0].filters, personalAgentScope);
+    assert.equal(requests.searches[1].filters, undefined);
+    assert.deepEqual(requests.profiles[0].filters, personalAgentScope);
+    assert.equal(requests.profiles[1].filters, undefined);
+  });
+
+  test("filters an arbitrary configured canonical tag", async (t) => {
+    const { client, requests } = await createClientWithRequests(t);
+
+    await client.searchMemoriesScoped(
+      "preferences",
+      configuredCanonicalTag,
+      [configuredCanonicalTag, "codex_user_legacy"],
+      "personal",
+    );
+    await client.getProfileWithSearchScoped(
+      configuredCanonicalTag,
+      [configuredCanonicalTag, "codex_user_legacy"],
+      "personal",
+      "preferences",
+    );
+
+    assert.deepEqual(requests.searches[0].filters, personalAgentScope);
+    assert.equal(requests.searches[1].filters, undefined);
+    assert.deepEqual(requests.profiles[0].filters, personalAgentScope);
+    assert.equal(requests.profiles[1].filters, undefined);
   });
 });
 

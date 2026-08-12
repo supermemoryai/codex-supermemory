@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   lines.push(`Connected: ${isConfigured() ? "checking..." : "no"}`);
   lines.push(`API key: ${maskKey(apiKey)} (${getKeySource()})`);
   lines.push(`API URL: ${API_URL}`);
-  lines.push(`Memory scope: one project container with metadata scopes`);
+  lines.push(`Memory scope: one project container with agent_scope metadata`);
   lines.push(`Auto-recall: ${getAutoRecallStatus()}`);
   lines.push(`Auto-capture: ${getAutoCaptureStatus()}`);
   lines.push(`Project container: ${tags.canonical}`);
