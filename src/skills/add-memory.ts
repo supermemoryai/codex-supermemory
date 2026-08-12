@@ -32,7 +32,7 @@ async function main(): Promise<void> {
       type: "manual",
       project: projectName,
       sm_project_id: getProjectIdentity(cwd),
-      sm_scope: "personal",
+      agent_scope: "personal",
       sm_capture_mode: "explicit",
       timestamp: new Date().toISOString(),
     },

@@ -140,12 +140,12 @@ export async function captureEntries(
     sessionId,
     entryCount: newEntries.length,
     timestamp: new Date().toISOString(),
-    sm_scope: "personal",
+    agent_scope: "personal",
     sm_capture_mode: caller === "flush" ? "session_end" : "turn",
   };
 
-  // Automatic capture and explicit saves share one project container. Scope
-  // metadata preserves optional personal/project filtering.
+  // Automatic capture and explicit saves share one project container.
+  // agent_scope preserves optional personal/project filtering.
   // Use customId so all session turns go into the same document.
   try {
     const result = await client.addMemory(content, tags.canonical, metadata, {

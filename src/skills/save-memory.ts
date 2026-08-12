@@ -76,7 +76,7 @@ async function main(): Promise<void> {
       source: "skill",
       project: projectName,
       sm_project_id: projectId,
-      sm_scope: "project",
+      agent_scope: "project",
       sm_capture_mode: "explicit",
       timestamp: new Date().toISOString(),
     };

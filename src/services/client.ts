@@ -17,12 +17,8 @@ export type MemoryScope = "personal" | "project";
 
 function getScopeFilters(scope: MemoryScope) {
   return {
-    AND: [{ key: "sm_scope", value: scope, filterType: "metadata" as const }],
+    AND: [{ key: "agent_scope", value: scope, filterType: "metadata" as const }],
   };
-}
-
-function supportsScopedCanonicalTag(containerTag: string): boolean {
-  return /^repo_.+__[0-9a-f]{16}$/i.test(containerTag);
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -210,7 +206,7 @@ export class SupermemoryClient {
       this.getProfileWithSearch(
         canonicalTag,
         query,
-        supportsScopedCanonicalTag(canonicalTag) ? scope : undefined,
+        scope,
       ),
       ...legacyTags.map((containerTag) =>
         this.getProfileWithSearch(containerTag, query),
@@ -273,7 +269,7 @@ export class SupermemoryClient {
       this.searchMemories(
         query,
         canonicalTag,
-        supportsScopedCanonicalTag(canonicalTag) ? scope : undefined,
+        scope,
       ),
       ...legacyTags.map((containerTag) =>
         this.searchMemories(query, containerTag),

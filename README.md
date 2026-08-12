@@ -17,7 +17,7 @@ and the lessons learned across every project — automatically.
 - 📦 **Custom container tags** — define custom memory containers (e.g., `work`, `personal`,
   `code_style`). The AI automatically picks the right container based on your instructions
   when saving, searching, or forgetting memories.
-- 🏷️ **Personal + project routing** — `sm_scope` metadata keeps automatic/personal
+- 🏷️ **Personal + project routing** — `agent_scope` metadata keeps automatic/personal
   memories distinguishable from explicit project knowledge in the shared container.
 - **Entity-aware extraction** - the shared container uses one coding-agent context
   covering durable preferences and project/codebase facts.
@@ -78,7 +78,14 @@ anything else fails, they exit cleanly without breaking your Codex session.
 Codex, Claude Code, and OpenCode use one container for a repository:
 
 - `repo_<project-name>__<remote-hash>` stores automatic capture and every explicit save.
-- `sm_scope` metadata preserves optional personal/project filtering.
+- `agent_scope` metadata preserves optional personal/project filtering.
+
+> **Release dependency:** Deploy and complete the backend backfill from legacy
+> `sm_scope` to `agent_scope` before releasing this plugin version. Scoped
+> canonical-container reads filter only on `agent_scope`; they intentionally do
+> not OR on `sm_scope` because the legacy field was never vector-indexed.
+> Legacy containers continue to be read without a scope filter for backward
+> compatibility.
 
 The hash comes from the normalized Git remote, so clones share memory while
 same-named repositories do not collide. Repositories without a remote fall back to
