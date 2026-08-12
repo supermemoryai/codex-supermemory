@@ -1,8 +1,13 @@
 import Supermemory from "supermemory";
+import type { ProfileParams } from "supermemory/resources/top-level.js";
 import { CONFIG, isConfigured, getApiKeyValue, getBaseUrl, PLUGIN_VERSION } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 import { mergeProfileResults, mergeSearchResponses } from "./resultMerge.js";
+
+type ProfileParamsWithFilters = ProfileParams & {
+  filters?: ReturnType<typeof getScopeFilters>;
+};
 
 const TIMEOUT_MS = 30000;
 const SPACE_NAME_TIMEOUT_MS = 5000;
@@ -130,7 +135,7 @@ export class SupermemoryClient {
           containerTag,
           q: query,
           filters: scope ? getScopeFilters(scope) : undefined,
-        }),
+        } satisfies ProfileParamsWithFilters as ProfileParams),
         TIMEOUT_MS
       );
 
@@ -285,7 +290,7 @@ export class SupermemoryClient {
           containerTag,
           q: query,
           filters: scope ? getScopeFilters(scope) : undefined,
-        }),
+        } satisfies ProfileParamsWithFilters as ProfileParams),
         TIMEOUT_MS
       );
       log("getProfile: success", { hasProfile: !!result?.profile });
