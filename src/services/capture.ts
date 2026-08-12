@@ -154,10 +154,6 @@ export async function captureEntries(
     });
 
     if (!result.success) {
-      // addMemory() catches its own errors rather than throwing, so this is
-      // the only place a failed upload is visible. Leave the tracker where
-      // it is: the next capture will re-include this delta instead of
-      // losing it permanently.
       log(`${caller}: capture upload failed, tracker not advanced`, {
         sessionId,
         error: result.error,

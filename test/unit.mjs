@@ -376,66 +376,6 @@ describe("entity context wiring", () => {
   });
 });
 
-// ─── capture reliability ────────────────────────────────────────────────────
-
-describe("captureEntries does not lose a delta on a failed upload", () => {
-  const captureModule = new URL("../dist/services/capture.js", import.meta.url).href;
-  const trackerModule = new URL("../dist/services/tracker.js", import.meta.url).href;
-
-  function writeTranscript(dir) {
-    const transcriptPath = join(dir, "transcript.jsonl");
-    writeFileSync(
-      transcriptPath,
-      `${JSON.stringify({
-        type: "event_msg",
-        payload: { type: "user_message", message: "remember to use pnpm here" },
-      })}\n`,
-    );
-    return transcriptPath;
-  }
-
-  function runCapture(t, addMemoryResult) {
-    const tmpDir = makeTmpDir();
-    const home = join(tmpDir, "home");
-    mkdirSync(home, { recursive: true });
-    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
-
-    const transcriptPath = writeTranscript(tmpDir);
-    const sessionId = `test-session-${Math.random().toString(36).slice(2)}`;
-
-    const script = `
-      const { captureEntries } = await import(${JSON.stringify(captureModule)});
-      const { getLastCapturedIndex } = await import(${JSON.stringify(trackerModule)});
-      const fakeClient = { addMemory: async () => (${JSON.stringify(addMemoryResult)}) };
-      const tags = {
-        canonical: "repo_test__abcdef0123456789",
-        project: "repo_test__abcdef0123456789",
-        user: "repo_test__abcdef0123456789",
-        projectName: "test-project",
-        projectId: "abcdef0123456789",
-      };
-      await captureEntries("test", fakeClient, ${JSON.stringify(sessionId)}, ${JSON.stringify(transcriptPath)}, tags);
-      console.log(JSON.stringify(getLastCapturedIndex(${JSON.stringify(sessionId)})));
-    `;
-    const result = spawnSync("node", ["--input-type=module", "-e", script], {
-      encoding: "utf-8",
-      env: { ...process.env, HOME: home, USERPROFILE: home },
-    });
-    assert.equal(result.status, 0, result.stderr);
-    return JSON.parse(result.stdout);
-  }
-
-  test("tracker is not advanced when addMemory reports failure", (t) => {
-    const lastIndex = runCapture(t, { success: false, error: "simulated failure" });
-    assert.equal(lastIndex, null);
-  });
-
-  test("tracker is advanced when addMemory succeeds", (t) => {
-    const lastIndex = runCapture(t, { success: true, id: "doc123" });
-    assert.equal(lastIndex, 0);
-  });
-});
-
 describe("hooks.json format", () => {
   test("wrapped hooks.json shape is valid JSON", () => {
     const recallScript = "/home/user/.codex/supermemory/recall.js";

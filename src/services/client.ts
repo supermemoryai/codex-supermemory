@@ -5,11 +5,6 @@ import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 import { mergeProfileResults, mergeSearchResponses } from "./resultMerge.js";
 
-// The installed SDK's `ProfileParams` doesn't declare `filters` even though
-// `/v4/profile` accepts one and the client sends whatever body it's given
-// (see `Supermemory#profile`, a raw pass-through) - the same shape
-// `search.memories` already types correctly. This just closes that gap
-// locally rather than leaving `tsc --noEmit` broken.
 type ProfileParamsWithFilters = ProfileParams & {
   filters?: ReturnType<typeof getScopeFilters>;
 };
