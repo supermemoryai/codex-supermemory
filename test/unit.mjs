@@ -244,6 +244,63 @@ describe("cross-container result merging", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), ["best", "new"]);
   });
+
+  test("normalizes and bounds high-quality profile recall hits", () => {
+    const script = `
+      import { mergeProfileResults } from ${JSON.stringify(mergeModule)};
+      const long = "x".repeat(360);
+      const merged = mergeProfileResults([{
+        success: true,
+        profile: { static: [], dynamic: [] },
+        searchResults: { results: [
+          { id: "memory", memory: "memory value", similarity: 0.99, metadata: { title: "Decision", filePath: "src/a.ts" } },
+          { id: "chunk", memory: {}, chunk: "chunk value", similarity: 0.95 },
+          { id: "content", content: "content value", similarity: 0.9 },
+          { id: "text", text: "text value", similarity: 0.85 },
+          { id: "context", context: "context value", similarity: 0.8 },
+          { id: "sixth", memory: long, similarity: 0.75 },
+          { id: "low", memory: "too weak", similarity: 0.54 },
+          { id: "object", context: { value: "never stringify" }, similarity: 1 }
+        ], total: 8 }
+      }], 20);
+      console.log(JSON.stringify(merged.searchResults.results));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const results = JSON.parse(result.stdout);
+    assert.equal(results.length, 5);
+    assert.deepEqual(results.map((item) => item.memory), [
+      "memory value", "chunk value", "content value", "text value", "context value",
+    ]);
+    assert.equal(results[0].title, "Decision");
+    assert.equal(results[0].filepath, "src/a.ts");
+    assert.ok(results.every((item) => item.memory.length <= 300));
+  });
+});
+
+describe("session recall deduplication", () => {
+  const factCacheModule = new URL("../dist/services/factCache.js", import.meta.url).href;
+
+  test("stores only a bounded set of hashed fact identities", (t) => {
+    const homeDir = makeTmpDir();
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const script = `
+      import { addSeenFacts, getSeenFacts } from ${JSON.stringify(factCacheModule)};
+      addSeenFacts("session", Array.from({ length: 550 }, (_, i) => \`fact \${i}\`));
+      console.log(JSON.stringify([...getSeenFacts("session")]));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const facts = JSON.parse(result.stdout);
+    assert.equal(facts.length, 500);
+    assert.ok(facts.every((fact) => /^sha256:[0-9a-f]{64}$/.test(fact)));
+    assert.ok(!facts.some((fact) => fact.includes("fact")));
+  });
 });
 
 // ─── session ids ────────────────────────────────────────────────────────────

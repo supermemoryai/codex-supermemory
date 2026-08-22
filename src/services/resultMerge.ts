@@ -3,6 +3,13 @@ import type {
   SearchResponse,
   SearchResultItem,
 } from "./client.js";
+import {
+  boundedMemoryText,
+  memoryText,
+  recallProvenance,
+  RECALL_MAX_RESULTS,
+  RECALL_MIN_SIMILARITY,
+} from "./resultText.js";
 
 function normalize(value: unknown): string {
   return String(value ?? "").toLowerCase().trim();
@@ -16,10 +23,6 @@ function dedupe<T>(items: T[], getKey: (item: T) => string): T[] {
     seen.add(key);
     return true;
   });
-}
-
-function memoryText(result: SearchResultItem): string {
-  return result.memory ?? result.chunk ?? result.content ?? String(result.context ?? "");
 }
 
 function searchKey(result: SearchResultItem): string {
@@ -90,11 +93,14 @@ export function mergeProfileResults(
   const mergedSearch = mergeSearchResponses(
     successful.map((response) => ({
       success: true,
-      results: response.searchResults?.results ?? [],
+      results: (response.searchResults?.results ?? []).filter(
+        (result) =>
+          score(result) >= RECALL_MIN_SIMILARITY && memoryText(result).length > 0,
+      ),
       total: response.searchResults?.total ?? 0,
       timing: response.searchResults?.timing,
     })),
-    limit,
+    Math.min(limit, RECALL_MAX_RESULTS),
   );
 
   return {
@@ -103,13 +109,17 @@ export function mergeProfileResults(
     searchResults:
       mergedSearch.results && mergedSearch.results.length > 0
         ? {
-            results: mergedSearch.results.map((result) => ({
-              id: result.id,
-              memory: memoryText(result),
-              similarity: result.similarity,
-              title: result.title,
-              updatedAt: result.updatedAt,
-            })),
+            results: mergedSearch.results.map((result) => {
+              const provenance = recallProvenance(result);
+              return {
+                id: result.id,
+                memory: boundedMemoryText(result),
+                similarity: result.similarity,
+                title: provenance.title,
+                filepath: provenance.filepath,
+                updatedAt: result.updatedAt,
+              };
+            }),
             total: mergedSearch.total ?? mergedSearch.results.length,
             timing: mergedSearch.timing,
           }
