@@ -7,7 +7,7 @@ import {
   rmSync,
 } from "node:fs";
 import { loadCredentials } from "./services/auth.js";
-import { writeInstallDefaults, CONFIG_FILE, getRecallModeSummary, CONFIG } from "./config.js";
+import { writeInstallDefaults, CONFIG_FILE, getRecallModeSummary } from "./config.js";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -341,8 +341,8 @@ You now have:
   • Explicit memory — supermemory-search, supermemory-add, supermemory-save, supermemory-forget, supermemory-profile, supermemory-status, supermemory-login, and supermemory-logout skills
 
 ${hadExistingConfig
-    ? "Existing install: legacy per-prompt recall/capture preserved in ~/.codex/supermemory.json.\nTo opt into new defaults, set autoRecallEveryPrompt=false and captureEveryNTurns=0.\n"
-    : "Fresh install: session-start profile + session-end flush only.\nEnable autoRecallEveryPrompt or captureEveryNTurns in ~/.codex/supermemory.json if needed.\n"}
+    ? "Existing recall/capture preferences were preserved in ~/.codex/supermemory.json.\nSet recallMode to direct, off, or advisory to change recall behavior.\n"
+    : "Fresh install: direct relevant-memory recall plus session-start profile and session-end flush.\nSet recallMode to off or advisory in ~/.codex/supermemory.json if preferred.\n"}
 
 Next steps:
   1. Start Codex — on your first prompt, a browser window will open to

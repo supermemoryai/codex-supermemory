@@ -303,6 +303,51 @@ describe("session recall deduplication", () => {
   });
 });
 
+describe("direct recall policy", () => {
+  const policyModule = new URL("../dist/services/recallPolicy.js", import.meta.url).href;
+  const hookClientModule = new URL("../dist/services/hookRecallClient.js", import.meta.url).href;
+
+  test("skips control and tiny prompts while capping substantive queries", () => {
+    const script = `
+      import { shouldRecallPrompt, prepareRecallQuery } from ${JSON.stringify(policyModule)};
+      console.log(JSON.stringify({
+        decisions: ["short", "/supermemory", "!shell command", "# heading text", "explain the cache design"].map(shouldRecallPrompt),
+        queryLength: prepareRecallQuery("x".repeat(600)).length,
+      }));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      decisions: [false, false, false, false, true],
+      queryLength: 500,
+    });
+  });
+
+  test("aborts hook-only profile fetches and fails open", () => {
+    const script = `
+      import { getHookProfileWithSearchMany } from ${JSON.stringify(hookClientModule)};
+      const fetchImpl = (_url, { signal }) => new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+      const started = Date.now();
+      const result = await getHookProfileWithSearchMany(["repo_test"], "substantive recall query", {
+        timeoutMs: 20,
+        fetchImpl,
+      });
+      console.log(JSON.stringify({ success: result.success, elapsed: Date.now() - started }));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+      timeout: 1_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.success, false);
+    assert.ok(output.elapsed < 500, `abort took ${output.elapsed}ms`);
+  });
+});
+
 // ─── session ids ────────────────────────────────────────────────────────────
 
 describe("session ids", () => {
@@ -553,6 +598,8 @@ describe("integration: install/uninstall", () => {
         `SKILL.md should contain name: ${skillName}`
       );
     }
+    const config = JSON.parse(readFileSync(join(codexDir, "supermemory.json"), "utf-8"));
+    assert.equal(config.recallMode, "direct");
   });
 
   test("uninstall removes skill directories", (t) => {
@@ -957,10 +1004,16 @@ describe("skill scripts: search/add/save/forget/status/logout", () => {
     assert.match(result.stdout, /Auto-recall: off/);
   });
 
-  test("status reports every-prompt auto-recall when enabled", (t) => {
+  test("status maps legacy enabled auto-recall to direct mode", (t) => {
     const result = runStatusWithConfig(t, { autoRecallEveryPrompt: true, captureEveryNTurns: 0 });
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /Auto-recall: every prompt/);
+    assert.match(result.stdout, /Auto-recall: direct \(substantive prompts\)/);
+  });
+
+  test("status preserves advisory recall mode", (t) => {
+    const result = runStatusWithConfig(t, { recallMode: "advisory", captureEveryNTurns: 0 });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Auto-recall: advisory/);
   });
 
   test("status reports auto-capture off when captureEveryNTurns is zero", (t) => {

@@ -40,7 +40,8 @@ function getDevTlsHint(): string | null {
 }
 
 function getAutoRecallStatus(): string {
-  return CONFIG.autoRecallEveryPrompt ? "every prompt" : "off";
+  if (CONFIG.recallMode === "direct") return "direct (substantive prompts)";
+  return CONFIG.recallMode;
 }
 
 function getAutoCaptureStatus(): string {

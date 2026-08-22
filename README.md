@@ -8,8 +8,8 @@ and the lessons learned across every project — automatically.
 
 ## Features
 
-- 🧠 **Automatic recall** — relevant memories are injected into every prompt via the
-  `UserPromptSubmit` hook.
+- 🧠 **Automatic recall** — relevant memories are injected for substantive prompts via
+  the `UserPromptSubmit` hook, with short commands skipped and retrieval capped at 3 seconds.
 - 💾 **Automatic capture** — conversations are stored incrementally (every N turns) and
   at session end via the `Stop` hook.
 - 🏷️ **Shared Agents scoping** — Codex, Claude Code, and OpenCode use one collision-safe
@@ -119,6 +119,9 @@ Drop this file in to override defaults:
 | `projectContainerTag`    | `string`   | auto (per-repo) | Explicit unified project-container override, also honored by Claude Code.                    |
 | `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
+| `recallMode`             | `"direct" \| "off" \| "advisory"` | `"direct"` | Directly retrieve relevant memory, disable prompt recall, or inject an advisory directive. |
+| `recallDirective`        | `string`   | (sensible)     | Context injected when `recallMode` is `"advisory"`.                                        |
+| `autoRecallEveryPrompt`  | `boolean`  | —              | Deprecated compatibility key; `true` maps to direct and `false` maps to off.                 |
 | `autoSaveEveryTurns`     | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
 | `signalExtraction`       | `boolean`  | `false`        | Enable signal-based filtering (only capture turns with keywords like "prefer", "decided").   |
 | `signalKeywords`         | `string[]` | (defaults)     | Keywords that trigger signal extraction.                                                     |
