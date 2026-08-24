@@ -341,7 +341,6 @@ describe("browser auth opener", () => {
     assert.ok(content.includes("url.dll,FileProtocolHandler"));
     assert.ok(!content.includes("explorer.exe"));
   });
-
 });
 
 // ─── hooks.json format ──────────────────────────────────────────────────────
