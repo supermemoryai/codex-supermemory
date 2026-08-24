@@ -134,10 +134,11 @@ record("save-memory.js exists", existsSync(join(supermemoryDir, "save-memory.js"
 record("forget-memory.js exists", existsSync(join(supermemoryDir, "forget-memory.js")));
 record("status.js exists", existsSync(join(supermemoryDir, "status.js")));
 record("login.js exists", existsSync(join(supermemoryDir, "login.js")));
+record("switch-organization.js exists", existsSync(join(supermemoryDir, "switch-organization.js")));
 record("logout.js exists", existsSync(join(supermemoryDir, "logout.js")));
 
 // SKILL.md files
-for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
+for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-switch-organization", "supermemory-logout"]) {
   const skillMd = join(skillsDir, skillName, "SKILL.md");
   const exists = existsSync(skillMd);
   record(`${skillName}/SKILL.md exists`, exists);
@@ -386,7 +387,7 @@ console.log("  stdout:", uninstallResult.stdout.trim().split("\n").map(l => `   
 
 record("uninstall exits 0", uninstallResult.status === 0);
 record("hooks dir removed", !existsSync(supermemoryDir));
-for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
+for (const skillName of ["supermemory-search", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-switch-organization", "supermemory-logout"]) {
   record(`${skillName} skill dir removed`, !existsSync(join(skillsDir, skillName)));
 }
 

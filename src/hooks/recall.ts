@@ -6,7 +6,7 @@ import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
-import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
+import { startAuthFlow } from "../services/auth.js";
 import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
@@ -73,7 +73,6 @@ async function main() {
           (isTimeout
             ? "Authentication timed out. Please complete login in the browser.\n"
             : "Authentication failed.\n") +
-          `If the browser did not open, visit: ${AUTH_BASE_URL}\n` +
           "Run /supermemory-login to try again, or set SUPERMEMORY_CODEX_API_KEY manually."
         );
       }

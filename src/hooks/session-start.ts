@@ -6,7 +6,7 @@ import { SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
-import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
+import { startAuthFlow } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
 
@@ -66,7 +66,6 @@ async function main() {
       } catch {
         exitWithContext(
           "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-          `Visit: ${AUTH_BASE_URL}\n` +
           "Run /supermemory-login to authenticate."
         );
       }

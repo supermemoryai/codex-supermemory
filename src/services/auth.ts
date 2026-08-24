@@ -1,5 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { homedir, hostname, platform, arch } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -16,20 +23,40 @@ export interface Credentials {
 }
 
 const AUTH_BASE_URL =
-  process.env.SUPERMEMORY_AUTH_URL || "https://app.supermemory.ai/auth/agent-connect";
+  process.env.SUPERMEMORY_AUTH_URL || "https://app.supermemory.ai/auth/connect";
 const AUTH_TIMEOUT = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT) || 5 * 60_000;
+const DEFAULT_API_BASE_URL = "https://api.supermemory.ai";
+const SESSION_TIMEOUT_MS = 30_000;
+
+export interface BrowserCredentials {
+  apiKey: string;
+  apiBaseUrl?: string;
+}
+
+export interface VerifiedSession {
+  userId?: string;
+  email?: string;
+  userName?: string;
+  organizationId?: string;
+  organizationName?: string;
+}
+
+type FetchLike = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
 
 const AUTH_SUCCESS_HTML = `<!DOCTYPE html>
-<html><head><title>Connected - Supermemory</title><style>
+<html><head><title>Authorization Received - Supermemory</title><style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:100vh;background:#faf9f6}
 .dot{width:10px;height:10px;background:#22c55e;border-radius:50%;display:inline-block;margin-right:8px}
 h1{font-size:32px;font-weight:500;color:#1a1a1a;margin:16px 0}
 p{color:#666;font-size:16px}
 </style></head><body>
-<div><span class="dot"></span><span style="color:#22c55e;font-size:14px">Connected</span></div>
-<h1>Supermemory is ready</h1>
-<p>You can close this tab and return to Codex.</p>
+<div><span class="dot"></span><span style="color:#22c55e;font-size:14px">Received</span></div>
+<h1>Authorization received</h1>
+<p>Return to Codex to finish verification.</p>
 </body></html>`;
 
 const AUTH_ERROR_HTML = `<!DOCTYPE html>
@@ -79,14 +106,88 @@ function saveCredentials(apiKey: string, apiBaseUrl?: string): void {
   const credentials: Credentials = { apiKey, savedAt: new Date().toISOString() };
   const normalizedApiBaseUrl = normalizeApiBaseUrl(apiBaseUrl);
   if (normalizedApiBaseUrl) credentials.apiBaseUrl = normalizedApiBaseUrl;
-  writeFileSync(
-    CREDENTIALS_FILE,
-    JSON.stringify(credentials, null, 2),
-    { mode: 0o600 }
-  );
+  const pendingFile = `${CREDENTIALS_FILE}.${randomBytes(8).toString("hex")}.tmp`;
+
+  try {
+    writeFileSync(pendingFile, JSON.stringify(credentials, null, 2), {
+      mode: 0o600,
+    });
+    renameSync(pendingFile, CREDENTIALS_FILE);
+  } finally {
+    if (existsSync(pendingFile)) rmSync(pendingFile, { force: true });
+  }
 }
 
-export function startAuthFlow(): Promise<string> {
+function parseVerifiedSession(data: unknown): VerifiedSession | null {
+  if (!data || typeof data !== "object") return null;
+
+  const session = data as {
+    user?: { id?: unknown; email?: unknown; name?: unknown };
+    org?: { id?: unknown; name?: unknown };
+  };
+  const organizationId =
+    typeof session.org?.id === "string" ? session.org.id : undefined;
+  const organizationName =
+    typeof session.org?.name === "string" ? session.org.name : undefined;
+
+  if (!organizationId) return null;
+
+  return {
+    userId: typeof session.user?.id === "string" ? session.user.id : undefined,
+    email:
+      typeof session.user?.email === "string" ? session.user.email : undefined,
+    userName:
+      typeof session.user?.name === "string" ? session.user.name : undefined,
+    organizationId,
+    organizationName,
+  };
+}
+
+export async function verifyAndSaveCredentials(
+  credentials: BrowserCredentials,
+  fetchImpl: FetchLike = fetch,
+): Promise<VerifiedSession> {
+  const apiBaseUrl =
+    normalizeApiBaseUrl(credentials.apiBaseUrl) ?? DEFAULT_API_BASE_URL;
+
+  let response: Response;
+  try {
+    response = await fetchImpl(`${apiBaseUrl}/v3/session`, {
+      headers: {
+        Authorization: `Bearer ${credentials.apiKey}`,
+        "x-sm-source": "codex",
+      },
+      signal: AbortSignal.timeout(SESSION_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not verify the selected organization: ${detail}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Could not verify the selected organization (HTTP ${response.status}).`,
+    );
+  }
+
+  let session: VerifiedSession | null;
+  try {
+    session = parseVerifiedSession(await response.json());
+  } catch {
+    session = null;
+  }
+  if (!session) {
+    throw new Error(
+      "The session response did not identify an organization. Your credentials were not changed.",
+    );
+  }
+
+  // Only replace the saved credential after the candidate key has been verified.
+  saveCredentials(credentials.apiKey, apiBaseUrl);
+  return session;
+}
+
+export function requestBrowserCredentials(): Promise<BrowserCredentials> {
   return new Promise((resolve, reject) => {
     let resolved = false;
     const stateToken = randomBytes(16).toString("hex");
@@ -108,13 +209,12 @@ export function startAuthFlow(): Promise<string> {
           url.searchParams.get("api_url") || url.searchParams.get("api_base_url");
 
         if (apiKey?.startsWith("sm_")) {
-          saveCredentials(apiKey, apiBaseUrl ?? undefined);
           res.writeHead(200, { "Content-Type": "text/html" });
           res.end(AUTH_SUCCESS_HTML);
           resolved = true;
           clearTimeout(timer);
           server.close();
-          resolve(apiKey);
+          resolve({ apiKey, apiBaseUrl: apiBaseUrl ?? undefined });
         } else {
           res.writeHead(400, { "Content-Type": "text/html" });
           res.end(AUTH_ERROR_HTML);
@@ -139,6 +239,7 @@ export function startAuthFlow(): Promise<string> {
         cli_version: PLUGIN_VERSION,
       });
       const authUrl = `${AUTH_BASE_URL}?${params.toString()}`;
+      console.error(`If the browser does not open, visit:\n${authUrl}\n`);
       openUrl(authUrl).catch((error) => {
         if (!resolved) {
           clearTimeout(timer);
@@ -164,4 +265,10 @@ export function startAuthFlow(): Promise<string> {
   });
 }
 
-export { AUTH_BASE_URL, CREDENTIALS_FILE };
+export async function startAuthFlow(): Promise<string> {
+  const credentials = await requestBrowserCredentials();
+  await verifyAndSaveCredentials(credentials);
+  return credentials.apiKey;
+}
+
+export { AUTH_BASE_URL, CREDENTIALS_FILE, DEFAULT_API_BASE_URL };

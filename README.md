@@ -28,8 +28,8 @@ and the lessons learned across every project — automatically.
 - 🪶 **No runtime deps in hooks** — the hook scripts are pre-bundled with esbuild for
   fast cold starts.
 - 🔧 **Fallback skills** — explicit `/supermemory-search`, `/supermemory-add`, `/supermemory-save`,
-  `/supermemory-forget`, `/supermemory-status`, and `/supermemory-logout` commands available when hooks
-  don't cover your use case.
+  `/supermemory-forget`, `/supermemory-status`, `/supermemory-switch-organization`, and
+  `/supermemory-logout` commands available when hooks don't cover your use case.
 
 ## Quick start
 
@@ -167,7 +167,15 @@ The search, save, and forget skills support `--container <tag>` to target a spec
 | `/supermemory-profile` | `/supermemory-profile`                                      | Show remembered profile facts.           |
 | `/supermemory-status`  | `/supermemory-status`                                       | Show connection and account status.      |
 | `/supermemory-login`   | `/supermemory-login`                                        | Re-authenticate with Supermemory.        |
+| `/supermemory-switch-organization` | `/supermemory-switch-organization`             | Choose and verify a different organization. |
 | `/supermemory-logout`  | `/supermemory-logout`                                       | Remove saved local credentials.          |
+
+Organization switching reopens browser authorization even when Codex is already
+connected. The old browser credential is kept if selection is cancelled or the new
+credential cannot be verified. `SUPERMEMORY_CODEX_API_KEY` and the legacy `apiKey`
+field in `~/.codex/supermemory.json` take precedence over browser credentials; the
+switch command warns when either would prevent the selected organization from becoming
+active.
 
 Skills are fallback commands — the hooks handle most use cases automatically.
 

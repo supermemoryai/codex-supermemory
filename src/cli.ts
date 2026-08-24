@@ -49,6 +49,7 @@ const SKILLS = [
   { name: "supermemory-status", script: "status.js" },
   { name: "supermemory-profile", script: "profile-memory.js" },
   { name: "supermemory-login", script: "login.js" },
+  { name: "supermemory-switch-organization", script: "switch-organization.js" },
   { name: "supermemory-logout", script: "logout.js" },
 ] as const;
 
@@ -338,7 +339,7 @@ Installation complete!
 
 You now have:
   • Session-start profile recall (${getRecallModeSummary()})
-  • Explicit memory — supermemory-search, supermemory-add, supermemory-save, supermemory-forget, supermemory-profile, supermemory-status, supermemory-login, and supermemory-logout skills
+  • Explicit memory — supermemory-search, supermemory-add, supermemory-save, supermemory-forget, supermemory-profile, supermemory-status, supermemory-login, supermemory-switch-organization, and supermemory-logout skills
 
 ${hadExistingConfig
     ? "Existing install: legacy per-prompt recall/capture preserved in ~/.codex/supermemory.json.\nTo opt into new defaults, set autoRecallEveryPrompt=false and captureEveryNTurns=0.\n"

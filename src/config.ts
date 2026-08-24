@@ -123,6 +123,34 @@ function getApiKey(): string | undefined {
   return loadCredentials();
 }
 
+export type BrowserCredentialOverride =
+  | {
+      source: "environment";
+      label: "SUPERMEMORY_CODEX_API_KEY";
+    }
+  | {
+      source: "legacy-config";
+      label: string;
+    };
+
+/** Credential sources that take precedence over browser-auth credentials. */
+export function getBrowserCredentialOverrides(): BrowserCredentialOverride[] {
+  const overrides: BrowserCredentialOverride[] = [];
+  if (process.env.SUPERMEMORY_CODEX_API_KEY) {
+    overrides.push({
+      source: "environment",
+      label: "SUPERMEMORY_CODEX_API_KEY",
+    });
+  }
+  if (fileConfig.apiKey) {
+    overrides.push({
+      source: "legacy-config",
+      label: `apiKey in ${CONFIG_FILE}`,
+    });
+  }
+  return overrides;
+}
+
 export let SUPERMEMORY_API_KEY = getApiKey();
 
 export function reloadApiKey(): void {
