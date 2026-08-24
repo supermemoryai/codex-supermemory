@@ -33,6 +33,10 @@ export interface BrowserCredentials {
   apiBaseUrl?: string;
 }
 
+export interface BrowserAuthOptions {
+  mode?: "switch_organization";
+}
+
 export interface VerifiedSession {
   userId?: string;
   email?: string;
@@ -187,7 +191,25 @@ export async function verifyAndSaveCredentials(
   return session;
 }
 
-export function requestBrowserCredentials(): Promise<BrowserCredentials> {
+export function createBrowserAuthUrl(
+  callbackUrl: string,
+  options: BrowserAuthOptions = {},
+): string {
+  const params = new URLSearchParams({
+    callback: callbackUrl,
+    client: "codex",
+    hostname: `codex - ${hostname()}`,
+    os: `${platform()}-${arch()}`,
+    cwd: process.cwd(),
+    cli_version: PLUGIN_VERSION,
+  });
+  if (options.mode) params.set("mode", options.mode);
+  return `${AUTH_BASE_URL}?${params.toString()}`;
+}
+
+export function requestBrowserCredentials(
+  options: BrowserAuthOptions = {},
+): Promise<BrowserCredentials> {
   return new Promise((resolve, reject) => {
     let resolved = false;
     const stateToken = randomBytes(16).toString("hex");
@@ -230,15 +252,7 @@ export function requestBrowserCredentials(): Promise<BrowserCredentials> {
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;
       const callbackUrl = `http://127.0.0.1:${port}/callback?state=${stateToken}`;
-      const params = new URLSearchParams({
-        callback: callbackUrl,
-        client: "codex",
-        hostname: `codex - ${hostname()}`,
-        os: `${platform()}-${arch()}`,
-        cwd: process.cwd(),
-        cli_version: PLUGIN_VERSION,
-      });
-      const authUrl = `${AUTH_BASE_URL}?${params.toString()}`;
+      const authUrl = createBrowserAuthUrl(callbackUrl, options);
       console.error(`If the browser does not open, visit:\n${authUrl}\n`);
       openUrl(authUrl).catch((error) => {
         if (!resolved) {

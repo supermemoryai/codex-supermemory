@@ -334,6 +334,21 @@ describe("stripPrivateContent", () => {
 });
 
 describe("browser auth opener", () => {
+  test("adds switch intent only to organization-switch auth URLs", async () => {
+    const { createBrowserAuthUrl } = await import(
+      new URL("../dist/services/auth.js", import.meta.url).href
+    );
+    const callbackUrl = "http://127.0.0.1:43210/callback?state=expected";
+
+    const loginUrl = new URL(createBrowserAuthUrl(callbackUrl));
+    assert.equal(loginUrl.searchParams.get("mode"), null);
+
+    const switchUrl = new URL(
+      createBrowserAuthUrl(callbackUrl, { mode: "switch_organization" }),
+    );
+    assert.equal(switchUrl.searchParams.get("mode"), "switch_organization");
+  });
+
   test("login bundle uses Windows-safe URL opener", () => {
     const content = readFileSync(new URL("../dist/skills/login.js", import.meta.url), "utf-8");
     assert.ok(content.includes("Refusing to open non-http URL"));

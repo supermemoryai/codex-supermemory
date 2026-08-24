@@ -44,7 +44,9 @@ async function main(): Promise<void> {
 
   try {
     // Keep the current credential untouched until the candidate key is verified.
-    const credentials = await requestBrowserCredentials();
+    const credentials = await requestBrowserCredentials({
+      mode: "switch_organization",
+    });
     const session = await verifyAndSaveCredentials(credentials);
     clearMarker(AUTH_ATTEMPTED_FILE);
     clearMarker(LOGGED_OUT_FILE);
