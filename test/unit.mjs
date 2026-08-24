@@ -334,21 +334,6 @@ describe("stripPrivateContent", () => {
 });
 
 describe("browser auth opener", () => {
-  test("adds switch intent only to organization-switch auth URLs", async () => {
-    const { createBrowserAuthUrl } = await import(
-      new URL("../dist/services/auth.js", import.meta.url).href
-    );
-    const callbackUrl = "http://127.0.0.1:43210/callback?state=expected";
-
-    const loginUrl = new URL(createBrowserAuthUrl(callbackUrl));
-    assert.equal(loginUrl.searchParams.get("mode"), null);
-
-    const switchUrl = new URL(
-      createBrowserAuthUrl(callbackUrl, { mode: "switch_organization" }),
-    );
-    assert.equal(switchUrl.searchParams.get("mode"), "switch_organization");
-  });
-
   test("login bundle uses Windows-safe URL opener", () => {
     const content = readFileSync(new URL("../dist/skills/login.js", import.meta.url), "utf-8");
     assert.ok(content.includes("Refusing to open non-http URL"));
@@ -357,89 +342,6 @@ describe("browser auth opener", () => {
     assert.ok(!content.includes("explorer.exe"));
   });
 
-  test("organization switch uses the shared browser auth route and warns about overrides", () => {
-    const content = readFileSync(
-      new URL("../dist/skills/switch-organization.js", import.meta.url),
-      "utf-8",
-    );
-    assert.ok(content.includes("https://app.supermemory.ai/auth/connect"));
-    assert.ok(!content.includes("https://app.supermemory.ai/auth/agent-connect"));
-    assert.ok(content.includes("SUPERMEMORY_CODEX_API_KEY"));
-    assert.ok(content.includes("takes precedence"));
-    assert.ok(content.includes("previously saved browser credentials were kept unchanged"));
-  });
-});
-
-describe("organization credential verification", () => {
-  const authModule = new URL("../dist/services/auth.js", import.meta.url).href;
-
-  test("verifies the selected organization before replacing credentials", (t) => {
-    const { tmpDir } = setupCodexHome(t);
-    const script = `
-      import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-      import { dirname } from "node:path";
-      import { CREDENTIALS_FILE, verifyAndSaveCredentials } from ${JSON.stringify(authModule)};
-      mkdirSync(dirname(CREDENTIALS_FILE), { recursive: true });
-      writeFileSync(CREDENTIALS_FILE, JSON.stringify({ apiKey: "sm_old", savedAt: "old" }));
-      const verified = await verifyAndSaveCredentials(
-        { apiKey: "sm_new", apiBaseUrl: "https://custom.example.test/" },
-        async (url, init) => {
-          if (url !== "https://custom.example.test/v3/session") throw new Error("wrong URL");
-          if (init?.headers?.Authorization !== "Bearer sm_new") throw new Error("wrong key");
-          return new Response(JSON.stringify({
-            user: { id: "user_1", email: "person@example.com" },
-            org: { id: "org_2", name: "New Organization" }
-          }), { status: 200, headers: { "content-type": "application/json" } });
-        },
-      );
-      console.log(JSON.stringify({
-        verified,
-        saved: JSON.parse(readFileSync(CREDENTIALS_FILE, "utf-8")),
-      }));
-    `;
-    const result = spawnSync("node", ["--input-type=module", "-e", script], {
-      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir },
-      encoding: "utf-8",
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const output = JSON.parse(result.stdout);
-    assert.equal(output.verified.organizationId, "org_2");
-    assert.equal(output.verified.organizationName, "New Organization");
-    assert.equal(output.saved.apiKey, "sm_new");
-    assert.equal(output.saved.apiBaseUrl, "https://custom.example.test");
-  });
-
-  test("keeps previous credentials when organization verification fails", (t) => {
-    const { tmpDir } = setupCodexHome(t);
-    const script = `
-      import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-      import { dirname } from "node:path";
-      import { CREDENTIALS_FILE, verifyAndSaveCredentials } from ${JSON.stringify(authModule)};
-      mkdirSync(dirname(CREDENTIALS_FILE), { recursive: true });
-      writeFileSync(CREDENTIALS_FILE, JSON.stringify({ apiKey: "sm_old", savedAt: "old" }));
-      let error = "";
-      try {
-        await verifyAndSaveCredentials(
-          { apiKey: "sm_rejected" },
-          async () => new Response("unauthorized", { status: 401 }),
-        );
-      } catch (caught) {
-        error = caught instanceof Error ? caught.message : String(caught);
-      }
-      console.log(JSON.stringify({
-        error,
-        saved: JSON.parse(readFileSync(CREDENTIALS_FILE, "utf-8")),
-      }));
-    `;
-    const result = spawnSync("node", ["--input-type=module", "-e", script], {
-      env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir },
-      encoding: "utf-8",
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const output = JSON.parse(result.stdout);
-    assert.match(output.error, /HTTP 401/);
-    assert.deepEqual(output.saved, { apiKey: "sm_old", savedAt: "old" });
-  });
 });
 
 // ─── hooks.json format ──────────────────────────────────────────────────────
@@ -586,7 +488,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(result.status, 0, `install should exit 0: ${result.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["supermemory-search", "supermemory-add", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-switch-organization", "supermemory-logout"]) {
+    for (const skillName of ["supermemory-search", "supermemory-add", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
       const skillMd = join(skillsDir, skillName, "SKILL.md");
       assert.ok(existsSync(skillMd), `${skillName}/SKILL.md should exist`);
       const content = readFileSync(skillMd, "utf-8");
@@ -606,7 +508,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(uninstallResult.status, 0, `uninstall should exit 0: ${uninstallResult.stderr}`);
 
     const skillsDir = join(codexDir, "skills");
-    for (const skillName of ["supermemory-search", "supermemory-add", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-switch-organization", "supermemory-logout"]) {
+    for (const skillName of ["supermemory-search", "supermemory-add", "supermemory-save", "supermemory-forget", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
       assert.ok(
         !existsSync(join(skillsDir, skillName)),
         `${skillName} skill dir should be removed`
