@@ -4,6 +4,7 @@ import { CONFIG, isConfigured, getApiKeyValue, getBaseUrl, PLUGIN_VERSION } from
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 import { mergeProfileResults, mergeSearchResponses } from "./resultMerge.js";
+import { boundedMemoryText, recallProvenance } from "./resultText.js";
 
 type ProfileParamsWithFilters = ProfileParams & {
   filters?: ReturnType<typeof getScopeFilters>;
@@ -36,13 +37,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 /** Canonical search result item used across the codebase. */
 export interface SearchResultItem {
   id?: string;
-  memory?: string;
-  content?: string;
-  chunk?: string;
+  memory?: unknown;
+  content?: unknown;
+  chunk?: unknown;
+  text?: unknown;
   context?: unknown;
   score?: number;
   similarity?: number;
   title?: string;
+  filepath?: string;
   updatedAt?: string;
   metadata?: Record<string, unknown> | null;
   containerTag?: string;
@@ -69,6 +72,8 @@ export interface ProfileWithSearchResult {
       memory: string;
       similarity?: number;
       title?: string;
+      filepath?: string;
+      metadata?: Record<string, unknown> | null;
       updatedAt?: string;
     }>;
     total: number;
@@ -154,13 +159,20 @@ export class SupermemoryClient {
 
       let searchResults: ProfileWithSearchResult["searchResults"];
       if (result.searchResults) {
-        const mapped = (result.searchResults.results as SearchResultItem[]).map((r) => ({
-          id: r.id,
-          memory: r.memory || r.content || String(r.context ?? ""),
-          similarity: r.similarity,
-          title: r.title,
-          updatedAt: r.updatedAt,
-        }));
+        const mapped = (result.searchResults.results as SearchResultItem[])
+          .map((r) => {
+            const provenance = recallProvenance(r);
+            return {
+              id: r.id,
+              memory: boundedMemoryText(r),
+              similarity: r.similarity,
+              title: provenance.title,
+              filepath: provenance.filepath,
+              metadata: r.metadata,
+              updatedAt: r.updatedAt,
+            };
+          })
+          .filter((r) => r.memory.length > 0);
         searchResults = {
           results: dedupeWithSeen(mapped, (r) => r.memory),
           total: result.searchResults.total,
