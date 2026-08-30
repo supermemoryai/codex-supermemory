@@ -10,6 +10,8 @@ import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
 import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
+import { getHookProfileWithSearchMany } from "../services/hookRecallClient.js";
+import { prepareRecallQuery, shouldRecallPrompt } from "../services/recallPolicy.js";
 
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
@@ -105,7 +107,7 @@ async function main() {
     query: query.slice(0, 100),
     tags,
     sessionId,
-    autoRecallEveryPrompt: CONFIG.autoRecallEveryPrompt,
+    recallMode: CONFIG.recallMode,
   });
 
   const transcriptPath = resolveTranscriptPath(payload.transcript_path, sessionId);
@@ -118,14 +120,20 @@ async function main() {
     });
   }
 
-  if (!CONFIG.autoRecallEveryPrompt) {
+  if (CONFIG.recallMode === "off") {
     exitWithContext("");
   }
 
+  if (CONFIG.recallMode === "advisory") {
+    exitWithContext(CONFIG.recallDirective);
+  }
+
+  if (!shouldRecallPrompt(query)) exitWithContext("");
+
   try {
-    const profileResult = await client.getProfileWithSearchMany(
+    const profileResult = await getHookProfileWithSearchMany(
       tags.allReads,
-      query,
+      prepareRecallQuery(query),
     );
 
     const seen = getSeenFacts(sessionId);

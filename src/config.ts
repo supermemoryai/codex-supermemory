@@ -13,6 +13,10 @@ export interface CustomContainer {
   description: string;
 }
 
+export type RecallMode = "direct" | "off" | "advisory";
+export const DEFAULT_RECALL_DIRECTIVE =
+  "Relevant prior context may exist in Supermemory. Search memory before answering when the request depends on previous decisions, preferences, or project history.";
+
 interface CodexSupermemoryConfig {
   apiKey?: string;
   baseUrl?: string;
@@ -31,6 +35,8 @@ interface CodexSupermemoryConfig {
   /** @deprecated Use captureEveryNTurns */
   autoSaveEveryTurns?: number;
   autoRecallEveryPrompt?: boolean;
+  recallMode?: RecallMode;
+  recallDirective?: string;
   captureEveryNTurns?: number;
   enableCustomContainers?: boolean;
   customContainers?: CustomContainer[];
@@ -61,6 +67,7 @@ const DEFAULTS = {
   signalTurnsBefore: 3,
   autoSaveEveryTurns: 3,
   autoRecallEveryPrompt: false,
+  recallMode: "direct" as RecallMode,
   captureEveryNTurns: 0,
 };
 
@@ -111,10 +118,14 @@ function resolveCaptureEveryNTurns(config: CodexSupermemoryConfig): number {
   return DEFAULTS.captureEveryNTurns;
 }
 
-function resolveAutoRecallEveryPrompt(config: CodexSupermemoryConfig): boolean {
-  if (config.autoRecallEveryPrompt !== undefined) return config.autoRecallEveryPrompt;
-  if (configExisted) return true;
-  return DEFAULTS.autoRecallEveryPrompt;
+function resolveRecallMode(config: CodexSupermemoryConfig): RecallMode {
+  if (["direct", "off", "advisory"].includes(config.recallMode ?? "")) {
+    return config.recallMode as RecallMode;
+  }
+  if (config.autoRecallEveryPrompt !== undefined) {
+    return config.autoRecallEveryPrompt ? "direct" : "off";
+  }
+  return DEFAULTS.recallMode;
 }
 
 function getApiKey(): string | undefined {
@@ -128,6 +139,8 @@ export let SUPERMEMORY_API_KEY = getApiKey();
 export function reloadApiKey(): void {
   SUPERMEMORY_API_KEY = getApiKey();
 }
+
+const recallMode = resolveRecallMode(fileConfig);
 
 export const CONFIG = {
   similarityThreshold: fileConfig.similarityThreshold ?? DEFAULTS.similarityThreshold,
@@ -143,7 +156,13 @@ export const CONFIG = {
   signalKeywords: fileConfig.signalKeywords ?? DEFAULTS.signalKeywords,
   signalTurnsBefore: fileConfig.signalTurnsBefore ?? DEFAULTS.signalTurnsBefore,
   autoSaveEveryTurns: fileConfig.autoSaveEveryTurns ?? DEFAULTS.autoSaveEveryTurns,
-  autoRecallEveryPrompt: resolveAutoRecallEveryPrompt(fileConfig),
+  recallMode,
+  recallDirective:
+    typeof fileConfig.recallDirective === "string" && fileConfig.recallDirective.trim()
+      ? fileConfig.recallDirective.trim()
+      : DEFAULT_RECALL_DIRECTIVE,
+  /** @deprecated Prefer recallMode. */
+  autoRecallEveryPrompt: recallMode === "direct",
   captureEveryNTurns: resolveCaptureEveryNTurns(fileConfig),
   enableCustomContainers: fileConfig.enableCustomContainers ?? false,
   customContainers: (fileConfig.customContainers ?? []).filter(
@@ -256,15 +275,15 @@ export function writeInstallDefaults(isExistingInstall: boolean): void {
   const current = loadRawConfigForWrite().config;
   const next: CodexSupermemoryConfig = { ...current };
 
+  if (next.recallMode === undefined) {
+    next.recallMode = next.autoRecallEveryPrompt === false ? "off" : "direct";
+  }
+
   if (isExistingInstall) {
-    if (next.autoRecallEveryPrompt === undefined) {
-      next.autoRecallEveryPrompt = true;
-    }
     if (next.captureEveryNTurns === undefined) {
       next.captureEveryNTurns = next.autoSaveEveryTurns ?? 3;
     }
   } else {
-    next.autoRecallEveryPrompt = false;
     next.captureEveryNTurns = 0;
   }
 
@@ -272,8 +291,11 @@ export function writeInstallDefaults(isExistingInstall: boolean): void {
 }
 
 export function getRecallModeSummary(): string {
-  if (CONFIG.autoRecallEveryPrompt) {
-    return "legacy: recall on every prompt";
+  if (CONFIG.recallMode === "direct") {
+    return "direct: relevant recall on substantive prompts";
+  }
+  if (CONFIG.recallMode === "advisory") {
+    return "advisory: prompt the agent to search memory when needed";
   }
   if (CONFIG.captureEveryNTurns > 0) {
     return `unified: session-start profile + capture every ${CONFIG.captureEveryNTurns} turns + session-end flush`;
