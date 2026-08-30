@@ -82,9 +82,10 @@ export interface ProfileWithSearchResult {
   error?: string;
 }
 
-export const AGENT_ENTITY_CONTEXT = `Shared coding-agent memory for one software repository.
+export const AGENT_ENTITY_CONTEXT = `Shared coding-agent memory for one software repository. Extract what a human teammate would remember and use later, not a replay of the current terminal state.
 
 RULES:
+- Prefer decisions, constraints, preferences, and lessons that remain useful after the current task
 - Preserve durable context that helps Claude Code, Codex, OpenCode, or Cursor continue the work
 - Condense assistant responses into decisions, outcomes, and reusable knowledge
 - Keep user preferences and project facts concise and independently understandable
@@ -100,6 +101,7 @@ EXTRACT:
 SKIP:
 - Generic assistant suggestions the user did not accept
 - Transient command output and low-value implementation chatter
+- Transient Git state already tracked by the repository: current branch or HEAD, uncommitted file lists, diffs, commit/push status, and in-flight worktree state
 - Granular details that do not help future work`;
 
 export const USER_ENTITY_CONTEXT = AGENT_ENTITY_CONTEXT;

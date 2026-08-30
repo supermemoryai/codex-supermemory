@@ -454,6 +454,8 @@ describe("entity context wiring", () => {
     assert.ok(content.includes("PROJECT_ENTITY_CONTEXT"));
     assert.ok(content.includes("entityContext?: string"));
     assert.ok(content.includes("payload.entityContext = options.entityContext"));
+    assert.match(content, /human teammate would remember/);
+    assert.match(content, /Transient Git state/);
   });
 
   test("automatic capture writes user entity context", () => {
