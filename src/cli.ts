@@ -32,31 +32,45 @@ const CODEX_DIR = join(homedir(), ".codex");
 const CODEX_CONFIG_TOML = join(CODEX_DIR, "config.toml");
 const CODEX_HOOKS_JSON = join(CODEX_DIR, "hooks.json");
 const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
+const LOGGED_OUT_FILE = join(SUPERMEMORY_HOOKS_DIR, ".logged-out");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
-const TURN_CAPTURE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "capture-turn.js");
+const RECALL_APPROVE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall-approve.js");
+const MCP_PROXY_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "mcp-proxy.js");
 const FLUSH_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "flush.js");
 const SESSION_START_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "session-start.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
 const RECALL_TIMEOUT_SECONDS = 5;
-const CAPTURE_TIMEOUT_SECONDS = 30;
+const RECALL_APPROVE_TIMEOUT_SECONDS = 5;
 const FLUSH_TIMEOUT_SECONDS = 30;
 const SESSION_START_TIMEOUT_SECONDS = 30;
+const SUPERMEMORY_MCP_MATCHER = "^mcp__supermemory__";
 
 // Skill metadata — single source of truth for install/uninstall/status.
 const SKILLS = [
-  { name: "supermemory-search", script: "search-memory.js" },
-  { name: "supermemory-add", script: "add-memory.js" },
-  { name: "supermemory-save", script: "save-memory.js" },
-  { name: "supermemory-forget", script: "forget-memory.js" },
   { name: "supermemory-status", script: "status.js" },
-  { name: "supermemory-profile", script: "profile-memory.js" },
-  { name: "supermemory-login", script: "login.js" },
-  { name: "supermemory-logout", script: "logout.js" },
 ] as const;
 
 const LEGACY_SUPERMEMORY_SCRIPTS = [
   "capture.js",
+  "capture-turn.js",
   "tags.js",
+  "search-memory.js",
+  "add-memory.js",
+  "save-memory.js",
+  "forget-memory.js",
+  "profile-memory.js",
+  "login.js",
+  "logout.js",
+] as const;
+
+const LEGACY_SKILLS = [
+  "supermemory-search",
+  "supermemory-add",
+  "supermemory-save",
+  "supermemory-forget",
+  "supermemory-profile",
+  "supermemory-login",
+  "supermemory-logout",
 ] as const;
 
 const SCRIPT_DIR = getScriptDir();
@@ -118,15 +132,34 @@ function mergeConfigToml(enable: boolean) {
 
   const config = readConfigToml();
 
-  // Toggle the codex_hooks feature flag.
-  if (!config.features) config.features = {};
-  const features = config.features as Record<string, unknown>;
-  if (enable) {
-    features.codex_hooks = true;
-  } else {
+  // Hooks are enabled by default in current Codex. Remove only the deprecated
+  // alias written by older codex-supermemory releases; preserve any explicit
+  // user choice for the canonical `features.hooks` key.
+  const features = config.features as Record<string, unknown> | undefined;
+  if (features) {
     delete features.codex_hooks;
-    // Drop the empty [features] section to keep config.toml clean.
     if (Object.keys(features).length === 0) delete config.features;
+  }
+
+  if (enable) {
+    if (!config.mcp_servers) config.mcp_servers = {};
+    const mcpServers = config.mcp_servers as Record<string, unknown>;
+    mcpServers.supermemory = {
+      command: "node",
+      args: [MCP_PROXY_SCRIPT],
+    };
+  } else {
+    const mcpServers = config.mcp_servers as Record<string, unknown> | undefined;
+    const server = mcpServers?.supermemory as Record<string, unknown> | undefined;
+    if (
+      server?.command === "node" &&
+      Array.isArray(server.args) &&
+      server.args.length === 1 &&
+      server.args[0] === MCP_PROXY_SCRIPT
+    ) {
+      if (mcpServers) delete mcpServers.supermemory;
+      if (mcpServers && Object.keys(mcpServers).length === 0) delete config.mcp_servers;
+    }
   }
 
   writeFileSync(CODEX_CONFIG_TOML, TOML.stringify(config as TOML.JsonMap));
@@ -169,7 +202,7 @@ function normalizeHookEvents(raw: unknown): HookEvents {
       ? maybeWrapped.hooks
       : (maybeWrapped as HookEvents);
 
-  for (const key of ["UserPromptSubmit", "Stop"] as const) {
+  for (const key of ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"] as const) {
     const val = events[key];
     if (val !== undefined && !Array.isArray(val)) {
       events[key] = [val as unknown as MatcherGroup];
@@ -190,6 +223,7 @@ function ensureHookRegistered(
   timeout: number,
   statusMessage: string,
   background = false,
+  matcher?: string,
 ): void {
   const exists = groups.some((g) => g.hooks.some((h) => h.command === command));
   if (exists) {
@@ -204,7 +238,9 @@ function ensureHookRegistered(
       }
     }
   } else {
-    const globalGroup = groups.find((g) => !g.matcher);
+    const matchingGroup = groups.find((g) =>
+      matcher ? g.matcher === matcher : !g.matcher
+    );
     const entry: HookEntry = {
       type: "command",
       command,
@@ -212,10 +248,10 @@ function ensureHookRegistered(
       statusMessage,
       ...(background ? { async: true } : {}),
     };
-    if (globalGroup) {
-      globalGroup.hooks.push(entry);
+    if (matchingGroup) {
+      matchingGroup.hooks.push(entry);
     } else {
-      groups.push({ hooks: [entry] });
+      groups.push({ ...(matcher ? { matcher } : {}), hooks: [entry] });
     }
   }
 }
@@ -243,10 +279,11 @@ function mergeHooksJson(add: boolean) {
 
   if (add) {
     const recallCmd = `node ${RECALL_SCRIPT}`;
-    const turnCaptureCmd = `node ${TURN_CAPTURE_SCRIPT}`;
+    const recallApproveCmd = `node ${RECALL_APPROVE_SCRIPT}`;
     const flushCmd = `node ${FLUSH_SCRIPT}`;
     const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
     const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
+    const oldTurnCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture-turn.js")}`;
 
     if (!hooks.SessionStart) hooks.SessionStart = [];
     ensureHookRegistered(
@@ -256,16 +293,24 @@ function mergeHooksJson(add: boolean) {
       "Loading memory profile...",
     );
 
-    // Recall must stay synchronous because its output is injected. Turn capture
-    // is a separate background hook so it can never delay prompt handling.
+    // Recall must stay synchronous because its output is injected.
     if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
     ensureHookRegistered(hooks.UserPromptSubmit, recallCmd, RECALL_TIMEOUT_SECONDS, "Searching memories...");
-    ensureHookRegistered(
+
+    // Remove the old per-prompt capture hook. Stop now owns automatic capture.
+    hooks.UserPromptSubmit = removeHookCommands(
       hooks.UserPromptSubmit,
-      turnCaptureCmd,
-      CAPTURE_TIMEOUT_SECONDS,
-      "Saving turn to memory...",
-      true,
+      [oldTurnCaptureCmd],
+    );
+
+    if (!hooks.PreToolUse) hooks.PreToolUse = [];
+    ensureHookRegistered(
+      hooks.PreToolUse,
+      recallApproveCmd,
+      RECALL_APPROVE_TIMEOUT_SECONDS,
+      "Checking Supermemory recall...",
+      false,
+      SUPERMEMORY_MCP_MATCHER,
     );
 
     // Remove old capture.js Stop hook from previous installs
@@ -286,10 +331,11 @@ function mergeHooksJson(add: boolean) {
   } else {
     // Remove our hooks from every MatcherGroup, then drop empty groups.
     const recallCmd = `node ${RECALL_SCRIPT}`;
-    const turnCaptureCmd = `node ${TURN_CAPTURE_SCRIPT}`;
+    const recallApproveCmd = `node ${RECALL_APPROVE_SCRIPT}`;
     const flushCmd = `node ${FLUSH_SCRIPT}`;
     const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
     const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
+    const oldTurnCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture-turn.js")}`;
 
     if (hooks.SessionStart) {
       hooks.SessionStart = removeHookCommands(hooks.SessionStart, [sessionStartCmd]);
@@ -298,9 +344,13 @@ function mergeHooksJson(add: boolean) {
     if (hooks.UserPromptSubmit) {
       hooks.UserPromptSubmit = removeHookCommands(
         hooks.UserPromptSubmit,
-        [recallCmd, turnCaptureCmd],
+        [recallCmd, oldTurnCaptureCmd],
       );
       if (hooks.UserPromptSubmit.length === 0) delete hooks.UserPromptSubmit;
+    }
+    if (hooks.PreToolUse) {
+      hooks.PreToolUse = removeHookCommands(hooks.PreToolUse, [recallApproveCmd]);
+      if (hooks.PreToolUse.length === 0) delete hooks.PreToolUse;
     }
     if (hooks.Stop) {
       hooks.Stop = removeHookCommands(hooks.Stop, [flushCmd, oldCaptureCmd]);
@@ -322,13 +372,15 @@ function install() {
 
   // Copy hook scripts
   const recallSrc = join(DIST_HOOKS_DIR, "recall.js");
-  const turnCaptureSrc = join(DIST_HOOKS_DIR, "capture-turn.js");
+  const recallApproveSrc = join(DIST_HOOKS_DIR, "recall-approve.js");
+  const mcpProxySrc = join(DIST_HOOKS_DIR, "mcp-proxy.js");
   const flushSrc = join(DIST_HOOKS_DIR, "flush.js");
   const sessionStartSrc = join(DIST_HOOKS_DIR, "session-start.js");
 
   if (
     !existsSync(recallSrc) ||
-    !existsSync(turnCaptureSrc) ||
+    !existsSync(recallApproveSrc) ||
+    !existsSync(mcpProxySrc) ||
     !existsSync(flushSrc) ||
     !existsSync(sessionStartSrc)
   ) {
@@ -337,7 +389,8 @@ function install() {
   }
 
   copyFileSync(recallSrc, RECALL_SCRIPT);
-  copyFileSync(turnCaptureSrc, TURN_CAPTURE_SCRIPT);
+  copyFileSync(recallApproveSrc, RECALL_APPROVE_SCRIPT);
+  copyFileSync(mcpProxySrc, MCP_PROXY_SCRIPT);
   copyFileSync(flushSrc, FLUSH_SCRIPT);
   copyFileSync(sessionStartSrc, SESSION_START_SCRIPT);
 
@@ -345,6 +398,13 @@ function install() {
   for (const script of LEGACY_SUPERMEMORY_SCRIPTS) {
     const oldScript = join(SUPERMEMORY_HOOKS_DIR, script);
     if (existsSync(oldScript)) rmSync(oldScript);
+  }
+  if (existsSync(LOGGED_OUT_FILE)) rmSync(LOGGED_OUT_FILE);
+
+  // Remove command skills retired by the hosted MCP architecture.
+  for (const name of LEGACY_SKILLS) {
+    const skillDir = join(CODEX_SKILLS_DIR, name);
+    if (existsSync(skillDir)) rmSync(skillDir, { recursive: true, force: true });
   }
 
   // Copy skill scripts and SKILL.md files
@@ -360,12 +420,12 @@ function install() {
       join(skillDir, "SKILL.md")
     );
   }
-  console.log(`✓ Installed hook and skill scripts to ${SUPERMEMORY_HOOKS_DIR}`);
-  console.log(`✓ Installed skills to ${CODEX_SKILLS_DIR}`);
+  console.log(`✓ Installed hooks and MCP proxy to ${SUPERMEMORY_HOOKS_DIR}`);
+  console.log(`✓ Installed the supermemory-status skill to ${CODEX_SKILLS_DIR}`);
 
-  // Merge config.toml (hooks feature flag)
+  // Merge config.toml (hosted MCP server)
   mergeConfigToml(true);
-  console.log(`✓ Enabled codex_hooks in ${CODEX_CONFIG_TOML}`);
+  console.log(`✓ Registered the Supermemory MCP server in ${CODEX_CONFIG_TOML}`);
 
   // Merge hooks.json
   mergeHooksJson(true);
@@ -375,8 +435,9 @@ function install() {
 Installation complete!
 
 You now have:
-  • Session-start profile recall (${getRecallModeSummary()})
-  • Explicit memory — supermemory-search, supermemory-add, supermemory-save, supermemory-forget, supermemory-profile, supermemory-status, supermemory-login, and supermemory-logout skills
+  • Automatic session and prompt recall (${getRecallModeSummary()})
+  • Hosted Supermemory MCP tools for deeper search and explicit memory operations
+  • The supermemory-status skill for connection diagnostics
 
 ${hadExistingConfig
     ? "Existing recall/capture preferences were preserved in ~/.codex/supermemory.json.\nSet recallMode to direct, off, or advisory to change recall behavior.\n"
@@ -386,9 +447,7 @@ Next steps:
   1. Start Codex — on your first prompt, a browser window will open to
      authenticate with Supermemory automatically.
 
-  Or authenticate manually:
-     /supermemory-login      (inside Codex)
-     export SUPERMEMORY_CODEX_API_KEY="sm_..."   (in your shell profile)
+  Or set SUPERMEMORY_CODEX_API_KEY="sm_..." in your shell profile.
 
   2. Get an API key at: https://app.supermemory.ai/?view=integrations (if needed)
 
@@ -405,7 +464,7 @@ function uninstall() {
   console.log(`✓ Removed hooks from ${CODEX_HOOKS_JSON}`);
 
   mergeConfigToml(false);
-  console.log(`✓ Disabled codex_hooks in ${CODEX_CONFIG_TOML}`);
+  console.log(`✓ Removed the Supermemory MCP server from ${CODEX_CONFIG_TOML}`);
 
   if (existsSync(SUPERMEMORY_HOOKS_DIR)) {
     rmSync(SUPERMEMORY_HOOKS_DIR, { recursive: true, force: true });
@@ -436,7 +495,8 @@ function status() {
 
   const hooksInstalled =
     existsSync(RECALL_SCRIPT) &&
-    existsSync(TURN_CAPTURE_SCRIPT) &&
+    existsSync(RECALL_APPROVE_SCRIPT) &&
+    existsSync(MCP_PROXY_SCRIPT) &&
     existsSync(FLUSH_SCRIPT) &&
     existsSync(SESSION_START_SCRIPT);
   const hooksJsonExists = existsSync(CODEX_HOOKS_JSON);
@@ -447,14 +507,15 @@ function status() {
     try {
       const hooks = normalizeHookEvents(JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")));
       const recallCmd = `node ${RECALL_SCRIPT}`;
-      const turnCaptureCmd = `node ${TURN_CAPTURE_SCRIPT}`;
+      const recallApproveCmd = `node ${RECALL_APPROVE_SCRIPT}`;
       const flushCmd = `node ${FLUSH_SCRIPT}`;
       const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
       const recallRegistered = hooks.UserPromptSubmit?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === recallCmd)
       );
-      const turnCaptureRegistered = hooks.UserPromptSubmit?.some((g: MatcherGroup) =>
-        g.hooks.some((h: HookEntry) => h.command === turnCaptureCmd && h.async === true)
+      const recallApproveRegistered = hooks.PreToolUse?.some((g: MatcherGroup) =>
+        g.matcher === SUPERMEMORY_MCP_MATCHER &&
+        g.hooks.some((h: HookEntry) => h.command === recallApproveCmd)
       );
       const flushRegistered = hooks.Stop?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === flushCmd && h.async === true)
@@ -464,7 +525,7 @@ function status() {
       );
       hooksEnabled = !!(
         recallRegistered &&
-        turnCaptureRegistered &&
+        recallApproveRegistered &&
         flushRegistered &&
         sessionStartRegistered
       );
@@ -473,19 +534,33 @@ function status() {
     }
   }
 
-  const skillsInstalled = SKILLS.every(({ name }) =>
+  const statusSkillInstalled = SKILLS.every(({ name }) =>
     existsSync(join(CODEX_SKILLS_DIR, name, "SKILL.md"))
   );
+
+  let mcpInstalled = false;
+  if (configTomlExists) {
+    try {
+      const config = readConfigToml();
+      const server = (config.mcp_servers as Record<string, unknown> | undefined)
+        ?.supermemory as Record<string, unknown> | undefined;
+      mcpInstalled = server?.command === "node" &&
+        Array.isArray(server.args) &&
+        server.args.length === 1 &&
+        server.args[0] === MCP_PROXY_SCRIPT;
+    } catch {}
+  }
 
   console.log("codex-supermemory status:\n");
   console.log(`  API key:       ${apiKey ? `✓ set (${apiKeySource})` : "✗ not set"}`);
   console.log(`  Recall mode:   ${getRecallModeSummary()}`);
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
   console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
-  console.log(`  Skills:        ${skillsInstalled ? `✓ installed (${SKILLS.map(s => s.name).join(", ")})` : "✗ not installed"}`);
+  console.log(`  MCP server:    ${mcpInstalled ? "✓ registered (hosted tools via local proxy)" : "✗ not registered"}`);
+  console.log(`  Status skill:  ${statusSkillInstalled ? "✓ installed" : "✗ not installed"}`);
   console.log(`  config.toml:   ${configTomlExists ? "✓ exists" : "✗ not found"}`);
 
-  if (!apiKey || !hooksInstalled || !hooksEnabled || !skillsInstalled) {
+  if (!apiKey || !hooksInstalled || !hooksEnabled || !mcpInstalled || !statusSkillInstalled) {
     console.log("\nRun `npx codex-supermemory install` to set up.");
   } else {
     console.log("\nAll good! Memory is active.");

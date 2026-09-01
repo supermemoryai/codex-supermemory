@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { isConfigured, CONFIG, PLUGIN_VERSION, reloadApiKey } from "../config.js";
@@ -10,8 +10,7 @@ import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
 
-const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
-const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
+const MARK_TIP_FILE = join(homedir(), ".codex", "supermemory", ".mark-tip-shown");
 const UPDATE_COMMAND = "npx codex-supermemory@latest install";
 const SESSION_START_HOOK_TIMEOUT_MS = 30_000;
 const SESSION_START_AUTH_TIMEOUT_MS = 25_000;
@@ -54,6 +53,17 @@ function combineContextParts(parts: Array<string | null | undefined>): string {
   return parts.map((part) => part?.trim()).filter(Boolean).join("\n\n");
 }
 
+function markTip(): string | null {
+  try {
+    if (existsSync(MARK_TIP_FILE)) return null;
+    mkdirSync(dirname(MARK_TIP_FILE), { recursive: true });
+    writeFileSync(MARK_TIP_FILE, new Date().toISOString());
+    return "◪ is the supermemory mark — whenever you see it (notices or Codex's answers), that information came from supermemory.";
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   let rawInput = "";
   try {
@@ -63,33 +73,14 @@ async function main() {
   }
 
   if (!isConfigured()) {
-    if (existsSync(LOGGED_OUT_FILE)) {
-      log("session-start: logged out marker present, skipping browser auth");
-      exitWithContext("");
-    }
-
-    const alreadyAttempted = existsSync(AUTH_ATTEMPTED_FILE);
-    if (!alreadyAttempted) {
-      try {
-        mkdirSync(dirname(AUTH_ATTEMPTED_FILE), { recursive: true });
-        writeFileSync(AUTH_ATTEMPTED_FILE, new Date().toISOString());
-      } catch {}
-
-      try {
-        await startAuthFlow(getSessionStartAuthTimeoutMs());
-        reloadApiKey();
-        try { unlinkSync(AUTH_ATTEMPTED_FILE); } catch {}
-      } catch {
-        exitWithContext(
-          "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-          `Visit: ${AUTH_BASE_URL}\n` +
-          "Run /supermemory-login to authenticate."
-        );
-      }
-    } else {
+    try {
+      await startAuthFlow(getSessionStartAuthTimeoutMs());
+      reloadApiKey();
+    } catch {
       exitWithContext(
         "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-        "Run /supermemory-login to authenticate."
+        `Visit: ${AUTH_BASE_URL}\n` +
+        "A new Codex task will try browser authentication again, or set SUPERMEMORY_CODEX_API_KEY."
       );
     }
   }
@@ -131,20 +122,40 @@ async function main() {
     if (!profileResult.success) {
       exitWithContext(
         await updateCheck ?? "",
-        "◪ supermemory · profile unavailable; continuing without recalled context",
+        combineContextParts([
+          "◪ supermemory · profile unavailable; continuing without recalled context",
+          markTip(),
+        ]),
       );
     }
 
     if (newFacts.length > 0) {
       addSeenFacts(sessionId, newFacts);
       const updateNotice = await updateCheck;
+      const context = `<supermemory-context>
+Recalled memory for this project (${tags.projectName}). Every line marked ◪ comes from supermemory — when citing one, keep the mark and phrase it naturally. If you name the source, say "from supermemory" — never "from memory".
+This project's memory container: ${tags.canonical}
+
+${text}
+</supermemory-context>`;
       exitWithContext(combineContextParts([
-        `[SUPERMEMORY CONTEXT]\n${text}\n[END SUPERMEMORY CONTEXT]`,
+        context,
         updateNotice,
+      ]), combineContextParts([
+        `◪ supermemory · active · ${newFacts.length} ${newFacts.length === 1 ? "memory" : "memories"} loaded for ${tags.projectName}`,
+        markTip(),
       ]));
     }
 
-    exitWithContext(await updateCheck ?? "");
+    const storedProfileCount = (profileResult.profile?.static.length ?? 0) +
+      (profileResult.profile?.dynamic.length ?? 0);
+    const activeMessage = storedProfileCount > 0
+      ? `◪ supermemory · active · memory context current for ${tags.projectName}`
+      : `◪ supermemory · active · no memories saved for ${tags.projectName} yet`;
+    exitWithContext(await updateCheck ?? "", combineContextParts([
+      activeMessage,
+      markTip(),
+    ]));
   } catch (error) {
     log("session-start: error", { error: String(error) });
     exitWithContext(

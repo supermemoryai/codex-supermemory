@@ -9,14 +9,12 @@ and the lessons learned across every project — automatically.
 ## Features
 
 - 🧠 **Automatic recall** — relevant memories are injected for substantive prompts via
-  the `UserPromptSubmit` hook, with short commands skipped and retrieval capped at 3 seconds.
-- 💾 **Automatic capture** — conversations are stored incrementally (every N turns) and
-  flushed after completed turns via the `Stop` hook.
+  the `UserPromptSubmit` hook, with visible recall counts and a 3-second network cap.
+- 🔎 **Hosted MCP tools** — deeper search and explicit memory operations use
+  `mcp.supermemory.ai` through the same credentials as the hooks.
+- 💾 **Automatic capture** — completed turns are saved in the background via the `Stop` hook.
 - 🏷️ **Shared Agents scoping** — Codex, Claude Code, and OpenCode use one collision-safe
   repository container.
-- 📦 **Custom container tags** — define custom memory containers (e.g., `work`, `personal`,
-  `code_style`). The AI automatically picks the right container based on your instructions
-  when saving, searching, or forgetting memories.
 - 🏷️ **Personal + project routing** — `sm_scope` metadata keeps automatic/personal
   memories distinguishable from explicit project knowledge in the shared container.
 - **Entity-aware extraction** - the shared container uses one coding-agent context
@@ -27,9 +25,8 @@ and the lessons learned across every project — automatically.
   `~/.codex/hooks.json` for you.
 - 🪶 **No runtime deps in hooks** — the hook scripts are pre-bundled with esbuild for
   fast cold starts.
-- 🔧 **Fallback skills** — explicit `/supermemory-search`, `/supermemory-add`, `/supermemory-save`,
-  `/supermemory-forget`, `/supermemory-status`, and `/supermemory-logout` commands available when hooks
-  don't cover your use case.
+- 🔧 **Focused status skill** — `$supermemory-status` checks authentication and connectivity;
+  memory operations come from MCP instead of separate command skills.
 
 ## Quick start
 
@@ -42,36 +39,30 @@ and the lessons learned across every project — automatically.
 2. **Start Codex CLI.** On your first prompt, a browser window will open to
    authenticate with Supermemory automatically.
 
-   Alternatively, authenticate manually:
-   - Use `$supermemory-login` inside Codex
-   - Or set `export SUPERMEMORY_CODEX_API_KEY="sm_..."` in your shell profile
+   Alternatively, set `export SUPERMEMORY_CODEX_API_KEY="sm_..."` in your shell profile.
 
 3. **That's it — memory is active.**
 
 ## How it works
 
-Codex CLI supports a hooks system that lets external scripts run at specific
-lifecycle events. `codex-supermemory` registers four hooks:
+Codex CLI supports hooks and MCP servers. `codex-supermemory` registers four hooks:
 
 | Hook              | Event                  | What it does                                                        |
 | ----------------- | ---------------------- | ------------------------------------------------------------------- |
-| `recall`          | `UserPromptSubmit`     | Searches Supermemory for relevant memories and your profile, injecting them into the prompt as `additionalContext`. |
-| `capture-turn`    | `UserPromptSubmit`     | Captures new turns every N prompts in the background without delaying recall. |
-| `flush`           | `Stop`                 | Captures remaining turns in the background after a completed turn. |
+| `recall`          | `UserPromptSubmit`     | Searches Supermemory directly, injects fresh relevant memories, and prints `◪ supermemory · recalled …`. |
+| `recall-approve`  | `PreToolUse`           | Prints the MCP search query and auto-allows read-only Supermemory tools. |
+| `flush`           | `Stop`                 | Captures completed turns in the background. |
 | `session-start`   | `SessionStart`         | Loads persistent and recent profile context for the session. |
 
-**Incremental capture**: When configured, memories are saved every N turns during the session
-(legacy installs retain their existing cadence; fresh installs rely on turn-stop capture).
-This background hook makes memories from earlier in your session available for recall
-in the same session. The flush hook ensures any trailing turns are captured when the
-current turn stops.
+Prompt recall and automatic capture call the Supermemory API directly. Deeper model-initiated
+search, add, list, and forget operations go through the hosted MCP server.
 
 The installer:
 
-- Enables the `codex_hooks` feature flag in `~/.codex/config.toml`
+- Registers the `supermemory` MCP server in `~/.codex/config.toml`
 - Registers the hooks in `~/.codex/hooks.json`
 - Copies pre-bundled hook scripts to `~/.codex/supermemory/`
-- Installs skills to `~/.codex/skills/`
+- Installs only the `supermemory-status` skill to `~/.codex/skills/`
 
 The hooks are tolerant: if Supermemory is unreachable, the API key is missing, or
 anything else fails, they exit cleanly without breaking your Codex session.
@@ -125,13 +116,10 @@ Drop this file in to override defaults:
 | `recallMode`             | `"direct" \| "off" \| "advisory"` | `"direct"` | Directly retrieve relevant memory, disable prompt recall, or inject an advisory directive. |
 | `recallDirective`        | `string`   | (sensible)     | Context injected when `recallMode` is `"advisory"`.                                        |
 | `autoRecallEveryPrompt`  | `boolean`  | —              | Deprecated compatibility key; `true` maps to direct and `false` maps to off.                 |
-| `autoSaveEveryTurns`     | `number`   | `3`            | Save memories every N turns (incremental capture).                                           |
+| `autoSaveEveryTurns`     | `number`   | `3`            | Deprecated compatibility setting; completed turns are captured by `Stop`.                    |
 | `signalExtraction`       | `boolean`  | `false`        | Enable signal-based filtering (only capture turns with keywords like "prefer", "decided").   |
 | `signalKeywords`         | `string[]` | (defaults)     | Keywords that trigger signal extraction.                                                     |
 | `signalTurnsBefore`      | `number`   | `3`            | Include N turns before a signal for context.                                                 |
-| `enableCustomContainers`       | `boolean`  | `false`        | Enable AI-driven routing to custom containers.                                         |
-| `customContainers`             | `array`    | `[]`           | Custom containers with `tag` and `description` (see below).                            |
-| `customContainerInstructions`  | `string`   | `""`           | Free-text instructions for the AI on how to route memories to containers.  
 
 Project tags combine the sanitized repository name with a normalized Git-remote
 hash. Linked worktrees and clones of the same remote therefore share one container;
@@ -154,73 +142,16 @@ but may miss some context. Disabled by default — all turns are captured.
 ## Commands
 
 ```bash
-npx codex-supermemory install     # set up hooks + config + skills
+npx codex-supermemory install     # set up hooks + MCP + status skill
 npx codex-supermemory uninstall   # remove hooks + config (keeps your memories)
 npx codex-supermemory status      # show current install status
 ```
 
-## Skills (fallback commands)
+## Status
 
-These Codex skills are available as explicit commands when you need more control.
-The search, save, and forget skills support `--container <tag>` to target a specific custom container.
-
-| Skill                  | Usage                                                       | Description                              |
-| ---------------------- | ----------------------------------------------------------- | ---------------------------------------- |
-| `/supermemory-search`  | `/supermemory-search [--container <tag>] <query>`           | Search memories manually.                |
-| `/supermemory-add`     | `/supermemory-add <content>`                                | Add a personal memory for this project.  |
-| `/supermemory-save`    | `/supermemory-save [--container <tag>] <content>`           | Save a specific memory explicitly.       |
-| `/supermemory-forget`  | `/supermemory-forget [--container <tag>] <content>`         | Remove a memory.                         |
-| `/supermemory-profile` | `/supermemory-profile`                                      | Show remembered profile facts.           |
-| `/supermemory-status`  | `/supermemory-status`                                       | Show connection and account status.      |
-| `/supermemory-login`   | `/supermemory-login`                                        | Re-authenticate with Supermemory.        |
-| `/supermemory-logout`  | `/supermemory-logout`                                       | Remove saved local credentials.          |
-
-Skills are fallback commands — the hooks handle most use cases automatically.
-
-## Custom Container Tags
-
-Custom container tags let you organize memories into separate buckets (e.g., `work`,
-`personal`, `code_style`). The AI reads the container descriptions from your config
-and automatically picks the right container when saving memories.
-
-### Setup
-
-Add these fields to `~/.codex/supermemory.json`:
-
-```json
-{
-  "enableCustomContainers": true,
-  "customContainers": [
-    { "tag": "personal", "description": "Personal life — family, health, hobbies, routines" },
-    { "tag": "work", "description": "Work-related — projects, deadlines, meetings, colleagues" },
-    { "tag": "code_style", "description": "Coding preferences — languages, tools, patterns, conventions" }
-  ],
-  "customContainerInstructions": "Route coding preferences to code_style. Personal topics to personal. Default to project container for ambiguous content."
-}
-```
-
-### How it works
-
-1. You define containers with a `tag` (identifier) and a `description` (plain English
-   explaining what belongs there).
-2. On every prompt, the container catalog is injected into the AI's context so it knows
-   what containers are available.
-3. When the AI saves a memory (via `/supermemory-save`), it picks the best matching
-   container based on the descriptions and uses `--container <tag>`.
-4. When searching or forgetting, the AI can also target specific containers.
-5. Automatic capture (background saving) always goes to the default project/user
-   containers — only explicit saves get routed to custom containers.
-
-Each container tag automatically becomes a **Space** on the
-[Supermemory dashboard](https://app.supermemory.ai), so you can view and manage
-memories organized by category.
-
-### Container config reference
-
-| Field              | Type     | Description                                        |
-| ------------------ | -------- | -------------------------------------------------- |
-| `tag`              | `string` | Unique identifier for the container (e.g. `work`). |
-| `description`      | `string` | Plain English description for AI routing.           |
+Run `$supermemory-status` inside Codex to check the saved credential, API reachability,
+active project container, and account details. Browser authentication is automatic on
+`SessionStart`; there is no separate login skill.
 
 ## Privacy
 

@@ -65,19 +65,61 @@ function searchDirForSession(dir: string, sessionId: string): string | null {
   return null;
 }
 
+const DUPLICATE_LINE_WINDOW = 5;
+
+interface ContentBlock {
+  type?: string;
+  text?: string;
+}
+
+function extractTextBlocks(
+  content: unknown,
+  blockTypes: string[],
+  separator = "\n",
+): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return (content as ContentBlock[])
+    .filter(
+      (block): block is ContentBlock & { text: string } =>
+        !!block &&
+        blockTypes.includes(block.type ?? "") &&
+        typeof block.text === "string",
+    )
+    .map((block) => block.text)
+    .join(separator);
+}
+
 /**
  * Parse a Codex JSONL transcript file into TranscriptEntry[].
  *
  * Codex transcript format:
- * - User messages: { type: "event_msg", payload: { type: "user_message", message: "..." } }
- * - Assistant text: { type: "event_msg", payload: { type: "assistant_output_text", text: "..." } }
- * - Also check response_item for assistant messages
+ * - Legacy user messages: { type: "event_msg", payload: { type: "user_message", message: "..." } }
+ * - Legacy assistant text: { type: "event_msg", payload: { type: "assistant_output_text", text: "..." } }
+ * - Current messages: { type: "response_item", payload: { type: "message", role: "user" | "assistant", content: [...] } }
+ *   - user content blocks use `input_text`
+ *   - assistant content blocks use `output_text`
+ *
+ * Some rollouts contain both formats for the same turn. Identical nearby
+ * entries are deduplicated so the stored conversation contains one copy.
  */
 export function parseTranscript(transcriptPath: string): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
 
   if (!existsSync(transcriptPath)) {
     return entries;
+  }
+
+  function pushEntry(index: number, role: string, rawContent: string): void {
+    const cleaned = cleanContent(stripPrivateContent(rawContent));
+    if (!cleaned) return;
+
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (index - entries[i].index > DUPLICATE_LINE_WINDOW) break;
+      if (entries[i].role === role && entries[i].content === cleaned) return;
+    }
+
+    entries.push({ index, role, content: cleaned });
   }
 
   try {
@@ -106,55 +148,32 @@ export function parseTranscript(transcriptPath: string): TranscriptEntry[] {
 
           // User message
           if (payload.type === "user_message" && payload.message) {
-            const cleaned = cleanContent(stripPrivateContent(payload.message));
-            if (cleaned && cleaned.length > 0) {
-              entries.push({
-                index: i,
-                role: "user",
-                content: cleaned,
-              });
-            }
+            pushEntry(i, "user", payload.message);
           }
 
           // Assistant output text
           if (payload.type === "assistant_output_text" && payload.text) {
-            const cleaned = cleanContent(stripPrivateContent(payload.text));
-            if (cleaned && cleaned.length > 0) {
-              entries.push({
-                index: i,
-                role: "assistant",
-                content: cleaned,
-              });
-            }
+            pushEntry(i, "assistant", payload.text);
           }
         }
 
-        // Handle response_item entries (assistant responses)
+        // Handle current response_item messages.
         if (parsed.type === "response_item" && parsed.payload) {
           const payload = parsed.payload;
-          if (payload.role === "assistant" && payload.content) {
-            const content = payload.content;
-            let text = "";
-
-            if (typeof content === "string") {
-              text = content;
-            } else if (Array.isArray(content)) {
-              // Extract text from content blocks
-              for (const block of content as Array<{ type?: string; text?: string }>) {
-                if (block.type === "output_text" && block.text) {
-                  text += block.text + "\n";
-                }
-              }
-            }
-
-            const cleaned = cleanContent(stripPrivateContent(text));
-            if (cleaned && cleaned.length > 0) {
-              entries.push({
-                index: i,
-                role: "assistant",
-                content: cleaned,
-              });
-            }
+          if (payload.role === "user" && payload.content) {
+            // Codex builds event_msg.user_message by concatenating input_text
+            // blocks without separators, so mirror that shape for deduplication.
+            pushEntry(
+              i,
+              "user",
+              extractTextBlocks(payload.content, ["input_text"], ""),
+            );
+          } else if (payload.role === "assistant" && payload.content) {
+            pushEntry(
+              i,
+              "assistant",
+              extractTextBlocks(payload.content, ["output_text"]),
+            );
           }
         }
       } catch {

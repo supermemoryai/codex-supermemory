@@ -2,8 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { CONFIG, getApiBaseUrl, getApiKeyValue, isConfigured } from "../config.js";
-import { CREDENTIALS_FILE, loadCredentials } from "../services/auth.js";
-import { SupermemoryClient } from "../services/client.js";
+import { loadCredentials } from "../services/auth.js";
 import { getTags } from "../services/tags.js";
 
 const API_URL =
@@ -44,21 +43,17 @@ function getAutoRecallStatus(): string {
   return CONFIG.recallMode;
 }
 
-function getAutoCaptureStatus(): string {
-  if (CONFIG.captureEveryNTurns <= 0) return "off";
-  return `every ${CONFIG.captureEveryNTurns} turn${CONFIG.captureEveryNTurns === 1 ? "" : "s"}`;
-}
-
 async function fetchJson(path: string): Promise<unknown | null> {
   const apiKey = getApiKeyValue();
   if (!apiKey) return null;
 
   try {
-    const response = await fetch(`${API_URL}${path}`, {
+    const response = await fetch(`${API_URL.replace(/\/+$/, "")}${path}`, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "x-sm-source": "codex",
       },
+      signal: AbortSignal.timeout(8_000),
     });
     if (!response.ok) return null;
     return await response.json();
@@ -83,6 +78,40 @@ async function getAccountInfo(): Promise<{ email?: string; name?: string; userId
   };
 }
 
+async function probeApi(containerTag: string): Promise<{
+  ok: boolean;
+  status?: number;
+  detail: string;
+}> {
+  const apiKey = getApiKeyValue();
+  if (!apiKey) return { ok: false, detail: "not checked (missing API key)" };
+
+  try {
+    const response = await fetch(`${API_URL.replace(/\/+$/, "")}/v4/profile`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "x-sm-source": "codex",
+      },
+      body: JSON.stringify({ containerTag, q: "connectivity probe" }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (response.status === 200) {
+      return { ok: true, status: 200, detail: "reachable, key valid" };
+    }
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, status: response.status, detail: "reachable, key invalid or revoked" };
+    }
+    return { ok: false, status: response.status, detail: "API returned an error" };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function main(): Promise<void> {
   const cwd = process.cwd();
   const tags = getTags(cwd);
@@ -91,30 +120,31 @@ async function main(): Promise<void> {
 
   lines.push("supermemory status");
   lines.push("");
+  lines.push(`Authenticated: ${isConfigured() ? "yes" : "no"}`);
   lines.push(`Connected: ${isConfigured() ? "checking..." : "no"}`);
   lines.push(`API key: ${maskKey(apiKey)} (${getKeySource()})`);
   lines.push(`API URL: ${API_URL}`);
   lines.push(`Memory scope: one project container with metadata scopes`);
   lines.push(`Auto-recall: ${getAutoRecallStatus()}`);
-  lines.push(`Auto-capture: ${getAutoCaptureStatus()}`);
+  lines.push("Auto-capture: after completed turns");
   lines.push(`Project container: ${tags.canonical}`);
   lines.push(`Reads (including legacy): ${tags.allReads.join(", ")}`);
 
   if (!isConfigured()) {
     lines[2] = "Connected: no";
     lines.push("");
-    lines.push("Run /supermemory-login to connect, or set SUPERMEMORY_CODEX_API_KEY.");
+    lines.push("Start a new Codex task to connect automatically, or set SUPERMEMORY_CODEX_API_KEY.");
     console.log(lines.join("\n"));
     process.exit(0);
   }
 
-  const client = new SupermemoryClient();
-  const [profileResult, accountInfo] = await Promise.all([
-    client.getProfileMany(tags.allReads),
+  const [probe, accountInfo] = await Promise.all([
+    probeApi(tags.canonical),
     getAccountInfo(),
   ]);
 
-  lines[2] = profileResult.success ? "Connected: yes" : "Connected: no";
+  lines[3] = probe.ok ? "Connected: yes" : "Connected: no";
+  lines.push(`API reachability: ${probe.status ? `${probe.status} — ` : ""}${probe.detail}`);
 
   if (accountInfo.email || accountInfo.name || accountInfo.userId || accountInfo.orgName) {
     lines.push("");
@@ -128,9 +158,9 @@ async function main(): Promise<void> {
     lines.push("Account: authenticated API key (account details unavailable from API key)");
   }
 
-  if (!profileResult.success) {
+  if (!probe.ok) {
     lines.push("");
-    lines.push(`Connection check failed: ${profileResult.error}`);
+    lines.push(`Connection check failed: ${probe.detail}`);
     const devTlsHint = getDevTlsHint();
     if (devTlsHint) lines.push(devTlsHint);
   }

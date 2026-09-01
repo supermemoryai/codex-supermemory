@@ -8,11 +8,6 @@ export { PLUGIN_VERSION } from "./version.js";
 export const CONFIG_FILE = join(homedir(), ".codex", "supermemory.json");
 export const DEFAULT_BASE_URL = "https://api.supermemory.ai";
 
-export interface CustomContainer {
-  tag: string;
-  description: string;
-}
-
 export type RecallMode = "direct" | "off" | "advisory";
 export const DEFAULT_RECALL_DIRECTIVE =
   "Relevant prior context may exist in Supermemory. Search memory before answering when the request depends on previous decisions, preferences, or project history.";
@@ -38,9 +33,6 @@ interface CodexSupermemoryConfig {
   recallMode?: RecallMode;
   recallDirective?: string;
   captureEveryNTurns?: number;
-  enableCustomContainers?: boolean;
-  customContainers?: CustomContainer[];
-  customContainerInstructions?: string;
 }
 
 const DEFAULT_SIGNAL_KEYWORDS = [
@@ -164,12 +156,6 @@ export const CONFIG = {
   /** @deprecated Prefer recallMode. */
   autoRecallEveryPrompt: recallMode === "direct",
   captureEveryNTurns: resolveCaptureEveryNTurns(fileConfig),
-  enableCustomContainers: fileConfig.enableCustomContainers ?? false,
-  customContainers: (fileConfig.customContainers ?? []).filter(
-    (c): c is CustomContainer =>
-      !!c && typeof c.tag === "string" && typeof c.description === "string",
-  ),
-  customContainerInstructions: fileConfig.customContainerInstructions ?? "",
 };
 
 export function isConfigured(): boolean {
@@ -224,54 +210,8 @@ export function getSignalConfig(): {
   };
 }
 
-export function getContainerCatalog(): string | null {
-  if (!CONFIG.enableCustomContainers || CONFIG.customContainers.length === 0) {
-    return null;
-  }
-
-  const lines: string[] = [];
-  lines.push("Custom memory containers are available for organizing memories:");
-  lines.push("");
-  for (const c of CONFIG.customContainers) {
-    lines.push(`- \`${c.tag}\`: ${c.description}`);
-  }
-
-  if (CONFIG.customContainerInstructions) {
-    lines.push("");
-    lines.push(CONFIG.customContainerInstructions);
-  }
-
-  lines.push("");
-  lines.push(
-    "When saving memories with /supermemory-save, use --container <tag> to route to a specific container.",
-  );
-  lines.push(
-    "When searching with /supermemory-search, use --container <tag> to search a specific container.",
-  );
-  lines.push(
-    "When forgetting with /supermemory-forget, use --container <tag> to target a specific container.",
-  );
-  lines.push("If no container is specified, memories go to the default project/user containers.");
-
-  return lines.join("\n");
-}
-
-export function validateContainerTag(tag: string): string | null {
-  if (!CONFIG.enableCustomContainers || CONFIG.customContainers.length === 0) {
-    return "Custom containers are not enabled. Remove --container or set enableCustomContainers in config.";
-  }
-
-  const validTags = CONFIG.customContainers.map((c) => c.tag);
-  if (validTags.includes(tag)) {
-    return null;
-  }
-
-  const validList = validTags.map((t) => `'${t}'`).join(", ");
-  return `Unknown container tag '${tag}'. Valid containers: ${validList}`;
-}
-
 /** Persist explicit recall/capture defaults for fresh installs or legacy upgrades. */
-export function writeInstallDefaults(isExistingInstall: boolean): void {
+export function writeInstallDefaults(_isExistingInstall: boolean): void {
   const current = loadRawConfigForWrite().config;
   const next: CodexSupermemoryConfig = { ...current };
 
@@ -279,13 +219,8 @@ export function writeInstallDefaults(isExistingInstall: boolean): void {
     next.recallMode = next.autoRecallEveryPrompt === false ? "off" : "direct";
   }
 
-  if (isExistingInstall) {
-    if (next.captureEveryNTurns === undefined) {
-      next.captureEveryNTurns = next.autoSaveEveryTurns ?? 3;
-    }
-  } else {
-    next.captureEveryNTurns = 0;
-  }
+  // Per-prompt capture was retired. Stop captures every completed turn.
+  next.captureEveryNTurns = 0;
 
   writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2));
 }
@@ -297,8 +232,5 @@ export function getRecallModeSummary(): string {
   if (CONFIG.recallMode === "advisory") {
     return "advisory: prompt the agent to search memory when needed";
   }
-  if (CONFIG.captureEveryNTurns > 0) {
-    return `unified: session-start profile + capture every ${CONFIG.captureEveryNTurns} turns + turn-stop flush`;
-  }
-  return "unified: session-start profile + turn-stop flush only";
+  return "session-start profile + turn-stop capture";
 }

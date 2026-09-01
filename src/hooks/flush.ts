@@ -43,7 +43,12 @@ async function main() {
   const client = new SupermemoryClient();
 
   // Flush captures all remaining entries with no gating thresholds
-  await captureEntries("flush", client, sessionId, transcriptPath, tags);
+  const result = await captureEntries("flush", client, sessionId, transcriptPath, tags);
+  if (result.status === "captured") {
+    process.stdout.write(JSON.stringify({
+      systemMessage: "◪ supermemory · saved this turn",
+    }));
+  }
 }
 
 main()

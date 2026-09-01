@@ -24,11 +24,11 @@ const sharedConfig = {
 
 const executableEntries = [
   { in: "src/cli.ts", out: "dist/cli.js" },
-  ...["recall", "capture-turn", "flush", "session-start"].map((n) => ({
+  ...["recall", "recall-approve", "mcp-proxy", "flush", "session-start"].map((n) => ({
     in: `src/hooks/${n}.ts`,
     out: `dist/hooks/${n}.js`,
   })),
-  ...["search-memory", "add-memory", "save-memory", "forget-memory", "profile-memory", "status", "login", "logout"].map((n) => ({
+  ...["status"].map((n) => ({
     in: `src/skills/${n}.ts`,
     out: `dist/skills/${n}.js`,
   })),
@@ -45,6 +45,7 @@ const libraryEntries = [
   { in: "src/services/recallPolicy.ts", out: "dist/services/recallPolicy.js" },
   { in: "src/services/hookRecallClient.ts", out: "dist/services/hookRecallClient.js" },
   { in: "src/services/client.ts", out: "dist/services/client.js" },
+  { in: "src/services/capture.ts", out: "dist/services/capture.js" },
   { in: "src/services/context.ts", out: "dist/services/context.js" },
   { in: "src/services/tracker.ts", out: "dist/services/tracker.js" },
 ];
@@ -70,7 +71,7 @@ await Promise.all(
 );
 
 // Copy SKILL.md files to dist
-for (const skillName of ["supermemory-search", "supermemory-add", "supermemory-save", "supermemory-forget", "supermemory-profile", "supermemory-status", "supermemory-login", "supermemory-logout"]) {
+for (const skillName of ["supermemory-status"]) {
   mkdirSync(`dist/skills/${skillName}`, { recursive: true });
   copyFileSync(
     `src/skills/${skillName}/SKILL.md`,

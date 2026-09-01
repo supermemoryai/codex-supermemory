@@ -1,7 +1,6 @@
 ---
 name: supermemory-status
 description: Show Supermemory connection status for Codex. Use when the user asks whether Supermemory is connected, which account or API key is active, memory hook health, or plugin status.
-allowed-tools: Bash(node:*)
 ---
 
 # Supermemory Status
@@ -11,6 +10,10 @@ Show whether Supermemory is connected and which credential source is active:
 ```bash
 node ~/.codex/supermemory/status.js
 ```
+
+Then call the `mcp__supermemory__whoAmI` tool when it is available. Report API
+reachability and MCP reachability separately; a working direct API probe does not
+prove that the MCP tool path is connected.
 
 ## Windows Sandbox
 

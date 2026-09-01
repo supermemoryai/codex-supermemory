@@ -1,16 +1,13 @@
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { isConfigured, CONFIG, getContainerCatalog } from "../config.js";
+import { readFileSync } from "node:fs";
+import { isConfigured, CONFIG } from "../config.js";
 import { getTags } from "../services/tags.js";
-import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
-import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
+import { getSeenFacts, addSeenFacts, factKey } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
 import { getHookProfileWithSearchMany } from "../services/hookRecallClient.js";
 import { prepareRecallQuery, shouldRecallPrompt } from "../services/recallPolicy.js";
 
-const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
+const MAX_RESULT_CHARS = 300;
 
 interface CodexHookPayload {
   session_id?: string;
@@ -40,6 +37,29 @@ function exitWithContext(additionalContext: string, systemMessage?: string): nev
   process.exit(0);
 }
 
+interface RecallItem {
+  memory: string;
+  title?: string;
+  filepath?: string;
+}
+
+function formatRecall(items: RecallItem[], containerTag: string): string {
+  const lines = items.map((item) => {
+    const text = item.memory.replace(/\s+/g, " ").slice(0, MAX_RESULT_CHARS);
+    const title = item.title?.trim();
+    const prefix = title && !text.startsWith(title) ? `${title} — ` : "";
+    const filepath = item.filepath ? ` (${item.filepath})` : "";
+    return `- ◪ ${prefix}${text}${filepath}`;
+  });
+
+  return `<supermemory-recall>
+◪ Recalled from supermemory for this prompt (relevance-ranked):
+${lines.join("\n")}
+
+When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool (containerTag: "${containerTag}").
+</supermemory-recall>`;
+}
+
 async function main() {
   let rawInput = "";
   try {
@@ -49,16 +69,11 @@ async function main() {
   }
 
   if (!isConfigured()) {
-    if (existsSync(LOGGED_OUT_FILE)) {
-      log("recall: logged out marker present, skipping browser auth");
-      exitWithContext("");
-    }
-
-    // UserPromptSubmit has a 5s backstop and must never launch the interactive
-    // browser flow. SessionStart and /supermemory-login own authentication.
+    // UserPromptSubmit has a 5s backstop and must never launch browser auth.
+    // SessionStart owns authentication.
     exitWithContext(
       "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-      "Run /supermemory-login to authenticate, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
+      "Start a new Codex task to authenticate, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
     );
   }
 
@@ -106,42 +121,32 @@ async function main() {
     }
 
     const seen = getSeenFacts(sessionId);
-    const { text, newFacts } = formatCombinedContext(
-      profileResult,
-      CONFIG.maxMemories,
-      CONFIG.maxProfileItems,
-      seen,
-    );
+    const matches = profileResult.searchResults?.results ?? [];
+    const fresh = matches
+      .filter((item) => !seen.has(factKey(item.memory)))
+      .slice(0, Math.min(CONFIG.maxMemories, 5));
+    const repeats = matches.length - fresh.length;
 
     log("recall: done", {
-      contextLength: text.length,
-      newFactCount: newFacts.length,
+      matchCount: matches.length,
+      freshCount: fresh.length,
       seenCount: seen.size,
     });
 
-    const containerCatalog = getContainerCatalog();
-
-    if (newFacts.length > 0) {
-      addSeenFacts(sessionId, newFacts);
-      let additionalContext = `[SUPERMEMORY CONTEXT]\n${text}\n[END SUPERMEMORY CONTEXT]`;
-
-      if (containerCatalog) {
-        additionalContext += `\n\n[SUPERMEMORY CONTAINERS]\n${containerCatalog}\n[END SUPERMEMORY CONTAINERS]`;
-      }
-
+    if (fresh.length > 0) {
+      addSeenFacts(sessionId, fresh.map((item) => item.memory));
+      const additionalContext = formatRecall(fresh, tags.canonical);
+      const tokens = Math.round(additionalContext.length / 4);
+      const label = repeats > 0
+        ? `recalled ${fresh.length} new (${tokens} tok) · ${repeats} already in context`
+        : `recalled ${fresh.length} ${fresh.length === 1 ? "memory" : "memories"} (${tokens} tok)`;
       log("recall: emit context", {
         additionalContextLength: additionalContext.length,
       });
-      exitWithContext(additionalContext);
-    } else if (containerCatalog) {
-      const additionalContext = `[SUPERMEMORY CONTAINERS]\n${containerCatalog}\n[END SUPERMEMORY CONTAINERS]`;
-      log("recall: emit container catalog only", {
-        additionalContextLength: additionalContext.length,
-      });
-      exitWithContext(additionalContext);
-    } else {
-      exitWithContext("");
+      exitWithContext(additionalContext, `◪ supermemory · ${label}`);
     }
+
+    exitWithContext("");
   } catch (error) {
     log("recall: error", { error: String(error) });
     exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");

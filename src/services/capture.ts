@@ -31,6 +31,11 @@ export interface CaptureOptions {
   requireMinTurns?: number;
 }
 
+export type CaptureResult =
+  | { status: "captured"; entryCount: number }
+  | { status: "skipped" }
+  | { status: "failed" };
+
 /**
  * Resolve a transcript path — either from the provided value or by
  * searching for a file matching the session ID.
@@ -61,14 +66,15 @@ export async function captureEntries(
   transcriptPath: string | null,
   tags: Pick<ResolvedTags, "canonical" | "project" | "user" | "projectName" | "projectId">,
   options: CaptureOptions = {},
-): Promise<void> {
+): Promise<CaptureResult> {
   if (!transcriptPath || !existsSync(transcriptPath)) {
     log(`${caller}: no transcript to capture from`, { sessionId, transcriptPath });
-    return;
+    return { status: "skipped" };
   }
 
+  let result: CaptureResult = { status: "skipped" };
   const acquired = await withSessionCaptureLock(sessionId, async () => {
-    await captureEntriesLocked(
+    result = await captureEntriesLocked(
       caller,
       client,
       sessionId,
@@ -79,7 +85,9 @@ export async function captureEntries(
   });
   if (!acquired) {
     log(`${caller}: capture lock timed out`, { sessionId });
+    return { status: "failed" };
   }
+  return result;
 }
 
 async function captureEntriesLocked(
@@ -89,13 +97,13 @@ async function captureEntriesLocked(
   transcriptPath: string,
   tags: Pick<ResolvedTags, "canonical" | "project" | "user" | "projectName" | "projectId">,
   options: CaptureOptions,
-): Promise<void> {
+): Promise<CaptureResult> {
   const { requireMinEntries = 0, requireMinTurns = 0 } = options;
 
   const entries = parseTranscript(transcriptPath);
   if (entries.length === 0) {
     log(`${caller}: transcript empty`, { sessionId });
-    return;
+    return { status: "skipped" };
   }
 
   const lastIndex = getLastCapturedIndex(sessionId);
@@ -108,12 +116,12 @@ async function captureEntriesLocked(
       required: requireMinEntries,
       lastIndex,
     });
-    return;
+    return { status: "skipped" };
   }
 
   if (newEntries.length === 0) {
     log(`${caller}: no new entries to capture`, { sessionId });
-    return;
+    return { status: "skipped" };
   }
 
   // Turn-based gating (used by recall to batch captures)
@@ -127,7 +135,7 @@ async function captureEntriesLocked(
         requiredTurns: requireMinTurns,
         lastIndex,
       });
-      return;
+      return { status: "skipped" };
     }
   }
 
@@ -143,7 +151,7 @@ async function captureEntriesLocked(
     // Still update tracker so we don't re-check these entries
     const lastEntry = newEntries[newEntries.length - 1];
     setLastCapturedIndex(sessionId, lastEntry.index);
-    return;
+    return { status: "skipped" };
   }
 
   log(`${caller}: capturing signal entries`, {
@@ -187,7 +195,7 @@ async function captureEntriesLocked(
         sessionId,
         error: result.error,
       });
-      return;
+      return { status: "failed" };
     }
 
     const lastEntry = newEntries[newEntries.length - 1];
@@ -198,8 +206,9 @@ async function captureEntriesLocked(
       count: newEntries.length,
       lastIndex: lastEntry.index,
     });
+    return { status: "captured", entryCount: newEntries.length };
   } catch (error) {
     log(`${caller}: capture error`, { error: String(error) });
-    // Don't rethrow — let the caller decide how to handle
+    return { status: "failed" };
   }
 }
