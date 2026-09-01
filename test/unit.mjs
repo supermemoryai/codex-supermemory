@@ -10,6 +10,7 @@ import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 import * as TOML from "@iarna/toml";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -45,6 +46,38 @@ function readToml(path) {
 
 function hash16(input) {
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
+}
+
+function readGeneratedPetPng(path) {
+  const png = readFileSync(path);
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  const idat = [];
+
+  while (offset < png.length) {
+    const length = png.readUInt32BE(offset);
+    const type = png.toString("ascii", offset + 4, offset + 8);
+    const data = png.subarray(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+    } else if (type === "IDAT") {
+      idat.push(data);
+    }
+    offset += 12 + length;
+  }
+
+  const scanlines = inflateSync(Buffer.concat(idat));
+  const stride = width * 4 + 1;
+  return {
+    width,
+    height,
+    pixel(x, y) {
+      assert.equal(scanlines[y * stride], 0, "generated pet PNG must use filter 0");
+      return [...scanlines.subarray(y * stride + 1 + x * 4, y * stride + 1 + x * 4 + 4)];
+    },
+  };
 }
 
 // Inline the stripPrivateContent logic (mirrors src/services/privacy.ts exactly)
@@ -789,6 +822,24 @@ describe("hooks.json format", () => {
 
 describe("integration: install/uninstall", () => {
   const cliBin = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+
+  test("generated pet badge reflects Codex states", () => {
+    const pet = readGeneratedPetPng(fileURLToPath(new URL("../dist/pet/spritesheet.png", import.meta.url)));
+    assert.equal(pet.width, 1536);
+    assert.equal(pet.height, 1872);
+
+    const accentAtRow = (row) => pet.pixel(17, row * 208 + 178);
+    const running = accentAtRow(7);
+    const ready = accentAtRow(8);
+    const blocked = accentAtRow(5);
+    const waiting = accentAtRow(6);
+
+    assert.ok(running[2] > running[0] && running[2] > running[1], "running accent should be blue");
+    assert.ok(ready[1] > ready[0] && ready[1] > ready[2], "ready accent should be green");
+    assert.ok(blocked[0] > blocked[1] && blocked[0] > blocked[2], "blocked accent should be red");
+    assert.ok(waiting[0] > waiting[1] && waiting[1] > waiting[2], "needs-input accent should be amber");
+    assert.equal(pet.pixel(7 * 192 + 17, 178)[3], 0, "unused idle frames should be transparent");
+  });
 
   test("install keeps only status skill and registers hosted MCP", (t) => {
     const { tmpDir, codexDir } = setupCodexHome(t);

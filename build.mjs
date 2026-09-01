@@ -80,22 +80,46 @@ for (const skillName of ["supermemory-status"]) {
   );
 }
 
-// Codex custom TUI pets use a fixed 8x9 spritesheet. Every frame in this
-// sheet is intentionally identical: Supermemory needs a persistent activity
-// badge, not an animated mascot that competes with the coding surface.
+// Codex custom TUI pets use a fixed 8x9 spritesheet. Keep Supermemory as a
+// quiet badge, but use the standard animation rows to reflect Codex activity.
 const PET_FRAME_WIDTH = 192;
 const PET_FRAME_HEIGHT = 208;
 const PET_COLUMNS = 8;
 const PET_ROWS = 9;
 
+const PET_ROW_STYLES = [
+  { state: "ACTIVE", accent: [139, 124, 255, 255], frames: 6 },
+  { state: "RUNNING", accent: [59, 130, 246, 255], frames: 8 },
+  { state: "RUNNING", accent: [59, 130, 246, 255], frames: 8 },
+  { state: "READY", accent: [34, 197, 94, 255], frames: 4 },
+  { state: "READY", accent: [34, 197, 94, 255], frames: 5 },
+  { state: "BLOCKED", accent: [239, 68, 68, 255], frames: 8 },
+  { state: "NEEDS INPUT", accent: [245, 158, 11, 255], frames: 6 },
+  { state: "RUNNING", accent: [59, 130, 246, 255], frames: 6 },
+  { state: "READY", accent: [34, 197, 94, 255], frames: 6 },
+];
+
+const PET_PULSE = [0.72, 0.84, 1, 0.9, 0.78, 0.9, 1, 0.84];
+
 const PET_FONT = {
+  A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+  B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+  C: ["01111", "10000", "10000", "10000", "10000", "10000", "01111"],
+  D: ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
   E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+  G: ["01111", "10000", "10000", "10111", "10001", "10001", "01111"],
+  I: ["11111", "00100", "00100", "00100", "00100", "00100", "11111"],
+  K: ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
+  L: ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
   M: ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
+  N: ["10001", "11001", "11001", "10101", "10011", "10011", "10001"],
   O: ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
   P: ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
   R: ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
   S: ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
+  T: ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
   U: ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
+  V: ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
   Y: ["10001", "10001", "01010", "00100", "00100", "00100", "00100"],
 };
 
@@ -155,6 +179,10 @@ function fillRoundedRect(pixels, width, x, y, rectWidth, rectHeight, radius, col
 function drawText(pixels, width, text, x, y, scale, color) {
   let cursorX = x;
   for (const character of text) {
+    if (character === " ") {
+      cursorX += 4 * scale;
+      continue;
+    }
     const glyph = PET_FONT[character];
     if (!glyph) continue;
     glyph.forEach((row, rowIndex) => {
@@ -176,11 +204,20 @@ function drawText(pixels, width, text, x, y, scale, color) {
   }
 }
 
-function drawPetFrame(pixels, sheetWidth, frameX, frameY) {
+function pulseColor(color, column) {
+  const factor = PET_PULSE[column % PET_PULSE.length];
+  return color.map((channel, index) => index === 3 ? channel : Math.round(channel * factor));
+}
+
+function drawPetFrame(pixels, sheetWidth, frameX, frameY, row, column) {
+  const style = PET_ROW_STYLES[row];
+  if (!style || column >= style.frames) return;
+
+  const accent = pulseColor(style.accent, column);
   const badgeX = frameX + 6;
-  const badgeY = frameY + 164;
-  fillRoundedRect(pixels, sheetWidth, badgeX, badgeY, 180, 36, 10, [24, 24, 27, 235]);
-  fillRoundedRect(pixels, sheetWidth, badgeX + 10, badgeY + 9, 18, 18, 3, [139, 124, 255, 255]);
+  const badgeY = frameY + 156;
+  fillRoundedRect(pixels, sheetWidth, badgeX, badgeY, 180, 44, 10, [24, 24, 27, 235]);
+  fillRoundedRect(pixels, sheetWidth, badgeX + 10, badgeY + 13, 18, 18, 3, accent);
 
   // A tiny diagonal cut inside the square echoes the mark used by hook notices.
   for (let row = 0; row < 12; row += 1) {
@@ -189,7 +226,7 @@ function drawPetFrame(pixels, sheetWidth, frameX, frameY) {
         pixels,
         sheetWidth,
         badgeX + 13 + column,
-        badgeY + 12 + row,
+        badgeY + 16 + row,
         [242, 240, 255, 255],
       );
     }
@@ -200,9 +237,19 @@ function drawPetFrame(pixels, sheetWidth, frameX, frameY) {
     sheetWidth,
     "SUPERMEMORY",
     badgeX + 36,
-    badgeY + 11,
+    badgeY + 7,
     2,
     [226, 222, 255, 255],
+  );
+
+  drawText(
+    pixels,
+    sheetWidth,
+    style.state,
+    badgeX + 36,
+    badgeY + 27,
+    1,
+    accent,
   );
 }
 
@@ -218,6 +265,8 @@ function writePetSpritesheet(outputPath) {
         width,
         column * PET_FRAME_WIDTH,
         row * PET_FRAME_HEIGHT,
+        row,
+        column,
       );
     }
   }
