@@ -33,12 +33,14 @@ const CODEX_CONFIG_TOML = join(CODEX_DIR, "config.toml");
 const CODEX_HOOKS_JSON = join(CODEX_DIR, "hooks.json");
 const SUPERMEMORY_HOOKS_DIR = join(CODEX_DIR, "supermemory");
 const RECALL_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall.js");
+const TURN_CAPTURE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "capture-turn.js");
 const FLUSH_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "flush.js");
 const SESSION_START_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "session-start.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
-const RECALL_TIMEOUT_SECONDS = 90;
-const FLUSH_TIMEOUT_SECONDS = 60;
-const SESSION_START_TIMEOUT_SECONDS = 60;
+const RECALL_TIMEOUT_SECONDS = 5;
+const CAPTURE_TIMEOUT_SECONDS = 30;
+const FLUSH_TIMEOUT_SECONDS = 30;
+const SESSION_START_TIMEOUT_SECONDS = 30;
 
 // Skill metadata — single source of truth for install/uninstall/status.
 const SKILLS = [
@@ -135,6 +137,7 @@ interface HookEntry {
   command: string;
   timeout?: number;
   statusMessage?: string;
+  async?: boolean;
 }
 
 // Codex hooks.json schema: each event key maps to an array of MatcherGroup objects.
@@ -186,6 +189,7 @@ function ensureHookRegistered(
   command: string,
   timeout: number,
   statusMessage: string,
+  background = false,
 ): void {
   const exists = groups.some((g) => g.hooks.some((h) => h.command === command));
   if (exists) {
@@ -194,12 +198,20 @@ function ensureHookRegistered(
         if (hook.command === command) {
           hook.timeout = timeout;
           hook.statusMessage = statusMessage;
+          if (background) hook.async = true;
+          else delete hook.async;
         }
       }
     }
   } else {
     const globalGroup = groups.find((g) => !g.matcher);
-    const entry: HookEntry = { type: "command", command, timeout, statusMessage };
+    const entry: HookEntry = {
+      type: "command",
+      command,
+      timeout,
+      statusMessage,
+      ...(background ? { async: true } : {}),
+    };
     if (globalGroup) {
       globalGroup.hooks.push(entry);
     } else {
@@ -231,6 +243,7 @@ function mergeHooksJson(add: boolean) {
 
   if (add) {
     const recallCmd = `node ${RECALL_SCRIPT}`;
+    const turnCaptureCmd = `node ${TURN_CAPTURE_SCRIPT}`;
     const flushCmd = `node ${FLUSH_SCRIPT}`;
     const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
     const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
@@ -243,9 +256,17 @@ function mergeHooksJson(add: boolean) {
       "Loading memory profile...",
     );
 
-    // Register UserPromptSubmit hook for optional per-prompt recall / turn capture
+    // Recall must stay synchronous because its output is injected. Turn capture
+    // is a separate background hook so it can never delay prompt handling.
     if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
     ensureHookRegistered(hooks.UserPromptSubmit, recallCmd, RECALL_TIMEOUT_SECONDS, "Searching memories...");
+    ensureHookRegistered(
+      hooks.UserPromptSubmit,
+      turnCaptureCmd,
+      CAPTURE_TIMEOUT_SECONDS,
+      "Saving turn to memory...",
+      true,
+    );
 
     // Remove old capture.js Stop hook from previous installs
     if (hooks.Stop) {
@@ -255,10 +276,17 @@ function mergeHooksJson(add: boolean) {
 
     // Register Stop hook for flush
     if (!hooks.Stop) hooks.Stop = [];
-    ensureHookRegistered(hooks.Stop, flushCmd, FLUSH_TIMEOUT_SECONDS, "Saving to memory...");
+    ensureHookRegistered(
+      hooks.Stop,
+      flushCmd,
+      FLUSH_TIMEOUT_SECONDS,
+      "Saving to memory...",
+      true,
+    );
   } else {
     // Remove our hooks from every MatcherGroup, then drop empty groups.
     const recallCmd = `node ${RECALL_SCRIPT}`;
+    const turnCaptureCmd = `node ${TURN_CAPTURE_SCRIPT}`;
     const flushCmd = `node ${FLUSH_SCRIPT}`;
     const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
     const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
@@ -268,7 +296,10 @@ function mergeHooksJson(add: boolean) {
       if (hooks.SessionStart.length === 0) delete hooks.SessionStart;
     }
     if (hooks.UserPromptSubmit) {
-      hooks.UserPromptSubmit = removeHookCommands(hooks.UserPromptSubmit, [recallCmd]);
+      hooks.UserPromptSubmit = removeHookCommands(
+        hooks.UserPromptSubmit,
+        [recallCmd, turnCaptureCmd],
+      );
       if (hooks.UserPromptSubmit.length === 0) delete hooks.UserPromptSubmit;
     }
     if (hooks.Stop) {
@@ -291,15 +322,22 @@ function install() {
 
   // Copy hook scripts
   const recallSrc = join(DIST_HOOKS_DIR, "recall.js");
+  const turnCaptureSrc = join(DIST_HOOKS_DIR, "capture-turn.js");
   const flushSrc = join(DIST_HOOKS_DIR, "flush.js");
   const sessionStartSrc = join(DIST_HOOKS_DIR, "session-start.js");
 
-  if (!existsSync(recallSrc) || !existsSync(flushSrc) || !existsSync(sessionStartSrc)) {
+  if (
+    !existsSync(recallSrc) ||
+    !existsSync(turnCaptureSrc) ||
+    !existsSync(flushSrc) ||
+    !existsSync(sessionStartSrc)
+  ) {
     console.error("Error: Hook scripts not found. Please reinstall the package.");
     process.exit(1);
   }
 
   copyFileSync(recallSrc, RECALL_SCRIPT);
+  copyFileSync(turnCaptureSrc, TURN_CAPTURE_SCRIPT);
   copyFileSync(flushSrc, FLUSH_SCRIPT);
   copyFileSync(sessionStartSrc, SESSION_START_SCRIPT);
 
@@ -342,7 +380,7 @@ You now have:
 
 ${hadExistingConfig
     ? "Existing recall/capture preferences were preserved in ~/.codex/supermemory.json.\nSet recallMode to direct, off, or advisory to change recall behavior.\n"
-    : "Fresh install: direct relevant-memory recall plus session-start profile and session-end flush.\nSet recallMode to off or advisory in ~/.codex/supermemory.json if preferred.\n"}
+    : "Fresh install: direct relevant-memory recall plus session-start profile and turn-stop flush.\nSet recallMode to off or advisory in ~/.codex/supermemory.json if preferred.\n"}
 
 Next steps:
   1. Start Codex — on your first prompt, a browser window will open to
@@ -398,6 +436,7 @@ function status() {
 
   const hooksInstalled =
     existsSync(RECALL_SCRIPT) &&
+    existsSync(TURN_CAPTURE_SCRIPT) &&
     existsSync(FLUSH_SCRIPT) &&
     existsSync(SESSION_START_SCRIPT);
   const hooksJsonExists = existsSync(CODEX_HOOKS_JSON);
@@ -408,18 +447,27 @@ function status() {
     try {
       const hooks = normalizeHookEvents(JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")));
       const recallCmd = `node ${RECALL_SCRIPT}`;
+      const turnCaptureCmd = `node ${TURN_CAPTURE_SCRIPT}`;
       const flushCmd = `node ${FLUSH_SCRIPT}`;
       const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
       const recallRegistered = hooks.UserPromptSubmit?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === recallCmd)
       );
+      const turnCaptureRegistered = hooks.UserPromptSubmit?.some((g: MatcherGroup) =>
+        g.hooks.some((h: HookEntry) => h.command === turnCaptureCmd && h.async === true)
+      );
       const flushRegistered = hooks.Stop?.some((g: MatcherGroup) =>
-        g.hooks.some((h: HookEntry) => h.command === flushCmd)
+        g.hooks.some((h: HookEntry) => h.command === flushCmd && h.async === true)
       );
       const sessionStartRegistered = hooks.SessionStart?.some((g: MatcherGroup) =>
         g.hooks.some((h: HookEntry) => h.command === sessionStartCmd)
       );
-      hooksEnabled = !!(recallRegistered && flushRegistered && sessionStartRegistered);
+      hooksEnabled = !!(
+        recallRegistered &&
+        turnCaptureRegistered &&
+        flushRegistered &&
+        sessionStartRegistered
+      );
     } catch {
       // ignore
     }

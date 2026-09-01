@@ -4,13 +4,14 @@ import { CONFIG, isConfigured, getApiKeyValue, getBaseUrl, PLUGIN_VERSION } from
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 import { mergeProfileResults, mergeSearchResponses } from "./resultMerge.js";
-import { boundedMemoryText, recallProvenance } from "./resultText.js";
+import { memoryText, recallProvenance } from "./resultText.js";
 
 type ProfileParamsWithFilters = ProfileParams & {
   filters?: ReturnType<typeof getScopeFilters>;
 };
 
 const TIMEOUT_MS = 30000;
+export const HOOK_API_TIMEOUT_MS = 3000;
 const SPACE_NAME_TIMEOUT_MS = 5000;
 const CODEX_SOURCE = "codex";
 
@@ -32,6 +33,33 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     id = setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(id));
+}
+
+interface BoundedRequestOptions {
+  timeoutMs: number;
+}
+
+/**
+ * Hook requests need both SDK-level cancellation and a local backstop. Passing
+ * timeout/maxRetries/signal makes the SDK abort the real fetch rather than only
+ * abandoning its promise, while the race still protects us from SDK regressions.
+ */
+function withBoundedSdkRequest<T>(
+  request: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout>;
+  const backstop = new Promise<T>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  const requestPromise = Promise.resolve().then(() => request(controller.signal));
+  return Promise.race([requestPromise, backstop]).finally(() => {
+    clearTimeout(timeout);
+  });
 }
 
 /** Canonical search result item used across the codebase. */
@@ -70,6 +98,7 @@ export interface ProfileWithSearchResult {
     results: Array<{
       id?: string;
       memory: string;
+      score?: number;
       similarity?: number;
       title?: string;
       filepath?: string;
@@ -134,17 +163,25 @@ export class SupermemoryClient {
     containerTag: string,
     query?: string,
     scope?: MemoryScope,
+    requestOptions?: BoundedRequestOptions,
   ): Promise<ProfileWithSearchResult> {
     log("getProfileWithSearch: start", { containerTag, hasQuery: !!query });
     try {
-      const result = await withTimeout(
-        this.getClient().profile({
-          containerTag,
-          q: query,
-          filters: scope ? getScopeFilters(scope) : undefined,
-        } satisfies ProfileParamsWithFilters as ProfileParams),
-        TIMEOUT_MS
-      );
+      const profileParams = {
+        containerTag,
+        q: query,
+        filters: scope ? getScopeFilters(scope) : undefined,
+      } satisfies ProfileParamsWithFilters as ProfileParams;
+      const result = requestOptions
+        ? await withBoundedSdkRequest(
+            (signal) => this.getClient().profile(profileParams, {
+              timeout: requestOptions.timeoutMs,
+              maxRetries: 0,
+              signal,
+            }),
+            requestOptions.timeoutMs,
+          )
+        : await withTimeout(this.getClient().profile(profileParams), TIMEOUT_MS);
 
       // Dedupe across static, dynamic, and search results
       const seen = new Set<string>();
@@ -166,7 +203,8 @@ export class SupermemoryClient {
             const provenance = recallProvenance(r);
             return {
               id: r.id,
-              memory: boundedMemoryText(r),
+              memory: memoryText(r),
+              score: r.score,
               similarity: r.similarity,
               title: provenance.title,
               filepath: provenance.filepath,
@@ -203,10 +241,13 @@ export class SupermemoryClient {
   async getProfileWithSearchMany(
     containerTags: string[],
     query?: string,
+    requestOptions?: BoundedRequestOptions,
   ): Promise<ProfileWithSearchResult> {
     const uniqueTags = [...new Set(containerTags.filter(Boolean))];
     const results = await Promise.all(
-      uniqueTags.map((containerTag) => this.getProfileWithSearch(containerTag, query)),
+      uniqueTags.map((containerTag) =>
+        this.getProfileWithSearch(containerTag, query, undefined, requestOptions)
+      ),
     );
     return mergeProfileResults(results, CONFIG.maxMemories);
   }
@@ -316,8 +357,12 @@ export class SupermemoryClient {
     }
   }
 
-  async getProfileMany(containerTags: string[], query?: string): Promise<ProfileWithSearchResult> {
-    return this.getProfileWithSearchMany(containerTags, query);
+  async getProfileMany(
+    containerTags: string[],
+    query?: string,
+    requestOptions?: BoundedRequestOptions,
+  ): Promise<ProfileWithSearchResult> {
+    return this.getProfileWithSearchMany(containerTags, query, requestOptions);
   }
 
   async getProfileScopedMany(
@@ -338,7 +383,7 @@ export class SupermemoryClient {
     content: string,
     containerTag: string,
     metadata?: { type?: MemoryType; tool?: string; [key: string]: unknown },
-    options?: { customId?: string; entityContext?: string }
+    options?: { customId?: string; entityContext?: string; timeoutMs?: number }
   ) {
     log("addMemory: start", {
       containerTag,
@@ -374,10 +419,16 @@ export class SupermemoryClient {
       if (options?.entityContext) {
         payload.entityContext = options.entityContext;
       }
-      const result = await withTimeout(
-        this.getClient().memories.add(payload),
-        TIMEOUT_MS
-      );
+      const result = options?.timeoutMs
+        ? await withBoundedSdkRequest(
+            (signal) => this.getClient().memories.add(payload, {
+              timeout: options.timeoutMs,
+              maxRetries: 0,
+              signal,
+            }),
+            options.timeoutMs,
+          )
+        : await withTimeout(this.getClient().memories.add(payload), TIMEOUT_MS);
       log("addMemory: success", { id: result.id });
       return { success: true as const, ...result };
     } catch (error) {

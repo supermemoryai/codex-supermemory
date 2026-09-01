@@ -11,7 +11,7 @@ and the lessons learned across every project — automatically.
 - 🧠 **Automatic recall** — relevant memories are injected for substantive prompts via
   the `UserPromptSubmit` hook, with short commands skipped and retrieval capped at 3 seconds.
 - 💾 **Automatic capture** — conversations are stored incrementally (every N turns) and
-  at session end via the `Stop` hook.
+  flushed after completed turns via the `Stop` hook.
 - 🏷️ **Shared Agents scoping** — Codex, Claude Code, and OpenCode use one collision-safe
   repository container.
 - 📦 **Custom container tags** — define custom memory containers (e.g., `work`, `personal`,
@@ -51,17 +51,20 @@ and the lessons learned across every project — automatically.
 ## How it works
 
 Codex CLI supports a hooks system that lets external scripts run at specific
-lifecycle events. `codex-supermemory` registers two hooks:
+lifecycle events. `codex-supermemory` registers four hooks:
 
 | Hook              | Event                  | What it does                                                        |
 | ----------------- | ---------------------- | ------------------------------------------------------------------- |
-| `recall`          | `UserPromptSubmit`     | Captures new turns (every N prompts), then searches Supermemory for relevant memories and your profile, injecting them into the prompt as `additionalContext`. |
-| `flush`           | `Stop`                 | Captures any remaining turns at session end so the final conversation turns are never lost. |
+| `recall`          | `UserPromptSubmit`     | Searches Supermemory for relevant memories and your profile, injecting them into the prompt as `additionalContext`. |
+| `capture-turn`    | `UserPromptSubmit`     | Captures new turns every N prompts in the background without delaying recall. |
+| `flush`           | `Stop`                 | Captures remaining turns in the background after a completed turn. |
+| `session-start`   | `SessionStart`         | Loads persistent and recent profile context for the session. |
 
-**Incremental capture**: Memories are saved every N turns (default: 3) during the session.
-This means memories from earlier in your session are immediately available for recall
+**Incremental capture**: When configured, memories are saved every N turns during the session
+(legacy installs retain their existing cadence; fresh installs rely on turn-stop capture).
+This background hook makes memories from earlier in your session available for recall
 in the same session. The flush hook ensures any trailing turns are captured when the
-session ends.
+current turn stops.
 
 The installer:
 
@@ -112,7 +115,7 @@ Drop this file in to override defaults:
 | `baseUrl`                | `string`   | `https://api.supermemory.ai` | Supermemory API base URL (`SUPERMEMORY_API_URL`/`SUPERMEMORY_BASE_URL` env vars take precedence). |
 | `similarityThreshold`    | `number`   | `0.6`          | Minimum similarity score for retrieved memories.                                             |
 | `maxMemories`            | `number`   | `5`            | Max memories injected per prompt.                                                            |
-| `maxProfileItems`        | `number`   | `5`            | Max profile items considered.                                                                |
+| `maxProfileItems`        | `number`   | `5`            | Max profile items considered from each persistent/recent section.                            |
 | `injectProfile`          | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
 | `containerTagPrefix`     | `string`   | `"codex"`      | Legacy prefix retained when reading containers created by older versions.                    |
 | `userContainerTag`       | `string`   | auto           | Legacy personal container retained for backward-compatible reads.                            |

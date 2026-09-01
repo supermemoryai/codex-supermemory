@@ -245,7 +245,7 @@ describe("cross-container result merging", () => {
     assert.deepEqual(JSON.parse(result.stdout), ["best", "new"]);
   });
 
-  test("normalizes and bounds high-quality profile recall hits", () => {
+  test("normalizes high-quality profile recall hits", () => {
     const script = `
       import { mergeProfileResults } from ${JSON.stringify(mergeModule)};
       const long = "x".repeat(360);
@@ -276,7 +276,158 @@ describe("cross-container result merging", () => {
     ]);
     assert.equal(results[0].title, "Decision");
     assert.equal(results[0].filepath, "src/a.ts");
-    assert.ok(results.every((item) => item.memory.length <= 300));
+  });
+
+  test("keeps full recall identities and accepts score-only hits", () => {
+    const script = `
+      import { mergeProfileResults } from ${JSON.stringify(mergeModule)};
+      const prefix = "x".repeat(300);
+      const first = prefix + " first ending";
+      const second = prefix + " second ending";
+      const merged = mergeProfileResults([{
+        success: true,
+        profile: { static: [], dynamic: [] },
+        searchResults: { results: [
+          { memory: "score only", score: 0.95 },
+          { memory: first, similarity: 0.9 },
+          { memory: second, similarity: 0.8 },
+          { memory: "missing similarity" },
+          { memory: "weak score only", score: 0.2 },
+          { memory: "too weak", similarity: 0.54 }
+        ], total: 6 }
+      }], 5);
+      console.log(JSON.stringify(merged.searchResults.results));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const results = JSON.parse(result.stdout);
+    assert.deepEqual(results.map((item) => item.memory.slice(-13)), [
+      "score only",
+      " first ending",
+      "second ending",
+      "ng similarity",
+    ]);
+    assert.equal(results[0].score, 0.95);
+    assert.ok(results[1].memory.length > 300);
+    assert.notEqual(results[1].memory, results[2].memory);
+    assert.ok(!results.some((item) => item.memory === "weak score only"));
+  });
+});
+
+describe("capture tracker", () => {
+  const trackerModule = new URL("../dist/services/tracker.js", import.meta.url).href;
+
+  test("serializes overlapping capture transactions and keeps the cursor monotonic", (t) => {
+    const homeDir = makeTmpDir();
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const script = `
+      import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+      import { homedir } from "node:os";
+      import { join } from "node:path";
+      import {
+        getLastCapturedIndex,
+        setLastCapturedIndex,
+        withSessionCaptureLock,
+      } from ${JSON.stringify(trackerModule)};
+      const order = [];
+      const first = withSessionCaptureLock("session", async () => {
+        order.push("first-start");
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        setLastCapturedIndex("session", 20);
+        order.push("first-end");
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const second = withSessionCaptureLock("session", async () => {
+        order.push("second");
+        setLastCapturedIndex("session", 10);
+      });
+      const acquired = await Promise.all([first, second]);
+
+      const trackerDir = join(homedir(), ".codex-supermemory", "trackers");
+      mkdirSync(trackerDir, { recursive: true });
+      const staleLock = join(trackerDir, "stale.capture.lock");
+      writeFileSync(staleLock, process.pid + ":0:reused-pid");
+      const staleTime = new Date(Date.now() - 40_000);
+      utimesSync(staleLock, staleTime, staleTime);
+      const reclaimed = await withSessionCaptureLock("stale", async () => {}, 250);
+
+      console.log(JSON.stringify({ acquired, order, index: getLastCapturedIndex("session"), reclaimed }));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      acquired: [true, true],
+      order: ["first-start", "first-end", "second"],
+      index: 20,
+      reclaimed: true,
+    });
+  });
+});
+
+describe("hook SDK request bounds", () => {
+  const clientModule = new URL("../dist/services/client.js", import.meta.url).href;
+
+  test("aborts the SDK fetch without retries", () => {
+    const script = `
+      import { SupermemoryClient } from ${JSON.stringify(clientModule)};
+      let calls = 0;
+      let aborted = false;
+      globalThis.fetch = (_url, { signal }) => new Promise((_resolve, reject) => {
+        calls += 1;
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        }, { once: true });
+      });
+      const started = Date.now();
+      const result = await new SupermemoryClient().getProfileMany(
+        ["repo_test"], undefined, { timeoutMs: 20 },
+      );
+      console.log(JSON.stringify({ success: result.success, calls, aborted, elapsed: Date.now() - started }));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+      timeout: 1_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.success, false);
+    assert.equal(output.calls, 1);
+    assert.equal(output.aborted, true);
+    assert.ok(output.elapsed < 500, `bounded request took ${output.elapsed}ms`);
+  });
+});
+
+describe("combined recall formatting", () => {
+  const contextModule = new URL("../dist/services/context.js", import.meta.url).href;
+
+  test("budgets both profile sections and truncates only display text", () => {
+    const script = `
+      import { formatCombinedContext } from ${JSON.stringify(contextModule)};
+      const long = "z".repeat(320) + " durable ending";
+      const result = formatCombinedContext({
+        success: true,
+        profile: { static: ["s1", "s2", "s3"], dynamic: ["d1", "d2", "d3"] },
+        searchResults: { results: [{ memory: long, similarity: 0.9 }], total: 1 },
+      }, 5, 2);
+      console.log(JSON.stringify(result));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.match(output.text, /1\. ◪ s1/);
+    assert.match(output.text, /3\. ◪ d1/);
+    assert.doesNotMatch(output.text, /s3|d3|durable ending/);
+    assert.match(output.text, /from supermemory/);
+    assert.equal(output.newFacts.at(-1).endsWith("durable ending"), true);
   });
 });
 
@@ -436,12 +587,20 @@ describe("stripPrivateContent", () => {
 });
 
 describe("browser auth opener", () => {
-  test("login bundle uses Windows-safe URL opener", () => {
+  test("login keeps a long auth window while SessionStart uses a bounded one", () => {
     const content = readFileSync(new URL("../dist/skills/login.js", import.meta.url), "utf-8");
     assert.ok(content.includes("Refusing to open non-http URL"));
     assert.ok(content.includes("rundll32.exe"));
     assert.ok(content.includes("url.dll,FileProtocolHandler"));
     assert.ok(!content.includes("explorer.exe"));
+
+    const authSource = readFileSync(new URL("../src/services/auth.ts", import.meta.url), "utf-8");
+    const sessionStartSource = readFileSync(new URL("../src/hooks/session-start.ts", import.meta.url), "utf-8");
+    const loginSource = readFileSync(new URL("../src/skills/login.ts", import.meta.url), "utf-8");
+    assert.ok(authSource.includes("5 * 60_000"), "explicit login keeps its long default");
+    assert.ok(authSource.includes("startAuthFlow(timeoutMs = AUTH_TIMEOUT)"));
+    assert.ok(sessionStartSource.includes("startAuthFlow(getSessionStartAuthTimeoutMs())"));
+    assert.ok(loginSource.includes("await startAuthFlow();"));
   });
 });
 
@@ -487,8 +646,8 @@ describe("hooks.json format", () => {
 
     const hooksJson = {
       hooks: {
-        UserPromptSubmit: [{ hooks: [{ type: "command", command: `node ${recallScript}`, timeout: 90 }] }],
-        Stop: [{ hooks: [{ type: "command", command: `node ${flushScript}`, timeout: 60 }] }],
+        UserPromptSubmit: [{ hooks: [{ type: "command", command: `node ${recallScript}`, timeout: 5 }] }],
+        Stop: [{ hooks: [{ type: "command", command: `node ${flushScript}`, timeout: 30, async: true }] }],
       },
     };
     const json = JSON.stringify(hooksJson, null, 2);
@@ -497,9 +656,10 @@ describe("hooks.json format", () => {
     assert.ok(parsed.hooks, "must have top-level hooks key");
     assert.ok(!parsed.UserPromptSubmit, "must NOT have UserPromptSubmit at top level");
     assert.ok(Array.isArray(parsed.hooks.UserPromptSubmit), "hooks.UserPromptSubmit must be an array");
-    assert.equal(parsed.hooks.UserPromptSubmit[0].hooks[0].timeout, 90);
+    assert.equal(parsed.hooks.UserPromptSubmit[0].hooks[0].timeout, 5);
     assert.ok(Array.isArray(parsed.hooks.Stop), "hooks.Stop must be an array");
     assert.equal(parsed.hooks.Stop[0].hooks[0].type, "command");
+    assert.equal(parsed.hooks.Stop[0].hooks[0].async, true);
   });
 
   test("dedup: adding same command twice results in exactly one entry", () => {
@@ -602,6 +762,44 @@ describe("integration: install/uninstall", () => {
     }
     const config = JSON.parse(readFileSync(join(codexDir, "supermemory.json"), "utf-8"));
     assert.equal(config.recallMode, "direct");
+  });
+
+  test("install upgrades capture hooks to background handlers", (t) => {
+    const { tmpDir, codexDir } = setupCodexHome(t);
+    const hooksPath = join(codexDir, "hooks.json");
+    const flushCmd = `node ${join(codexDir, "supermemory", "flush.js")}`;
+    writeFileSync(hooksPath, JSON.stringify({
+      hooks: {
+        Stop: [{ hooks: [{ type: "command", command: flushCmd, timeout: 60 }] }],
+      },
+    }));
+
+    const result = runCli(cliBin, "install", tmpDir);
+    assert.equal(result.status, 0, result.stderr);
+
+    const hooks = JSON.parse(readFileSync(hooksPath, "utf-8")).hooks;
+    const stop = hooks.Stop.flatMap((group) => group.hooks)
+      .find((hook) => hook.command === flushCmd);
+    const turnCaptureCmd = `node ${join(codexDir, "supermemory", "capture-turn.js")}`;
+    const turnCapture = hooks.UserPromptSubmit.flatMap((group) => group.hooks)
+      .find((hook) => hook.command === turnCaptureCmd);
+    const recall = hooks.UserPromptSubmit.flatMap((group) => group.hooks)
+      .find((hook) => hook.command.endsWith("/recall.js"));
+    const sessionStart = hooks.SessionStart.flatMap((group) => group.hooks)
+      .find((hook) => hook.command.endsWith("/session-start.js"));
+
+    assert.deepEqual(
+      { async: stop.async, timeout: stop.timeout },
+      { async: true, timeout: 30 },
+    );
+    assert.deepEqual(
+      { async: turnCapture.async, timeout: turnCapture.timeout },
+      { async: true, timeout: 30 },
+    );
+    assert.equal(recall.async, undefined);
+    assert.equal(recall.timeout, 5);
+    assert.equal(sessionStart.async, undefined);
+    assert.equal(sessionStart.timeout, 30);
   });
 
   test("uninstall removes skill directories", (t) => {
@@ -728,28 +926,32 @@ describe("integration: install/uninstall", () => {
 describe("recall hook output envelope", () => {
   const recallBin = fileURLToPath(new URL("../dist/hooks/recall.js", import.meta.url));
 
-  // Helper: run recall hook with an isolated HOME. Pre-create the auth marker
-  // so the unit test exercises the hook envelope without launching a browser.
+  // Recall must return login guidance without starting browser authentication.
   function runRecallUnconfigured(t, input) {
     const tmpDir = makeTmpDir();
-    const supermemoryDir = join(tmpDir, ".codex", "supermemory");
-    mkdirSync(supermemoryDir, { recursive: true });
-    writeFileSync(join(supermemoryDir, ".auth-attempted"), new Date().toISOString());
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
-    return spawnSync("node", [recallBin], {
+    const result = spawnSync("node", [recallBin], {
       input,
       env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "" },
       encoding: "utf-8",
       timeout: 5_000,
     });
+    return { result, tmpDir };
   }
 
   test("outputs hookSpecificOutput envelope when not configured", (t) => {
-    const result = runRecallUnconfigured(t, JSON.stringify({ session_id: "s1", prompt: "hello" }));
+    const { result, tmpDir } = runRecallUnconfigured(
+      t,
+      JSON.stringify({ session_id: "s1", prompt: "hello" }),
+    );
     const parsed = JSON.parse(result.stdout);
     assert.ok("hookSpecificOutput" in parsed, "must have hookSpecificOutput key");
     assert.equal(parsed.hookSpecificOutput.hookEventName, "UserPromptSubmit");
     assert.equal(typeof parsed.hookSpecificOutput.additionalContext, "string");
+    assert.equal(
+      existsSync(join(tmpDir, ".codex", "supermemory", ".auth-attempted")),
+      false,
+    );
   });
 
   test("exits silently after explicit logout marker", (t) => {
@@ -791,12 +993,7 @@ describe("recall hook output envelope", () => {
   });
 
   test("never outputs bare additionalContext at top level (old wrong shape)", (t) => {
-    // When .auth-attempted already exists (second invocation), the hook exits quickly.
-    // Create it ahead of time so this test doesn't incur the 25s auth timeout.
     const tmpDir = makeTmpDir();
-    const supermemoryDir = join(tmpDir, ".codex", "supermemory");
-    mkdirSync(supermemoryDir, { recursive: true });
-    writeFileSync(join(supermemoryDir, ".auth-attempted"), new Date().toISOString());
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
 
     const result = spawnSync("node", [recallBin], {
@@ -809,11 +1006,7 @@ describe("recall hook output envelope", () => {
   });
 
   test("exits with code 0", (t) => {
-    // Pre-create .auth-attempted so the hook returns quickly without the 25s timeout.
     const tmpDir = makeTmpDir();
-    const supermemoryDir = join(tmpDir, ".codex", "supermemory");
-    mkdirSync(supermemoryDir, { recursive: true });
-    writeFileSync(join(supermemoryDir, ".auth-attempted"), new Date().toISOString());
     t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
 
     const result = spawnSync("node", [recallBin], {

@@ -2,7 +2,7 @@ import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { isConfigured, CONFIG, PLUGIN_VERSION, reloadApiKey } from "../config.js";
-import { SupermemoryClient } from "../services/client.js";
+import { HOOK_API_TIMEOUT_MS, SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
@@ -13,6 +13,17 @@ import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js
 const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
 const UPDATE_COMMAND = "npx codex-supermemory@latest install";
+const SESSION_START_HOOK_TIMEOUT_MS = 30_000;
+const SESSION_START_AUTH_TIMEOUT_MS = 25_000;
+
+function getSessionStartAuthTimeoutMs(): number {
+  const configured = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
+  const requested = Number.isFinite(configured) && configured > 0
+    ? configured
+    : SESSION_START_AUTH_TIMEOUT_MS;
+  // Leave room for the hard-capped profile/update requests and hook teardown.
+  return Math.min(requested, SESSION_START_HOOK_TIMEOUT_MS - HOOK_API_TIMEOUT_MS - 2_000);
+}
 
 interface CodexHookPayload {
   session_id?: string;
@@ -20,14 +31,19 @@ interface CodexHookPayload {
   [key: string]: unknown;
 }
 
-function exitWithContext(additionalContext: string): never {
-  if (additionalContext) {
+function exitWithContext(additionalContext: string, systemMessage?: string): never {
+  if (additionalContext || systemMessage) {
     process.stdout.write(
       JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "SessionStart",
-          additionalContext,
-        },
+        ...(systemMessage ? { systemMessage } : {}),
+        ...(additionalContext
+          ? {
+              hookSpecificOutput: {
+                hookEventName: "SessionStart",
+                additionalContext,
+              },
+            }
+          : {}),
       })
     );
   }
@@ -60,7 +76,7 @@ async function main() {
       } catch {}
 
       try {
-        await startAuthFlow();
+        await startAuthFlow(getSessionStartAuthTimeoutMs());
         reloadApiKey();
         try { unlinkSync(AUTH_ATTEMPTED_FILE); } catch {}
       } catch {
@@ -95,7 +111,11 @@ async function main() {
   log("session-start: begin", { sessionId, tags });
 
   try {
-    const profileResult = await client.getProfileMany(tags.allReads);
+    const profileResult = await client.getProfileMany(
+      tags.allReads,
+      undefined,
+      { timeoutMs: HOOK_API_TIMEOUT_MS },
+    );
     const seen = getSeenFacts(sessionId);
     const { text, newFacts } = formatCombinedContext(
       {
@@ -107,6 +127,13 @@ async function main() {
       CONFIG.maxProfileItems,
       seen,
     );
+
+    if (!profileResult.success) {
+      exitWithContext(
+        await updateCheck ?? "",
+        "◪ supermemory · profile unavailable; continuing without recalled context",
+      );
+    }
 
     if (newFacts.length > 0) {
       addSeenFacts(sessionId, newFacts);
@@ -120,10 +147,16 @@ async function main() {
     exitWithContext(await updateCheck ?? "");
   } catch (error) {
     log("session-start: error", { error: String(error) });
-    exitWithContext(await updateCheck ?? "");
+    exitWithContext(
+      await updateCheck ?? "",
+      "◪ supermemory · profile unavailable; continuing without recalled context",
+    );
   }
 }
 
 main().catch(() => {
-  exitWithContext("");
+  exitWithContext(
+    "",
+    "◪ supermemory · profile unavailable; continuing without recalled context",
+  );
 });

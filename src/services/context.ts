@@ -1,6 +1,9 @@
 import type { ProfileWithSearchResult, SearchResponse } from "./client.js";
 import { factKey } from "./factCache.js";
-import { memoryText } from "./resultText.js";
+import { boundedMemoryText, memoryText } from "./resultText.js";
+
+const ATTRIBUTION_GUIDANCE =
+  "Items marked ◪ were recalled from supermemory. Use them when relevant; if you mention the source, say \"from supermemory\".";
 
 interface ProfileShape {
   static?: string[];
@@ -54,21 +57,29 @@ export function formatCombinedContext(
 
   // Collect profile items, filtering out already-seen facts
   if (result.success && result.profile) {
-    const profileKeys = new Set(currentFactKeys);
-    const items = [...(result.profile.static ?? []), ...(result.profile.dynamic ?? [])]
-      .map((s) => s.trim())
-      .filter((s) => {
-        if (!s) return false;
-        const key = factKey(s);
-        if (profileKeys.has(key)) return false;
-        profileKeys.add(key);
-        return true;
-      })
-      .slice(0, maxProfileItems);
+    const takeFresh = (facts: string[]): string[] => {
+      if (maxProfileItems <= 0) return [];
+      const items: string[] = [];
+      for (const fact of facts) {
+        const item = fact.trim();
+        if (!item) continue;
+        const key = factKey(item);
+        if (currentFactKeys.has(key)) continue;
+        currentFactKeys.add(key);
+        items.push(item);
+        if (items.length >= maxProfileItems) break;
+      }
+      return items;
+    };
+    // Match Claude's profile budget: maxProfileItems applies independently to
+    // persistent and recent facts so one section cannot starve the other.
+    const items = [
+      ...takeFresh(result.profile.static ?? []),
+      ...takeFresh(result.profile.dynamic ?? []),
+    ];
     if (items.length > 0) {
-      for (const item of items) currentFactKeys.add(factKey(item));
       parts.push(
-        `[Memory Profile]\n${items.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
+        `[Memory Profile]\n${items.map((s, i) => `${i + 1}. ◪ ${s}`).join("\n")}`
       );
       newFacts.push(...items);
     }
@@ -97,7 +108,9 @@ export function formatCombinedContext(
           .filter((label): label is string => typeof label === "string" && label.trim().length > 0);
         allMemories.push({
           text,
-          display: labels.length > 0 ? `[${labels.join(" — ")}] ${text}` : text,
+          display: labels.length > 0
+            ? `◪ [${labels.join(" — ")}] ${boundedMemoryText(r)}`
+            : `◪ ${boundedMemoryText(r)}`,
         });
       }
     }
@@ -115,7 +128,10 @@ export function formatCombinedContext(
     }
   }
 
-  return { text: parts.join("\n\n"), newFacts };
+  return {
+    text: parts.length > 0 ? `${ATTRIBUTION_GUIDANCE}\n\n${parts.join("\n\n")}` : "",
+    newFacts,
+  };
 }
 
 /**
@@ -140,7 +156,7 @@ export function formatContextForPrompt(
   if (searchResult.success && searchResult.results && searchResult.results.length > 0) {
     const memories = searchResult.results
       .slice(0, maxMemories)
-      .map((r, i) => `${i + 1}. ${memoryText(r)}`)
+      .map((r, i) => `${i + 1}. ${boundedMemoryText(r)}`)
       .filter((m) => m.trim().length > 2)
       .join("\n");
     if (memories) {

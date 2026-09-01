@@ -18,7 +18,7 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Clear the auth-attempted marker so the recall hook will try browser auth again.
+  // Clear the marker so a later SessionStart can offer browser auth again.
   try {
     if (existsSync(AUTH_ATTEMPTED_FILE)) unlinkSync(AUTH_ATTEMPTED_FILE);
   } catch {}

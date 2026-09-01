@@ -298,7 +298,7 @@ export function getRecallModeSummary(): string {
     return "advisory: prompt the agent to search memory when needed";
   }
   if (CONFIG.captureEveryNTurns > 0) {
-    return `unified: session-start profile + capture every ${CONFIG.captureEveryNTurns} turns + session-end flush`;
+    return `unified: session-start profile + capture every ${CONFIG.captureEveryNTurns} turns + turn-stop flush`;
   }
-  return "unified: session-start profile + session-end flush only";
+  return "unified: session-start profile + turn-stop flush only";
 }

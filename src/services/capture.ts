@@ -6,6 +6,7 @@
 import { existsSync } from "node:fs";
 import {
   SupermemoryClient,
+  HOOK_API_TIMEOUT_MS,
   USER_ENTITY_CONTEXT,
 } from "./client.js";
 import { log } from "./logger.js";
@@ -15,7 +16,11 @@ import {
   formatTranscript,
   findTranscriptPath,
 } from "./transcript.js";
-import { getLastCapturedIndex, setLastCapturedIndex } from "./tracker.js";
+import {
+  getLastCapturedIndex,
+  setLastCapturedIndex,
+  withSessionCaptureLock,
+} from "./tracker.js";
 import { filterBySignals, groupEntriesIntoTurns } from "./signals.js";
 import type { ResolvedTags } from "./tags.js";
 
@@ -57,12 +62,35 @@ export async function captureEntries(
   tags: Pick<ResolvedTags, "canonical" | "project" | "user" | "projectName" | "projectId">,
   options: CaptureOptions = {},
 ): Promise<void> {
-  const { requireMinEntries = 0, requireMinTurns = 0 } = options;
-
   if (!transcriptPath || !existsSync(transcriptPath)) {
     log(`${caller}: no transcript to capture from`, { sessionId, transcriptPath });
     return;
   }
+
+  const acquired = await withSessionCaptureLock(sessionId, async () => {
+    await captureEntriesLocked(
+      caller,
+      client,
+      sessionId,
+      transcriptPath,
+      tags,
+      options,
+    );
+  });
+  if (!acquired) {
+    log(`${caller}: capture lock timed out`, { sessionId });
+  }
+}
+
+async function captureEntriesLocked(
+  caller: string,
+  client: SupermemoryClient,
+  sessionId: string,
+  transcriptPath: string,
+  tags: Pick<ResolvedTags, "canonical" | "project" | "user" | "projectName" | "projectId">,
+  options: CaptureOptions,
+): Promise<void> {
+  const { requireMinEntries = 0, requireMinTurns = 0 } = options;
 
   const entries = parseTranscript(transcriptPath);
   if (entries.length === 0) {
@@ -151,6 +179,7 @@ export async function captureEntries(
     const result = await client.addMemory(content, tags.canonical, metadata, {
       customId: sessionId,
       entityContext: USER_ENTITY_CONTEXT,
+      timeoutMs: HOOK_API_TIMEOUT_MS,
     });
 
     if (!result.success) {

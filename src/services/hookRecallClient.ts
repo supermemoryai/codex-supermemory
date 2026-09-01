@@ -1,7 +1,7 @@
 import { CONFIG, getApiKeyValue, getBaseUrl } from "../config.js";
 import type { ProfileWithSearchResult, SearchResultItem } from "./client.js";
 import { mergeProfileResults } from "./resultMerge.js";
-import { boundedMemoryText, recallProvenance } from "./resultText.js";
+import { memoryText, recallProvenance } from "./resultText.js";
 
 export const HOOK_RECALL_TIMEOUT_MS = 3000;
 
@@ -35,7 +35,8 @@ function normalizeProfileResponse(raw: unknown): ProfileWithSearchResult {
       const provenance = recallProvenance(result);
       return {
         id: result.id,
-        memory: boundedMemoryText(result),
+        memory: memoryText(result),
+        score: result.score,
         similarity: result.similarity,
         title: provenance.title,
         filepath: provenance.filepath,

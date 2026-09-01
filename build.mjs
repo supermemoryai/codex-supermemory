@@ -24,7 +24,7 @@ const sharedConfig = {
 
 const executableEntries = [
   { in: "src/cli.ts", out: "dist/cli.js" },
-  ...["recall", "flush", "session-start"].map((n) => ({
+  ...["recall", "capture-turn", "flush", "session-start"].map((n) => ({
     in: `src/hooks/${n}.ts`,
     out: `dist/hooks/${n}.js`,
   })),
@@ -44,6 +44,9 @@ const libraryEntries = [
   { in: "src/services/factCache.ts", out: "dist/services/factCache.js" },
   { in: "src/services/recallPolicy.ts", out: "dist/services/recallPolicy.js" },
   { in: "src/services/hookRecallClient.ts", out: "dist/services/hookRecallClient.js" },
+  { in: "src/services/client.ts", out: "dist/services/client.js" },
+  { in: "src/services/context.ts", out: "dist/services/context.js" },
+  { in: "src/services/tracker.ts", out: "dist/services/tracker.js" },
 ];
 
 await Promise.all(

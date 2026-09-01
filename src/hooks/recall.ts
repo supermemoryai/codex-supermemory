@@ -1,19 +1,15 @@
-import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { homedir } from "node:os";
-import { isConfigured, CONFIG, reloadApiKey, getContainerCatalog } from "../config.js";
-import { SupermemoryClient } from "../services/client.js";
+import { isConfigured, CONFIG, getContainerCatalog } from "../config.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
-import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
-import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
 import { getHookProfileWithSearchMany } from "../services/hookRecallClient.js";
 import { prepareRecallQuery, shouldRecallPrompt } from "../services/recallPolicy.js";
 
-const AUTH_ATTEMPTED_FILE = join(homedir(), ".codex", "supermemory", ".auth-attempted");
 const LOGGED_OUT_FILE = join(homedir(), ".codex", "supermemory", ".logged-out");
 
 interface CodexHookPayload {
@@ -25,14 +21,19 @@ interface CodexHookPayload {
   [key: string]: unknown;
 }
 
-function exitWithContext(additionalContext: string): never {
-  if (additionalContext) {
+function exitWithContext(additionalContext: string, systemMessage?: string): never {
+  if (additionalContext || systemMessage) {
     process.stdout.write(
       JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
-          additionalContext,
-        },
+        ...(systemMessage ? { systemMessage } : {}),
+        ...(additionalContext
+          ? {
+              hookSpecificOutput: {
+                hookEventName: "UserPromptSubmit",
+                additionalContext,
+              },
+            }
+          : {}),
       })
     );
   }
@@ -53,38 +54,12 @@ async function main() {
       exitWithContext("");
     }
 
-    const alreadyAttempted = existsSync(AUTH_ATTEMPTED_FILE);
-
-    if (!alreadyAttempted) {
-      try {
-        mkdirSync(dirname(AUTH_ATTEMPTED_FILE), { recursive: true });
-        writeFileSync(AUTH_ATTEMPTED_FILE, new Date().toISOString());
-      } catch {}
-
-      try {
-        log("recall: no API key, starting browser auth flow");
-        await startAuthFlow();
-        reloadApiKey();
-        try { unlinkSync(AUTH_ATTEMPTED_FILE); } catch {}
-        log("recall: auth flow completed");
-      } catch (authErr) {
-        const isTimeout =
-          authErr instanceof Error && authErr.message === "AUTH_TIMEOUT";
-        exitWithContext(
-          "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-          (isTimeout
-            ? "Authentication timed out. Please complete login in the browser.\n"
-            : "Authentication failed.\n") +
-          `If the browser did not open, visit: ${AUTH_BASE_URL}\n` +
-          "Run /supermemory-login to try again, or set SUPERMEMORY_CODEX_API_KEY manually."
-        );
-      }
-    } else {
-      exitWithContext(
-        "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-        "Run /supermemory-login to authenticate, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
-      );
-    }
+    // UserPromptSubmit has a 5s backstop and must never launch the interactive
+    // browser flow. SessionStart and /supermemory-login own authentication.
+    exitWithContext(
+      "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
+      "Run /supermemory-login to authenticate, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
+    );
   }
 
   let payload: CodexHookPayload = {};
@@ -110,16 +85,6 @@ async function main() {
     recallMode: CONFIG.recallMode,
   });
 
-  const transcriptPath = resolveTranscriptPath(payload.transcript_path, sessionId);
-  const client = new SupermemoryClient();
-
-  if (CONFIG.captureEveryNTurns > 0) {
-    await captureEntries("recall", client, sessionId, transcriptPath, tags, {
-      requireMinEntries: 2,
-      requireMinTurns: CONFIG.captureEveryNTurns,
-    });
-  }
-
   if (CONFIG.recallMode === "off") {
     exitWithContext("");
   }
@@ -135,6 +100,10 @@ async function main() {
       tags.allReads,
       prepareRecallQuery(query),
     );
+
+    if (!profileResult.success) {
+      exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
+    }
 
     const seen = getSeenFacts(sessionId);
     const { text, newFacts } = formatCombinedContext(
@@ -175,7 +144,7 @@ async function main() {
     }
   } catch (error) {
     log("recall: error", { error: String(error) });
-    exitWithContext("");
+    exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
   }
 }
 

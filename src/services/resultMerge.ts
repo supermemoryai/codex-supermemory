@@ -4,7 +4,6 @@ import type {
   SearchResultItem,
 } from "./client.js";
 import {
-  boundedMemoryText,
   memoryText,
   recallProvenance,
   RECALL_MAX_RESULTS,
@@ -32,7 +31,18 @@ function searchKey(result: SearchResultItem): string {
 }
 
 function score(result: SearchResultItem): number {
-  return result.similarity ?? result.score ?? -1;
+  if (Number.isFinite(result.similarity)) return result.similarity as number;
+  if (Number.isFinite(result.score)) return result.score as number;
+  return -1;
+}
+
+function passesRecallThreshold(result: SearchResultItem): boolean {
+  const relevance = Number.isFinite(result.similarity)
+    ? result.similarity as number
+    : Number.isFinite(result.score)
+      ? result.score as number
+      : null;
+  return relevance === null || relevance >= RECALL_MIN_SIMILARITY;
 }
 
 export function mergeSearchResponses(
@@ -95,7 +105,7 @@ export function mergeProfileResults(
       success: true,
       results: (response.searchResults?.results ?? []).filter(
         (result) =>
-          score(result) >= RECALL_MIN_SIMILARITY && memoryText(result).length > 0,
+          passesRecallThreshold(result) && memoryText(result).length > 0,
       ),
       total: response.searchResults?.total ?? 0,
       timing: response.searchResults?.timing,
@@ -113,7 +123,8 @@ export function mergeProfileResults(
               const provenance = recallProvenance(result);
               return {
                 id: result.id,
-                memory: boundedMemoryText(result),
+                memory: memoryText(result),
+                score: result.score,
                 similarity: result.similarity,
                 title: provenance.title,
                 filepath: provenance.filepath,

@@ -17,7 +17,11 @@ export interface Credentials {
 
 const AUTH_BASE_URL =
   process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
-const AUTH_TIMEOUT = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT) || 5 * 60_000;
+const configuredAuthTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
+const AUTH_TIMEOUT =
+  Number.isFinite(configuredAuthTimeout) && configuredAuthTimeout > 0
+    ? configuredAuthTimeout
+    : 5 * 60_000;
 
 const AUTH_SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><title>Connected - Supermemory</title><style>
@@ -86,7 +90,7 @@ function saveCredentials(apiKey: string, apiBaseUrl?: string): void {
   );
 }
 
-export function startAuthFlow(): Promise<string> {
+export function startAuthFlow(timeoutMs = AUTH_TIMEOUT): Promise<string> {
   return new Promise((resolve, reject) => {
     let resolved = false;
     const stateToken = randomBytes(16).toString("hex");
@@ -160,7 +164,7 @@ export function startAuthFlow(): Promise<string> {
         server.close();
         reject(new Error("AUTH_TIMEOUT"));
       }
-    }, AUTH_TIMEOUT);
+    }, timeoutMs);
   });
 }
 
