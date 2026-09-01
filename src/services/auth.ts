@@ -16,7 +16,7 @@ export interface Credentials {
 }
 
 const AUTH_BASE_URL =
-  process.env.SUPERMEMORY_AUTH_URL || "https://app.supermemory.ai/auth/agent-connect";
+  process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
 const AUTH_TIMEOUT = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT) || 5 * 60_000;
 
 const AUTH_SUCCESS_HTML = `<!DOCTYPE html>
