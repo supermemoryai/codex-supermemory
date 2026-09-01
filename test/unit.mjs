@@ -651,6 +651,16 @@ describe("browser auth opener", () => {
     assert.ok(sessionStartSource.includes("startAuthFlow(getSessionStartAuthTimeoutMs())"));
     assert.ok(!existsSync(new URL("../src/skills/login.ts", import.meta.url)));
   });
+
+  test("SessionStart keeps update notices out of model context", () => {
+    const sessionStartSource = readFileSync(new URL("../src/hooks/session-start.ts", import.meta.url), "utf-8");
+    const versionCheckSource = readFileSync(new URL("../src/services/version-check.ts", import.meta.url), "utf-8");
+    assert.ok(sessionStartSource.includes("exitWithContext(context, combineContextParts(["));
+    assert.ok(!sessionStartSource.includes("context,\n        updateNotice,"));
+    assert.ok(!sessionStartSource.includes('exitWithContext(await updateCheck ?? ""'));
+    assert.ok(!versionCheckSource.includes("[SUPERMEMORY UPDATE]"));
+    assert.ok(versionCheckSource.includes("Run in your terminal:"));
+  });
 });
 
 // ─── hooks.json format ──────────────────────────────────────────────────────

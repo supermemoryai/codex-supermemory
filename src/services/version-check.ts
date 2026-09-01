@@ -66,8 +66,7 @@ export async function checkNpmUpdate(
 
 export function formatUpdateNotice(info: UpdateInfo): string {
   return [
-    "[SUPERMEMORY UPDATE]",
     `Supermemory update available: v${info.currentVersion} -> v${info.latestVersion}`,
-    `Run: ${info.updateCommand}`,
+    `Run in your terminal: ${info.updateCommand}`,
   ].join("\n");
 }

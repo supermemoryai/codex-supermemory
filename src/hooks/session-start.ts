@@ -121,8 +121,9 @@ async function main() {
 
     if (!profileResult.success) {
       exitWithContext(
-        await updateCheck ?? "",
+        "",
         combineContextParts([
+          await updateCheck,
           "◪ supermemory · profile unavailable; continuing without recalled context",
           markTip(),
         ]),
@@ -138,10 +139,8 @@ This project's memory container: ${tags.canonical}
 
 ${text}
 </supermemory-context>`;
-      exitWithContext(combineContextParts([
-        context,
+      exitWithContext(context, combineContextParts([
         updateNotice,
-      ]), combineContextParts([
         `◪ supermemory · active · ${newFacts.length} ${newFacts.length === 1 ? "memory" : "memories"} loaded for ${tags.projectName}`,
         markTip(),
       ]));
@@ -152,15 +151,19 @@ ${text}
     const activeMessage = storedProfileCount > 0
       ? `◪ supermemory · active · memory context current for ${tags.projectName}`
       : `◪ supermemory · active · no memories saved for ${tags.projectName} yet`;
-    exitWithContext(await updateCheck ?? "", combineContextParts([
+    exitWithContext("", combineContextParts([
+      await updateCheck,
       activeMessage,
       markTip(),
     ]));
   } catch (error) {
     log("session-start: error", { error: String(error) });
     exitWithContext(
-      await updateCheck ?? "",
-      "◪ supermemory · profile unavailable; continuing without recalled context",
+      "",
+      combineContextParts([
+        await updateCheck,
+        "◪ supermemory · profile unavailable; continuing without recalled context",
+      ]),
     );
   }
 }
