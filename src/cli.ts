@@ -39,6 +39,10 @@ const MCP_PROXY_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "mcp-proxy.js");
 const FLUSH_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "flush.js");
 const SESSION_START_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "session-start.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
+const CODEX_PETS_DIR = join(CODEX_DIR, "pets");
+const SUPERMEMORY_PET_DIR = join(CODEX_PETS_DIR, "supermemory");
+const SUPERMEMORY_PET_MARKER = join(SUPERMEMORY_PET_DIR, ".codex-supermemory-owned");
+const SUPERMEMORY_PET_ID = "supermemory";
 const RECALL_TIMEOUT_SECONDS = 5;
 const RECALL_APPROVE_TIMEOUT_SECONDS = 5;
 const FLUSH_TIMEOUT_SECONDS = 30;
@@ -75,6 +79,7 @@ const LEGACY_SKILLS = [
 
 const SCRIPT_DIR = getScriptDir();
 const DIST_HOOKS_DIR = join(SCRIPT_DIR, "hooks");
+const DIST_PET_DIR = join(SCRIPT_DIR, "pet");
 
 function configParseError(filePath: string, parser: string, cause: unknown): Error {
   const detail = cause instanceof Error ? cause.message : String(cause);
@@ -124,13 +129,42 @@ function readHooksJson(): HookEvents {
   }
 }
 
-function mergeConfigToml(enable: boolean) {
+function ownsSupermemoryPet(): boolean {
+  return existsSync(SUPERMEMORY_PET_MARKER);
+}
+
+function installPetAssets(): boolean {
+  if (existsSync(SUPERMEMORY_PET_DIR) && !ownsSupermemoryPet()) {
+    console.warn(
+      `! Kept existing unowned pet directory at ${SUPERMEMORY_PET_DIR}`,
+    );
+    return false;
+  }
+
+  mkdirSync(SUPERMEMORY_PET_DIR, { recursive: true });
+  copyFileSync(join(DIST_PET_DIR, "pet.json"), join(SUPERMEMORY_PET_DIR, "pet.json"));
+  copyFileSync(
+    join(DIST_PET_DIR, "spritesheet.png"),
+    join(SUPERMEMORY_PET_DIR, "spritesheet.png"),
+  );
+  writeFileSync(SUPERMEMORY_PET_MARKER, "codex-supermemory\n");
+  return true;
+}
+
+function removePetAssets(): void {
+  if (ownsSupermemoryPet()) {
+    rmSync(SUPERMEMORY_PET_DIR, { recursive: true, force: true });
+  }
+}
+
+function mergeConfigToml(enable: boolean, managePet: boolean): boolean {
   if (!enable && !existsSync(CODEX_CONFIG_TOML)) {
     // Nothing to disable — file doesn't exist yet.
-    return;
+    return false;
   }
 
   const config = readConfigToml();
+  let persistentIndicatorEnabled = false;
 
   // Hooks are enabled by default in current Codex. Remove only the deprecated
   // alias written by older codex-supermemory releases; preserve any explicit
@@ -148,6 +182,19 @@ function mergeConfigToml(enable: boolean) {
       command: "node",
       args: [MCP_PROXY_SCRIPT],
     };
+
+    if (managePet) {
+      if (!config.tui) config.tui = {};
+      const tui = config.tui as Record<string, unknown>;
+      const hasPetSelection = Object.prototype.hasOwnProperty.call(tui, "pet");
+      if (!hasPetSelection) {
+        tui.pet = SUPERMEMORY_PET_ID;
+        tui.pet_anchor = "screen-bottom";
+      } else if (tui.pet === SUPERMEMORY_PET_ID && tui.pet_anchor === undefined) {
+        tui.pet_anchor = "screen-bottom";
+      }
+      persistentIndicatorEnabled = tui.pet === SUPERMEMORY_PET_ID;
+    }
   } else {
     const mcpServers = config.mcp_servers as Record<string, unknown> | undefined;
     const server = mcpServers?.supermemory as Record<string, unknown> | undefined;
@@ -160,9 +207,17 @@ function mergeConfigToml(enable: boolean) {
       if (mcpServers) delete mcpServers.supermemory;
       if (mcpServers && Object.keys(mcpServers).length === 0) delete config.mcp_servers;
     }
+
+    const tui = config.tui as Record<string, unknown> | undefined;
+    if (managePet && tui?.pet === SUPERMEMORY_PET_ID) {
+      delete tui.pet;
+      if (tui.pet_anchor === "screen-bottom") delete tui.pet_anchor;
+      if (Object.keys(tui).length === 0) delete config.tui;
+    }
   }
 
   writeFileSync(CODEX_CONFIG_TOML, TOML.stringify(config as TOML.JsonMap));
+  return persistentIndicatorEnabled;
 }
 
 interface HookEntry {
@@ -376,15 +431,19 @@ function install() {
   const mcpProxySrc = join(DIST_HOOKS_DIR, "mcp-proxy.js");
   const flushSrc = join(DIST_HOOKS_DIR, "flush.js");
   const sessionStartSrc = join(DIST_HOOKS_DIR, "session-start.js");
+  const petManifestSrc = join(DIST_PET_DIR, "pet.json");
+  const petSpritesheetSrc = join(DIST_PET_DIR, "spritesheet.png");
 
   if (
     !existsSync(recallSrc) ||
     !existsSync(recallApproveSrc) ||
     !existsSync(mcpProxySrc) ||
     !existsSync(flushSrc) ||
-    !existsSync(sessionStartSrc)
+    !existsSync(sessionStartSrc) ||
+    !existsSync(petManifestSrc) ||
+    !existsSync(petSpritesheetSrc)
   ) {
-    console.error("Error: Hook scripts not found. Please reinstall the package.");
+    console.error("Error: Installation assets not found. Please reinstall the package.");
     process.exit(1);
   }
 
@@ -423,9 +482,17 @@ function install() {
   console.log(`✓ Installed hooks and MCP proxy to ${SUPERMEMORY_HOOKS_DIR}`);
   console.log(`✓ Installed the supermemory-status skill to ${CODEX_SKILLS_DIR}`);
 
-  // Merge config.toml (hosted MCP server)
-  mergeConfigToml(true);
+  // Install the persistent TUI mark without overwriting an existing pet.
+  const petInstalled = installPetAssets();
+
+  // Merge config.toml (hosted MCP server + persistent mark)
+  const persistentIndicatorEnabled = mergeConfigToml(true, petInstalled);
   console.log(`✓ Registered the Supermemory MCP server in ${CODEX_CONFIG_TOML}`);
+  if (persistentIndicatorEnabled) {
+    console.log("✓ Enabled the persistent Supermemory mark at the bottom of Codex");
+  } else if (petInstalled) {
+    console.log("✓ Installed the Supermemory mark and preserved your existing Codex pet selection");
+  }
 
   // Merge hooks.json
   mergeHooksJson(true);
@@ -438,6 +505,7 @@ You now have:
   • Automatic session and prompt recall (${getRecallModeSummary()})
   • Hosted Supermemory MCP tools for deeper search and explicit memory operations
   • The supermemory-status skill for connection diagnostics
+  • A persistent Supermemory mark in compatible Codex terminals${persistentIndicatorEnabled ? "" : " (existing pet selection preserved)"}
 
 ${hadExistingConfig
     ? "Existing recall/capture preferences were preserved in ~/.codex/supermemory.json.\nSet recallMode to direct, off, or advisory to change recall behavior.\n"
@@ -463,8 +531,12 @@ function uninstall() {
   mergeHooksJson(false);
   console.log(`✓ Removed hooks from ${CODEX_HOOKS_JSON}`);
 
-  mergeConfigToml(false);
+  const petOwned = ownsSupermemoryPet();
+  mergeConfigToml(false, petOwned);
   console.log(`✓ Removed the Supermemory MCP server from ${CODEX_CONFIG_TOML}`);
+
+  removePetAssets();
+  if (petOwned) console.log(`✓ Removed the persistent Supermemory mark from ${SUPERMEMORY_PET_DIR}`);
 
   if (existsSync(SUPERMEMORY_HOOKS_DIR)) {
     rmSync(SUPERMEMORY_HOOKS_DIR, { recursive: true, force: true });
@@ -539,6 +611,7 @@ function status() {
   );
 
   let mcpInstalled = false;
+  let persistentIndicatorEnabled = false;
   if (configTomlExists) {
     try {
       const config = readConfigToml();
@@ -548,6 +621,9 @@ function status() {
         Array.isArray(server.args) &&
         server.args.length === 1 &&
         server.args[0] === MCP_PROXY_SCRIPT;
+      persistentIndicatorEnabled =
+        (config.tui as Record<string, unknown> | undefined)?.pet === SUPERMEMORY_PET_ID &&
+        ownsSupermemoryPet();
     } catch {}
   }
 
@@ -558,6 +634,7 @@ function status() {
   console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
   console.log(`  MCP server:    ${mcpInstalled ? "✓ registered (hosted tools via local proxy)" : "✗ not registered"}`);
   console.log(`  Status skill:  ${statusSkillInstalled ? "✓ installed" : "✗ not installed"}`);
+  console.log(`  Persistent mark: ${persistentIndicatorEnabled ? "✓ enabled" : ownsSupermemoryPet() ? "○ installed, another pet selection is active" : "✗ not installed"}`);
   console.log(`  config.toml:   ${configTomlExists ? "✓ exists" : "✗ not found"}`);
 
   if (!apiKey || !hooksInstalled || !hooksEnabled || !mcpInstalled || !statusSkillInstalled) {

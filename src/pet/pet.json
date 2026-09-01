@@ -1,0 +1,12 @@
+{
+  "id": "supermemory",
+  "displayName": "Supermemory",
+  "description": "A quiet persistent indicator that Supermemory is installed",
+  "spritesheetPath": "spritesheet.png",
+  "frame": {
+    "width": 192,
+    "height": 208,
+    "columns": 8,
+    "rows": 9
+  }
+}

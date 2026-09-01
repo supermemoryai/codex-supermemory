@@ -802,6 +802,10 @@ describe("integration: install/uninstall", () => {
     assert.deepEqual(toml.mcp_servers.supermemory.args, [
       join(codexDir, "supermemory", "mcp-proxy.js"),
     ]);
+    assert.equal(toml.tui.pet, "supermemory");
+    assert.equal(toml.tui.pet_anchor, "screen-bottom");
+    assert.ok(existsSync(join(codexDir, "pets", "supermemory", "pet.json")));
+    assert.ok(existsSync(join(codexDir, "pets", "supermemory", "spritesheet.png")));
     const config = JSON.parse(readFileSync(join(codexDir, "supermemory.json"), "utf-8"));
     assert.equal(config.recallMode, "direct");
     assert.equal(config.captureEveryNTurns, 0);
@@ -857,6 +861,7 @@ describe("integration: install/uninstall", () => {
 
     const skillsDir = join(codexDir, "skills");
     assert.ok(!existsSync(join(skillsDir, "supermemory-status")));
+    assert.ok(!existsSync(join(codexDir, "pets", "supermemory")));
   });
 
   test("uninstall drops empty [features] section", (t) => {
@@ -948,7 +953,10 @@ describe("integration: install/uninstall", () => {
 
   test("install merges into existing valid config.toml", (t) => {
     const { tmpDir, configPath } = setupCodexHome(t);
-    writeFileSync(configPath, 'model = "gpt-5"\n\n[features]\nweb_search = true\n');
+    writeFileSync(
+      configPath,
+      'model = "gpt-5"\n\n[features]\nweb_search = true\n\n[tui]\npet = "dewey"\npet_anchor = "composer"\n',
+    );
 
     const result = runCli(cliBin, "install", tmpDir);
 
@@ -958,6 +966,8 @@ describe("integration: install/uninstall", () => {
     assert.equal(config.features.web_search, true);
     assert.equal(config.features.codex_hooks, undefined);
     assert.equal(config.mcp_servers.supermemory.command, "node");
+    assert.equal(config.tui.pet, "dewey");
+    assert.equal(config.tui.pet_anchor, "composer");
   });
 });
 

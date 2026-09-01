@@ -27,6 +27,8 @@ and the lessons learned across every project — automatically.
   fast cold starts.
 - 🔧 **Focused status skill** — `$supermemory-status` checks authentication and connectivity;
   memory operations come from MCP instead of separate command skills.
+- ◪ **Persistent CLI mark** — compatible Codex terminals keep a quiet Supermemory badge
+  at the bottom of the TUI, while hook notices report live recall and save activity.
 
 ## Quick start
 
@@ -63,6 +65,11 @@ The installer:
 - Registers the hooks in `~/.codex/hooks.json`
 - Copies pre-bundled hook scripts to `~/.codex/supermemory/`
 - Installs only the `supermemory-status` skill to `~/.codex/skills/`
+- Installs a static custom TUI badge to `~/.codex/pets/supermemory/`
+
+The installer selects the badge only when no Codex pet preference already exists. Terminals
+without a supported inline-image protocol may not render it; recall and capture continue to work.
+Use Codex's `/pet` picker to disable or change the persistent badge.
 
 The hooks are tolerant: if Supermemory is unreachable, the API key is missing, or
 anything else fails, they exit cleanly without breaking your Codex session.
