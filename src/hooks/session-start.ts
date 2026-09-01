@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { isConfigured, CONFIG, PLUGIN_VERSION, reloadApiKey } from "../config.js";
 import { HOOK_API_TIMEOUT_MS, SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
-import { formatCombinedContext } from "../services/context.js";
+import { formatSessionContext } from "../services/context.js";
 import { log } from "../services/logger.js";
 import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
@@ -108,15 +108,19 @@ async function main() {
       { timeoutMs: HOOK_API_TIMEOUT_MS },
     );
     const seen = getSeenFacts(sessionId);
-    const { text, newFacts } = formatCombinedContext(
+    const { text, newFacts } = formatSessionContext(
       {
         success: profileResult.success,
         profile: profileResult.profile,
         searchResults: undefined,
       },
-      0,
-      CONFIG.maxProfileItems,
-      seen,
+      {
+        maxProfileItems: CONFIG.maxProfileItems,
+        maxTokens: CONFIG.maxRecallTokens,
+        seenFacts: seen,
+        projectName: tags.projectName,
+        containerTag: tags.canonical,
+      },
     );
 
     if (!profileResult.success) {
@@ -133,13 +137,7 @@ async function main() {
     if (newFacts.length > 0) {
       addSeenFacts(sessionId, newFacts);
       const updateNotice = await updateCheck;
-      const context = `<supermemory-context>
-Recalled memory for this project (${tags.projectName}). Every line marked ◪ comes from supermemory — when citing one, keep the mark and phrase it naturally. If you name the source, say "from supermemory" — never "from memory".
-This project's memory container: ${tags.canonical}
-
-${text}
-</supermemory-context>`;
-      exitWithContext(context, combineContextParts([
+      exitWithContext(text, combineContextParts([
         updateNotice,
         `◪ supermemory · active · ${newFacts.length} ${newFacts.length === 1 ? "memory" : "memories"} loaded for ${tags.projectName}`,
         markTip(),
@@ -158,11 +156,14 @@ ${text}
     ]));
   } catch (error) {
     log("session-start: error", { error: String(error) });
+    const message = error instanceof RangeError
+      ? `◪ supermemory · invalid recall configuration: ${error.message}`
+      : "◪ supermemory · profile unavailable; continuing without recalled context";
     exitWithContext(
       "",
       combineContextParts([
         await updateCheck,
-        "◪ supermemory · profile unavailable; continuing without recalled context",
+        message,
       ]),
     );
   }

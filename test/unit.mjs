@@ -254,6 +254,43 @@ describe("container tags", () => {
     assert.ok(tags.personalReads.includes("shared_personal"));
     assert.equal(tags.projectReads[0], "shared_project");
   });
+
+  test("adds configured recall containers only when automatic recall is enabled", (t) => {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    const repoDir = join(tmpDir, "repo");
+    mkdirSync(repoDir, { recursive: true });
+    runGit(["init"], repoDir);
+
+    const readTags = (name, config) => {
+      const homeDir = join(tmpDir, name);
+      mkdirSync(join(homeDir, ".codex"), { recursive: true });
+      writeFileSync(join(homeDir, ".codex", "supermemory.json"), JSON.stringify(config));
+      const script = `
+        import { getAllReadTags } from ${JSON.stringify(tagsModule)};
+        console.log(JSON.stringify(getAllReadTags(process.argv.at(-1))));
+      `;
+      const result = spawnSync("node", ["--input-type=module", "-e", script, repoDir], {
+        env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+        encoding: "utf-8",
+      });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+
+    const customContainers = [
+      { tag: " coding_personal ", description: "Personal coding context" },
+      { tag: "coding_personal", description: "Duplicate" },
+      { tag: "copla_company", description: "Company context" },
+    ];
+    const baseline = readTags("baseline", {});
+    const disabled = readTags("disabled", { autoRecallContainers: false, customContainers });
+    const enabled = readTags("enabled", { autoRecallContainers: true, customContainers });
+
+    assert.deepEqual(disabled, baseline);
+    assert.equal(enabled.filter((tag) => tag === "coding_personal").length, 1);
+    assert.equal(enabled.filter((tag) => tag === "copla_company").length, 1);
+  });
 });
 
 describe("cross-container result merging", () => {
@@ -303,10 +340,11 @@ describe("cross-container result merging", () => {
     });
     assert.equal(result.status, 0, result.stderr);
     const results = JSON.parse(result.stdout);
-    assert.equal(results.length, 5);
-    assert.deepEqual(results.map((item) => item.memory), [
+    assert.equal(results.length, 6);
+    assert.deepEqual(results.slice(0, 5).map((item) => item.memory), [
       "memory value", "chunk value", "content value", "text value", "context value",
     ]);
+    assert.equal(results[5].memory.length, 360);
     assert.equal(results[0].title, "Decision");
     assert.equal(results[0].filepath, "src/a.ts");
   });
@@ -346,6 +384,43 @@ describe("cross-container result merging", () => {
     assert.ok(results[1].memory.length > 300);
     assert.notEqual(results[1].memory, results[2].memory);
     assert.ok(!results.some((item) => item.memory === "weak score only"));
+  });
+
+  test("keeps the default five-result limit when configured with five", () => {
+    const script = `
+      import { mergeProfileResults } from ${JSON.stringify(mergeModule)};
+      const results = Array.from({ length: 10 }, (_, index) => ({
+        id: String(index), memory: \`memory \${index}\`, similarity: 1 - index / 100,
+      }));
+      const merged = mergeProfileResults([{
+        success: true,
+        profile: { static: [], dynamic: [] },
+        searchResults: { results, total: results.length },
+      }], 5);
+      console.log(merged.searchResults.results.length);
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(Number(result.stdout), 5);
+  });
+
+  test("globally ranks, deduplicates, and returns fifteen results when configured", () => {
+    const script = `
+      import { mergeProfileResults } from ${JSON.stringify(mergeModule)};
+      const results = Array.from({ length: 20 }, (_, index) => ({
+        id: String(index), memory: \`memory \${index}\`, similarity: 1 - index / 100,
+      }));
+      const merged = mergeProfileResults([
+        { success: true, profile: { static: [], dynamic: [] }, searchResults: { results: results.slice(0, 10), total: 10 } },
+        { success: true, profile: { static: [], dynamic: [] }, searchResults: { results: [{ ...results[0], id: "duplicate" }, ...results.slice(10)], total: 11 } },
+      ], 15);
+      console.log(JSON.stringify(merged.searchResults.results));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
+    assert.equal(result.status, 0, result.stderr);
+    const results = JSON.parse(result.stdout);
+    assert.equal(results.length, 15);
+    assert.deepEqual(results.map((item) => item.memory), Array.from({ length: 15 }, (_, i) => `memory ${i}`));
   });
 });
 
@@ -497,7 +572,7 @@ describe("hook SDK request bounds", () => {
 describe("combined recall formatting", () => {
   const contextModule = new URL("../dist/services/context.js", import.meta.url).href;
 
-  test("budgets both profile sections and truncates only display text", () => {
+  test("keeps full memory text while budgeting profile sections independently", () => {
     const script = `
       import { formatCombinedContext } from ${JSON.stringify(contextModule)};
       const long = "z".repeat(320) + " durable ending";
@@ -515,9 +590,117 @@ describe("combined recall formatting", () => {
     const output = JSON.parse(result.stdout);
     assert.match(output.text, /1\. ◪ s1/);
     assert.match(output.text, /3\. ◪ d1/);
-    assert.doesNotMatch(output.text, /s3|d3|durable ending/);
+    assert.doesNotMatch(output.text, /s3|d3/);
+    assert.match(output.text, /durable ending/);
     assert.match(output.text, /from supermemory/);
     assert.equal(output.newFacts.at(-1).endsWith("durable ending"), true);
+  });
+
+  test("bounds complete prompt context and returns only emitted memories", () => {
+    const script = `
+      import { formatRecallContext } from ${JSON.stringify(contextModule)};
+      const matches = Array.from({ length: 20 }, (_, index) => ({
+        memory: \`memory-\${index}-\${"x".repeat(1000)}\`,
+        similarity: 1 - index / 100,
+      }));
+      const result = formatRecallContext(matches, {
+        containerTag: "repo_test",
+        maxMemories: 15,
+        maxTokens: 2000,
+        customContainers: [
+          { tag: "coding_personal", description: "Personal coding context" },
+          { tag: "copla_company", description: "Company context" },
+        ],
+      });
+      console.log(JSON.stringify({ result, excluded: matches.at(-1).memory }));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.ok(output.result.text.length <= 8_000);
+    assert.match(output.result.text, /^<supermemory-recall>/);
+    assert.match(output.result.text, /<\/supermemory-recall>$/);
+    assert.match(output.result.text, /coding_personal/);
+    assert.ok(output.result.newFacts.length <= 15);
+    assert.ok(!output.result.newFacts.includes(output.excluded));
+  });
+
+  test("returns up to fifteen static and fifteen dynamic facts within session budget", () => {
+    const script = `
+      import { formatSessionContext } from ${JSON.stringify(contextModule)};
+      const result = formatSessionContext({
+        success: true,
+        profile: {
+          static: Array.from({ length: 20 }, (_, index) => \`static \${index}\`),
+          dynamic: Array.from({ length: 20 }, (_, index) => \`dynamic \${index}\`),
+        },
+      }, {
+        maxProfileItems: 15,
+        maxTokens: 5000,
+        projectName: "project",
+        containerTag: "repo_project",
+      });
+      console.log(JSON.stringify(result));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.newFacts.length, 30);
+    assert.ok(output.text.length <= 20_000);
+    assert.match(output.text, /^<supermemory-context>/);
+    assert.match(output.text, /<\/supermemory-context>$/);
+    assert.ok(!output.newFacts.includes("static 15"));
+    assert.ok(!output.newFacts.includes("dynamic 15"));
+  });
+
+  test("truncates only the final session item and keeps closing markup", () => {
+    const script = `
+      import { formatSessionContext } from ${JSON.stringify(contextModule)};
+      const result = formatSessionContext({
+        success: true,
+        profile: {
+          static: Array.from({ length: 15 }, (_, index) => \`static-\${index}-\${"x".repeat(1500)}\`),
+          dynamic: Array.from({ length: 15 }, (_, index) => \`dynamic-\${index}-\${"y".repeat(1500)}\`),
+        },
+      }, {
+        maxProfileItems: 15,
+        maxTokens: 5000,
+        projectName: "project",
+        containerTag: "repo_project",
+      });
+      console.log(JSON.stringify(result));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.ok(output.text.length <= 20_000);
+    assert.match(output.text, /<\/supermemory-context>$/);
+    assert.ok(output.newFacts.length < 30);
+    assert.match(output.newFacts.at(-1), /…$/);
+  });
+
+  test("rejects invalid token limits with the configured field name", () => {
+    const script = `
+      import { formatRecallContext, formatSessionContext } from ${JSON.stringify(contextModule)};
+      const messages = [];
+      try {
+        formatRecallContext([{ memory: "memory" }], {
+          containerTag: "repo", maxMemories: 1, maxTokens: 0,
+        });
+      } catch (error) { messages.push(error.message); }
+      try {
+        formatSessionContext({ success: true, profile: { static: ["fact"], dynamic: [] } }, {
+          maxProfileItems: 1, maxTokens: Number.NaN, projectName: "project", containerTag: "repo",
+        });
+      } catch (error) { messages.push(error.message); }
+      console.log(JSON.stringify(messages));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), [
+      "maxPromptRecallTokens must be a positive number",
+      "maxRecallTokens must be a positive number",
+    ]);
   });
 });
 
@@ -688,7 +871,7 @@ describe("browser auth opener", () => {
   test("SessionStart keeps update notices out of model context", () => {
     const sessionStartSource = readFileSync(new URL("../src/hooks/session-start.ts", import.meta.url), "utf-8");
     const versionCheckSource = readFileSync(new URL("../src/services/version-check.ts", import.meta.url), "utf-8");
-    assert.ok(sessionStartSource.includes("exitWithContext(context, combineContextParts(["));
+    assert.ok(sessionStartSource.includes("exitWithContext(text, combineContextParts(["));
     assert.ok(!sessionStartSource.includes("context,\n        updateNotice,"));
     assert.ok(!sessionStartSource.includes('exitWithContext(await updateCheck ?? ""'));
     assert.ok(!versionCheckSource.includes("[SUPERMEMORY UPDATE]"));
@@ -904,12 +1087,16 @@ describe("integration: install/uninstall", () => {
     );
     assert.equal(recall.async, undefined);
     assert.equal(recall.timeout, 5);
+    assert.equal(recall.additionalContextLimit, 0);
     assert.equal(recallApprove.async, undefined);
     assert.equal(recallApprove.timeout, 5);
+    assert.equal(recallApprove.additionalContextLimit, undefined);
     assert.equal(recallApproveGroup.matcher, "^mcp__supermemory__");
     assert.ok(!existsSync(join(codexDir, "supermemory", "capture-turn.js")));
     assert.equal(sessionStart.async, undefined);
     assert.equal(sessionStart.timeout, 30);
+    assert.equal(sessionStart.additionalContextLimit, 0);
+    assert.equal(stop.additionalContextLimit, undefined);
   });
 
   test("uninstall removes skill directories", (t) => {

@@ -12,8 +12,6 @@ export interface MemoryTextShape {
 }
 
 export const RECALL_MIN_SIMILARITY = 0.55;
-export const RECALL_MAX_RESULTS = 5;
-export const RECALL_MAX_RESULT_CHARS = 300;
 
 /** Return only a real string field; never stringify objects as `[object Object]`. */
 export function memoryText(result: MemoryTextShape): string {
@@ -27,13 +25,6 @@ export function memoryText(result: MemoryTextShape): string {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
-}
-
-export function boundedMemoryText(
-  result: MemoryTextShape,
-  maxChars = RECALL_MAX_RESULT_CHARS,
-): string {
-  return memoryText(result).replace(/\s+/g, " ").slice(0, maxChars).trim();
 }
 
 function stringValue(...values: unknown[]): string | undefined {

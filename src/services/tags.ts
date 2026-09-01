@@ -460,10 +460,9 @@ export function getLegacyCursorProjectTags(directory: string): string[] {
 function uniqueTags(tags: Array<string | null | undefined>): string[] {
   return [
     ...new Set(
-      tags.filter(
-        (tag): tag is string =>
-          typeof tag === "string" && tag.trim().length > 0,
-      ),
+      tags
+        .map((tag) => typeof tag === "string" ? tag.trim() : "")
+        .filter((tag) => tag.length > 0),
     ),
   ];
 }
@@ -499,6 +498,9 @@ export function getAllReadTags(directory: string): string[] {
   return uniqueTags([
     ...getPersonalReadTags(directory),
     ...getProjectReadTags(directory),
+    ...(CONFIG.autoRecallContainers
+      ? CONFIG.customContainers.map((container) => container.tag)
+      : []),
   ]);
 }
 
