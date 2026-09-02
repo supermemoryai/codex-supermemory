@@ -599,11 +599,12 @@ describe("combined recall formatting", () => {
   test("bounds complete prompt context and returns only emitted memories", () => {
     const script = `
       import { formatRecallContext } from ${JSON.stringify(contextModule)};
+      import { factKey } from ${JSON.stringify(new URL("../dist/services/factCache.js", import.meta.url).href)};
       const matches = Array.from({ length: 20 }, (_, index) => ({
         memory: \`memory-\${index}-\${"x".repeat(1000)}\`,
         similarity: 1 - index / 100,
       }));
-      const result = formatRecallContext(matches, {
+      const options = {
         containerTag: "repo_test",
         maxMemories: 15,
         maxTokens: 2000,
@@ -611,8 +612,13 @@ describe("combined recall formatting", () => {
           { tag: "coding_personal", description: "Personal coding context" },
           { tag: "copla_company", description: "Company context" },
         ],
+      };
+      const result = formatRecallContext(matches, options);
+      const repeated = formatRecallContext([matches[0]], {
+        ...options,
+        seenFacts: new Set(result.newFacts.map(factKey)),
       });
-      console.log(JSON.stringify({ result, excluded: matches.at(-1).memory }));
+      console.log(JSON.stringify({ result, repeated, excluded: matches.at(-1).memory }));
     `;
     const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
     assert.equal(result.status, 0, result.stderr);
@@ -623,6 +629,7 @@ describe("combined recall formatting", () => {
     assert.match(output.result.text, /coding_personal/);
     assert.ok(output.result.newFacts.length <= 15);
     assert.ok(!output.result.newFacts.includes(output.excluded));
+    assert.deepEqual(output.repeated, { text: "", newFacts: [] });
   });
 
   test("returns up to fifteen static and fifteen dynamic facts within session budget", () => {
@@ -656,27 +663,35 @@ describe("combined recall formatting", () => {
   test("truncates only the final session item and keeps closing markup", () => {
     const script = `
       import { formatSessionContext } from ${JSON.stringify(contextModule)};
-      const result = formatSessionContext({
+      import { factKey } from ${JSON.stringify(new URL("../dist/services/factCache.js", import.meta.url).href)};
+      const longFact = "x".repeat(30_000);
+      const profile = {
         success: true,
         profile: {
-          static: Array.from({ length: 15 }, (_, index) => \`static-\${index}-\${"x".repeat(1500)}\`),
-          dynamic: Array.from({ length: 15 }, (_, index) => \`dynamic-\${index}-\${"y".repeat(1500)}\`),
+          static: [longFact],
+          dynamic: [],
         },
-      }, {
+      };
+      const options = {
         maxProfileItems: 15,
         maxTokens: 5000,
         projectName: "project",
         containerTag: "repo_project",
+      };
+      const result = formatSessionContext(profile, options);
+      const repeated = formatSessionContext(profile, {
+        ...options,
+        seenFacts: new Set(result.newFacts.map(factKey)),
       });
-      console.log(JSON.stringify(result));
+      console.log(JSON.stringify({ result, repeated, longFact }));
     `;
     const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
-    assert.ok(output.text.length <= 20_000);
-    assert.match(output.text, /<\/supermemory-context>$/);
-    assert.ok(output.newFacts.length < 30);
-    assert.match(output.newFacts.at(-1), /…$/);
+    assert.ok(output.result.text.length <= 20_000);
+    assert.match(output.result.text, /…\n<\/supermemory-context>$/);
+    assert.deepEqual(output.result.newFacts, [output.longFact]);
+    assert.deepEqual(output.repeated, { text: "", newFacts: [] });
   });
 
   test("rejects invalid token limits with the configured field name", () => {

@@ -79,7 +79,7 @@ function formatBoundedItems(
     if (available > 1) {
       const emitted = `${item.text.slice(0, available - 1)}…`;
       body = `${body}${item.before}${item.prefix}${emitted}${item.suffix}`;
-      newFacts.push(emitted);
+      newFacts.push(item.text);
     }
     break;
   }
