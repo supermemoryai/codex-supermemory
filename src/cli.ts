@@ -181,6 +181,7 @@ function mergeConfigToml(enable: boolean, managePet: boolean): boolean {
     mcpServers.supermemory = {
       command: "node",
       args: [MCP_PROXY_SCRIPT],
+      env_vars: ["SUPERMEMORY_CODEX_API_KEY"],
     };
 
     if (managePet) {

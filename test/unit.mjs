@@ -863,6 +863,9 @@ describe("integration: install/uninstall", () => {
     assert.deepEqual(toml.mcp_servers.supermemory.args, [
       join(codexDir, "supermemory", "mcp-proxy.js"),
     ]);
+    assert.deepEqual(toml.mcp_servers.supermemory.env_vars, [
+      "SUPERMEMORY_CODEX_API_KEY",
+    ]);
     assert.equal(toml.tui.pet, "supermemory");
     assert.equal(toml.tui.pet_anchor, "screen-bottom");
     assert.ok(existsSync(join(codexDir, "pets", "supermemory", "pet.json")));
