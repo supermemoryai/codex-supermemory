@@ -178,11 +178,30 @@ function mergeConfigToml(enable: boolean, managePet: boolean): boolean {
   if (enable) {
     if (!config.mcp_servers) config.mcp_servers = {};
     const mcpServers = config.mcp_servers as Record<string, unknown>;
-    mcpServers.supermemory = {
-      command: "node",
-      args: [MCP_PROXY_SCRIPT],
-      env_vars: ["SUPERMEMORY_CODEX_API_KEY"],
-    };
+
+    // Merge so user-set fields (enabled, timeouts, env, approvals) survive updates.
+    const existing = mcpServers.supermemory;
+    const server: Record<string, unknown> =
+      existing && typeof existing === "object" && !Array.isArray(existing)
+        ? { ...(existing as Record<string, unknown>) }
+        : {};
+
+    server.command = "node";
+    server.args = [MCP_PROXY_SCRIPT];
+
+    const envVars = Array.isArray(server.env_vars)
+      ? server.env_vars.filter((v): v is string => typeof v === "string")
+      : [];
+    if (!envVars.includes("SUPERMEMORY_CODEX_API_KEY")) {
+      envVars.push("SUPERMEMORY_CODEX_API_KEY");
+    }
+    server.env_vars = envVars;
+
+    // stdio entry — these are streamable-HTTP only.
+    delete server.url;
+    delete server.bearer_token_env_var;
+
+    mcpServers.supermemory = server;
 
     if (managePet) {
       if (!config.tui) config.tui = {};
