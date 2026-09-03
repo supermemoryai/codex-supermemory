@@ -2,7 +2,7 @@
 
 # ◪ codex-supermemory
 
-**Persistent memory for OpenAI Codex CLI — powered by [Supermemory](https://supermemory.ai)**
+**Persistent memory for OpenAI Codex CLI, powered by [Supermemory](https://supermemory.ai)**
 
 [![npm version](https://img.shields.io/npm/v/codex-supermemory?color=9C5C10&label=npm)](https://www.npmjs.com/package/codex-supermemory)
 [![license](https://img.shields.io/npm/l/codex-supermemory?color=9C5C10)](#license)
@@ -12,7 +12,7 @@
 
 Codex forgets every session. `codex-supermemory` wires Supermemory into Codex CLI's
 hooks system so your coding agent remembers your stack, preferences, prior decisions,
-and the lessons learned across every project — automatically.
+and the lessons learned across every project, automatically.
 
 <div align="center">
 
@@ -35,7 +35,7 @@ and the lessons learned across every project — automatically.
 
    Alternatively, set `export SUPERMEMORY_CODEX_API_KEY="sm_..."` in your shell profile.
 
-3. **That's it — memory is active.**
+3. **That's it: memory is active.**
 
 ## Features
 
@@ -46,7 +46,7 @@ and the lessons learned across every project — automatically.
 | 🏷️ **Personal + project routing**<br>`sm_scope` metadata keeps automatic/personal memories distinguishable from explicit project knowledge. | 🧩 **Entity-aware extraction**<br>One coding-agent context covers durable preferences and project/codebase facts. |
 | 🔒 **Privacy-aware**<br>Anything wrapped in `<private>...</private>` is redacted before being sent to Supermemory. | ⚡ **Zero-config install**<br>One command sets up `~/.codex/config.toml` and `~/.codex/hooks.json` for you. |
 | 🪶 **No runtime deps in hooks**<br>Hook scripts are pre-bundled with esbuild for fast cold starts. | 🔧 **Focused status skill**<br>`$supermemory-status` checks authentication and connectivity; memory operations come from MCP. |
-| ◪ **Persistent CLI mark**<br>A state-aware TUI badge — accent color follows Codex's live agent state — plus live hook notices. | 🔔 **Update notices**<br>`SessionStart` checks npm for a newer release and surfaces a one-line notice, non-blocking. |
+| ◪ **Persistent CLI mark**<br>A state-aware TUI badge whose accent color follows Codex's live agent state, plus live hook notices. | 🔔 **Update notices**<br>`SessionStart` checks npm for a newer release and surfaces a one-line notice, non-blocking. |
 
 The CLI mark's accent color mirrors Codex's own agent-state palette:
 
@@ -126,7 +126,7 @@ write destination. Older user/personal overrides remain in the legacy read set.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `apiKey` | `string` | — | API key (env var takes precedence, browser auth is preferred). |
+| `apiKey` | `string` | - | API key (env var takes precedence, browser auth is preferred). |
 | `baseUrl` | `string` | `https://api.supermemory.ai` | Supermemory API base URL (`SUPERMEMORY_API_URL`/`SUPERMEMORY_BASE_URL` env vars take precedence). |
 | `similarityThreshold` | `number` | `0.6` | Minimum similarity score for retrieved memories. |
 | `maxMemories` | `number` | `5` | Max memories injected per prompt. |
@@ -139,7 +139,7 @@ write destination. Older user/personal overrides remain in the legacy read set.
 | `debug` | `boolean` | `false` | Enable debug logging. |
 | `recallMode` | `"direct" \| "off" \| "advisory"` | `"direct"` | Directly retrieve relevant memory, disable prompt recall, or inject an advisory directive. |
 | `recallDirective` | `string` | (sensible) | Context injected when `recallMode` is `"advisory"`. |
-| `autoRecallEveryPrompt` | `boolean` | — | Deprecated compatibility key; `true` maps to direct and `false` maps to off. |
+| `autoRecallEveryPrompt` | `boolean` | - | Deprecated compatibility key; `true` maps to direct and `false` maps to off. |
 | `autoSaveEveryTurns` | `number` | `3` | Deprecated compatibility setting; completed turns are captured by `Stop`. |
 | `signalExtraction` | `boolean` | `false` | Enable signal-based filtering (only capture turns with keywords like "prefer", "decided"). |
 | `signalKeywords` | `string[]` | (defaults) | Keywords that trigger signal extraction. |
@@ -163,7 +163,7 @@ context.
 
 When `signalExtraction` is enabled, only conversation turns containing signal keywords
 (like "prefer", "decided", "remember", "bug", "fix") are captured. This reduces noise
-but may miss some context. Disabled by default — all turns are captured.
+but may miss some context. Disabled by default; all turns are captured.
 
 ## Commands
 
@@ -192,5 +192,5 @@ MIT
 ---
 
 <div align="center">
-<sub>◪ is the supermemory mark — whenever you see it (statusline, notices, Codex's answers), that information came from supermemory.</sub>
+<sub>◪ is the supermemory mark. Whenever you see it (statusline, notices, Codex's answers), that information came from supermemory.</sub>
 </div>
