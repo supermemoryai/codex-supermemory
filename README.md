@@ -48,7 +48,6 @@ and the lessons learned across every project, automatically.
 | 🪶 **No runtime deps in hooks**<br>Hook scripts are pre-bundled with esbuild for fast cold starts. | 🔧 **Focused status skill**<br>`$supermemory-status` checks authentication and connectivity; memory operations come from MCP. |
 | ◪ **Persistent CLI mark**<br>A state-aware TUI badge whose accent color follows Codex's live agent state, plus live hook notices. | 🔔 **Update notices**<br>`SessionStart` checks npm for a newer release and surfaces a one-line notice, non-blocking. |
 
-
 ## How it works
 
 Codex CLI supports hooks and MCP servers. `codex-supermemory` registers four hooks, in lifecycle order:
