@@ -537,7 +537,7 @@ Next steps:
 
   Or set SUPERMEMORY_CODEX_API_KEY="sm_..." in your shell profile.
 
-  2. Get an API key at: https://app.supermemory.ai/?view=integrations (if needed)
+  2. Get an API key at: https://console.supermemory.ai (if needed)
 
 Optional: Enable debug logging:
   export SUPERMEMORY_DEBUG=true
