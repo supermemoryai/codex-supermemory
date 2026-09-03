@@ -27,8 +27,11 @@ and the lessons learned across every project — automatically.
   fast cold starts.
 - 🔧 **Focused status skill** — `$supermemory-status` checks authentication and connectivity;
   memory operations come from MCP instead of separate command skills.
-- ◪ **Persistent CLI mark** — compatible Codex terminals keep a quiet Supermemory badge
-  at the bottom of the TUI, while hook notices report live recall and save activity.
+- ◪ **Persistent CLI mark** — compatible Codex terminals keep a Supermemory badge at the
+  bottom of the TUI whose accent color reflects Codex's live agent state (running, ready,
+  blocked, needs input), while hook notices report live recall and save activity.
+- 🔔 **Update notices** — `SessionStart` checks npm for a newer release and surfaces a
+  one-line notice outside the recalled-memory context, without blocking the session.
 
 ## Quick start
 
@@ -38,8 +41,8 @@ and the lessons learned across every project — automatically.
    npx codex-supermemory install
    ```
 
-2. **Start Codex CLI.** On your first prompt, a browser window will open to
-   authenticate with Supermemory automatically.
+2. **Start Codex CLI.** A browser window opens automatically at session start to
+   authenticate with Supermemory.
 
    Alternatively, set `export SUPERMEMORY_CODEX_API_KEY="sm_..."` in your shell profile.
 
@@ -65,7 +68,7 @@ The installer:
 - Registers the hooks in `~/.codex/hooks.json`
 - Copies pre-bundled hook scripts to `~/.codex/supermemory/`
 - Installs only the `supermemory-status` skill to `~/.codex/skills/`
-- Installs a static custom TUI badge to `~/.codex/pets/supermemory/`
+- Installs a state-aware custom TUI badge to `~/.codex/pets/supermemory/`
 
 The installer selects the badge only when no Codex pet preference already exists. Terminals
 without a supported inline-image protocol may not render it; recall and capture continue to work.
@@ -85,10 +88,11 @@ The hash comes from the normalized Git remote, so clones share memory while
 same-named repositories do not collide. Repositories without a remote fall back to
 a local path identity. Codex also reads the previous `user_project_*`,
 `repo_<project-name>`, `codex_user_*`, `codex_project_*`,
-`claudecode_project_*`, `opencode_user_*`, and `opencode_project_*`
-containers, so existing memories remain searchable without duplicating or
-migrating them. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
-path instead of the remote identity.
+`claudecode_project_*`, `opencode_user_*`, `opencode_project_*`,
+`cursor_user_*`, and `cursor_project_*` containers, so existing memories
+remain searchable without duplicating or migrating them. Set
+`SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree path instead of the
+remote identity.
 
 Explicit `projectContainerTag`/`repoContainerTag` overrides remain the canonical
 write destination. Older user/personal overrides remain in the legacy read set.
@@ -100,7 +104,12 @@ write destination. Older user/personal overrides remain in the legacy read set.
 | Variable                       | Purpose                                                |
 | ------------------------------ | ------------------------------------------------------ |
 | `SUPERMEMORY_CODEX_API_KEY`    | Your Supermemory API key (browser auth is preferred).  |
-| `SUPERMEMORY_API_URL`          | Override the Supermemory API base URL (takes precedence over config). |
+| `SUPERMEMORY_API_URL` / `SUPERMEMORY_BASE_URL` | Override the Supermemory API base URL (takes precedence over config). |
+| `SUPERMEMORY_MCP_URL`          | Override the hosted MCP endpoint (default `https://mcp.supermemory.ai/mcp`). |
+| `SUPERMEMORY_AUTH_URL`         | Override the browser-auth base URL (default `https://console.supermemory.ai/auth/connect`). |
+| `SUPERMEMORY_AUTH_TIMEOUT`     | Browser-auth timeout in milliseconds, bounded by the `SessionStart` hook timeout. |
+| `SUPERMEMORY_REPO_TAG`         | Explicit project-container override, checked before the `projectContainerTag` config value. |
+| `SUPERMEMORY_ISOLATE_WORKTREES` | Set to `true` to key the project container on the worktree path instead of the Git remote. |
 | `SUPERMEMORY_DEBUG`            | Set to any truthy value to enable debug logging to `~/.codex-supermemory.log`. |
 
 ### `~/.codex/supermemory.json` (optional)
@@ -150,7 +159,7 @@ but may miss some context. Disabled by default — all turns are captured.
 
 ```bash
 npx codex-supermemory install     # set up hooks + MCP + status skill
-npx codex-supermemory uninstall   # remove hooks + config (keeps your memories)
+npx codex-supermemory uninstall   # remove hooks + saved credential (memories stay in Supermemory)
 npx codex-supermemory status      # show current install status
 ```
 
