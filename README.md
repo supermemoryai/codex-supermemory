@@ -1,8 +1,8 @@
 <div align="center">
 
-# ◪ codex-supermemory
+# codex-supermemory
 
-**Persistent memory for OpenAI Codex CLI, powered by [Supermemory](https://supermemory.ai)**
+**Persistent memory for OpenAI Codex, powered by [Supermemory](https://supermemory.ai)**
 
 [![npm version](https://img.shields.io/npm/v/codex-supermemory?color=9C5C10&label=npm)](https://www.npmjs.com/package/codex-supermemory)
 [![license](https://img.shields.io/npm/l/codex-supermemory?color=9C5C10)](#license)
@@ -48,9 +48,6 @@ and the lessons learned across every project, automatically.
 | 🪶 **No runtime deps in hooks**<br>Hook scripts are pre-bundled with esbuild for fast cold starts. | 🔧 **Focused status skill**<br>`$supermemory-status` checks authentication and connectivity; memory operations come from MCP. |
 | ◪ **Persistent CLI mark**<br>A state-aware TUI badge whose accent color follows Codex's live agent state, plus live hook notices. | 🔔 **Update notices**<br>`SessionStart` checks npm for a newer release and surfaces a one-line notice, non-blocking. |
 
-The CLI mark's accent color mirrors Codex's own agent-state palette:
-
-🔵 **Running** · agent working &nbsp;&nbsp;&nbsp; 🟢 **Ready** · awaiting a prompt &nbsp;&nbsp;&nbsp; 🔴 **Blocked** · approval needed &nbsp;&nbsp;&nbsp; 🟠 **Needs input** · waiting on you
 
 ## How it works
 
