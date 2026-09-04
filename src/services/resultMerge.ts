@@ -6,7 +6,6 @@ import type {
 import {
   memoryText,
   recallProvenance,
-  RECALL_MAX_RESULTS,
   RECALL_MIN_SIMILARITY,
 } from "./resultText.js";
 
@@ -110,7 +109,7 @@ export function mergeProfileResults(
       total: response.searchResults?.total ?? 0,
       timing: response.searchResults?.timing,
     })),
-    Math.min(limit, RECALL_MAX_RESULTS),
+    limit,
   );
 
   return {

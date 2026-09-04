@@ -245,6 +245,7 @@ interface HookEntry {
   command: string;
   timeout?: number;
   statusMessage?: string;
+  additionalContextLimit?: number;
   async?: boolean;
 }
 
@@ -299,6 +300,7 @@ function ensureHookRegistered(
   statusMessage: string,
   background = false,
   matcher?: string,
+  additionalContextLimit?: number,
 ): void {
   const exists = groups.some((g) => g.hooks.some((h) => h.command === command));
   if (exists) {
@@ -307,6 +309,9 @@ function ensureHookRegistered(
         if (hook.command === command) {
           hook.timeout = timeout;
           hook.statusMessage = statusMessage;
+          if (additionalContextLimit !== undefined) {
+            hook.additionalContextLimit = additionalContextLimit;
+          }
           if (background) hook.async = true;
           else delete hook.async;
         }
@@ -321,6 +326,7 @@ function ensureHookRegistered(
       command,
       timeout,
       statusMessage,
+      ...(additionalContextLimit !== undefined ? { additionalContextLimit } : {}),
       ...(background ? { async: true } : {}),
     };
     if (matchingGroup) {
@@ -366,11 +372,22 @@ function mergeHooksJson(add: boolean) {
       sessionStartCmd,
       SESSION_START_TIMEOUT_SECONDS,
       "Loading memory profile...",
+      false,
+      undefined,
+      0,
     );
 
     // Recall must stay synchronous because its output is injected.
     if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
-    ensureHookRegistered(hooks.UserPromptSubmit, recallCmd, RECALL_TIMEOUT_SECONDS, "Searching memories...");
+    ensureHookRegistered(
+      hooks.UserPromptSubmit,
+      recallCmd,
+      RECALL_TIMEOUT_SECONDS,
+      "Searching memories...",
+      false,
+      undefined,
+      0,
+    );
 
     // Remove the old per-prompt capture hook. Stop now owns automatic capture.
     hooks.UserPromptSubmit = removeHookCommands(

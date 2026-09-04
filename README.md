@@ -112,8 +112,12 @@ Drop this file in to override defaults:
 | `apiKey`                 | `string`   | —              | API key (env var takes precedence, browser auth is preferred).                               |
 | `baseUrl`                | `string`   | `https://api.supermemory.ai` | Supermemory API base URL (`SUPERMEMORY_API_URL`/`SUPERMEMORY_BASE_URL` env vars take precedence). |
 | `similarityThreshold`    | `number`   | `0.6`          | Minimum similarity score for retrieved memories.                                             |
-| `maxMemories`            | `number`   | `5`            | Max memories injected per prompt.                                                            |
-| `maxProfileItems`        | `number`   | `5`            | Max profile items considered from each persistent/recent section.                            |
+| `maxMemories`            | `number`   | `5`            | Global max memories injected per prompt across all searched containers.                       |
+| `maxProfileItems`        | `number`   | `5`            | Max profile items from each persistent and recent section.                                    |
+| `maxRecallTokens`        | `number`   | `2500`         | Approximate whole-context token budget for session-start profile recall.                       |
+| `maxPromptRecallTokens`  | `number`   | `maxRecallTokens` | Approximate whole-context token budget for prompt recall.                                   |
+| `autoRecallContainers`   | `boolean`  | `false`        | Search every configured custom container on each substantive prompt.                          |
+| `customContainers`       | `{ tag: string, description: string }[]` | `[]` | Custom containers available for automatic recall.                              |
 | `injectProfile`          | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
 | `containerTagPrefix`     | `string`   | `"codex"`      | Legacy prefix retained when reading containers created by older versions.                    |
 | `userContainerTag`       | `string`   | auto           | Legacy personal container retained for backward-compatible reads.                            |

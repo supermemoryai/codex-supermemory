@@ -6,8 +6,7 @@ import { getSeenFacts, addSeenFacts, factKey } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
 import { getHookProfileWithSearchMany } from "../services/hookRecallClient.js";
 import { prepareRecallQuery, shouldRecallPrompt } from "../services/recallPolicy.js";
-
-const MAX_RESULT_CHARS = 300;
+import { formatRecallContext } from "../services/context.js";
 
 interface CodexHookPayload {
   session_id?: string;
@@ -35,29 +34,6 @@ function exitWithContext(additionalContext: string, systemMessage?: string): nev
     );
   }
   process.exit(0);
-}
-
-interface RecallItem {
-  memory: string;
-  title?: string;
-  filepath?: string;
-}
-
-function formatRecall(items: RecallItem[], containerTag: string): string {
-  const lines = items.map((item) => {
-    const text = item.memory.replace(/\s+/g, " ").slice(0, MAX_RESULT_CHARS);
-    const title = item.title?.trim();
-    const prefix = title && !text.startsWith(title) ? `${title} — ` : "";
-    const filepath = item.filepath ? ` (${item.filepath})` : "";
-    return `- ◪ ${prefix}${text}${filepath}`;
-  });
-
-  return `<supermemory-recall>
-◪ Recalled from supermemory for this prompt (relevance-ranked):
-${lines.join("\n")}
-
-When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool (containerTag: "${containerTag}").
-</supermemory-recall>`;
 }
 
 async function main() {
@@ -122,24 +98,27 @@ async function main() {
 
     const seen = getSeenFacts(sessionId);
     const matches = profileResult.searchResults?.results ?? [];
-    const fresh = matches
-      .filter((item) => !seen.has(factKey(item.memory)))
-      .slice(0, Math.min(CONFIG.maxMemories, 5));
-    const repeats = matches.length - fresh.length;
+    const repeats = matches.filter((item) => seen.has(factKey(item.memory))).length;
+    const { text: additionalContext, newFacts } = formatRecallContext(matches, {
+      containerTag: tags.canonical,
+      maxMemories: CONFIG.maxMemories,
+      maxTokens: CONFIG.maxPromptRecallTokens,
+      seenFacts: seen,
+      customContainers: CONFIG.autoRecallContainers ? CONFIG.customContainers : [],
+    });
 
     log("recall: done", {
       matchCount: matches.length,
-      freshCount: fresh.length,
+      freshCount: newFacts.length,
       seenCount: seen.size,
     });
 
-    if (fresh.length > 0) {
-      addSeenFacts(sessionId, fresh.map((item) => item.memory));
-      const additionalContext = formatRecall(fresh, tags.canonical);
+    if (newFacts.length > 0) {
+      addSeenFacts(sessionId, newFacts);
       const tokens = Math.round(additionalContext.length / 4);
       const label = repeats > 0
-        ? `recalled ${fresh.length} new (${tokens} tok) · ${repeats} already in context`
-        : `recalled ${fresh.length} ${fresh.length === 1 ? "memory" : "memories"} (${tokens} tok)`;
+        ? `recalled ${newFacts.length} new (${tokens} tok) · ${repeats} already in context`
+        : `recalled ${newFacts.length} ${newFacts.length === 1 ? "memory" : "memories"} (${tokens} tok)`;
       log("recall: emit context", {
         additionalContextLength: additionalContext.length,
       });
@@ -149,7 +128,10 @@ async function main() {
     exitWithContext("");
   } catch (error) {
     log("recall: error", { error: String(error) });
-    exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
+    const message = error instanceof RangeError
+      ? `◪ supermemory · invalid recall configuration: ${error.message}`
+      : "◪ supermemory · recall unavailable; continuing without recalled context";
+    exitWithContext("", message);
   }
 }
 

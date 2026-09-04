@@ -9,6 +9,10 @@ export const CONFIG_FILE = join(homedir(), ".codex", "supermemory.json");
 export const DEFAULT_BASE_URL = "https://api.supermemory.ai";
 
 export type RecallMode = "direct" | "off" | "advisory";
+export interface CustomContainer {
+  tag: string;
+  description: string;
+}
 export const DEFAULT_RECALL_DIRECTIVE =
   "Relevant prior context may exist in Supermemory. Search memory before answering when the request depends on previous decisions, preferences, or project history.";
 
@@ -18,6 +22,10 @@ interface CodexSupermemoryConfig {
   similarityThreshold?: number;
   maxMemories?: number;
   maxProfileItems?: number;
+  maxRecallTokens?: number;
+  maxPromptRecallTokens?: number;
+  autoRecallContainers?: boolean;
+  customContainers?: CustomContainer[];
   injectProfile?: boolean;
   containerTagPrefix?: string;
   userContainerTag?: string;
@@ -49,6 +57,8 @@ const DEFAULTS = {
   similarityThreshold: 0.6,
   maxMemories: 5,
   maxProfileItems: 5,
+  maxRecallTokens: 2500,
+  autoRecallContainers: false,
   injectProfile: true,
   containerTagPrefix: "codex",
   filterPrompt:
@@ -133,11 +143,30 @@ export function reloadApiKey(): void {
 }
 
 const recallMode = resolveRecallMode(fileConfig);
+const maxRecallTokens = fileConfig.maxRecallTokens ?? DEFAULTS.maxRecallTokens;
+const customContainers = Array.isArray(fileConfig.customContainers)
+  ? fileConfig.customContainers
+      .filter(
+        (container): container is CustomContainer =>
+          !!container &&
+          typeof container.tag === "string" &&
+          container.tag.trim().length > 0 &&
+          typeof container.description === "string",
+      )
+      .map((container) => ({
+        tag: container.tag.trim(),
+        description: container.description.trim(),
+      }))
+  : [];
 
 export const CONFIG = {
   similarityThreshold: fileConfig.similarityThreshold ?? DEFAULTS.similarityThreshold,
   maxMemories: fileConfig.maxMemories ?? DEFAULTS.maxMemories,
   maxProfileItems: fileConfig.maxProfileItems ?? DEFAULTS.maxProfileItems,
+  maxRecallTokens,
+  maxPromptRecallTokens: fileConfig.maxPromptRecallTokens ?? maxRecallTokens,
+  autoRecallContainers: fileConfig.autoRecallContainers ?? DEFAULTS.autoRecallContainers,
+  customContainers,
   injectProfile: fileConfig.injectProfile ?? DEFAULTS.injectProfile,
   containerTagPrefix: fileConfig.containerTagPrefix ?? DEFAULTS.containerTagPrefix,
   userContainerTag: fileConfig.userContainerTag,
