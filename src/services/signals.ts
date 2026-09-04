@@ -47,6 +47,11 @@ export function groupEntriesIntoTurns(entries: TranscriptEntry[]): Turn[] {
     } else if (entry.role === "assistant") {
       currentTurn.assistantEntries.push(entry);
       currentTurn.allEntries.push(entry);
+    } else if (entry.role === "tool") {
+      // Tool calls/results ride along with the turn's captured content but
+      // aren't scanned for signal keywords — bounded tool output is noisy
+      // and shouldn't itself trigger a capture.
+      currentTurn.allEntries.push(entry);
     }
   }
 
