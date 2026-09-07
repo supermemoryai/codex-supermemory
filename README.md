@@ -117,7 +117,7 @@ Drop this file in to override defaults:
 | `injectProfile`          | `boolean`  | `true`         | Whether to fetch and inject the user profile.                                                |
 | `containerTagPrefix`     | `string`   | `"codex"`      | Legacy prefix retained when reading containers created by older versions.                    |
 | `userContainerTag`       | `string`   | auto           | Legacy personal container retained for backward-compatible reads.                            |
-| `projectContainerTag`    | `string`   | auto (per-repo) | Explicit unified project-container override, also honored by Claude Code.                    |
+| `projectContainerTag`    | `string`   | auto (per-repo) | Explicit unified project-container override, also honored by Claude Code. Can also be set per-repo in `<repo>/.codex/supermemory.json` (see below). |
 | `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
 | `recallMode`             | `"direct" \| "off" \| "advisory"` | `"direct"` | Directly retrieve relevant memory, disable prompt recall, or inject an advisory directive. |
@@ -132,6 +132,25 @@ Project tags combine the sanitized repository name with a normalized Git-remote
 hash. Linked worktrees and clones of the same remote therefore share one container;
 same-named repositories with different remotes do not collide. Without a remote,
 the Git common directory is used as the fallback identity.
+
+### `<repo>/.codex/supermemory.json` (optional, repo-local)
+
+A checked-in `.codex/supermemory.json` at the Git root overrides the container tag
+for that repo only, so a team can share one memory bucket across Codex, Claude
+Code, and other agents without every member setting `projectContainerTag` in their
+global config (whose value would differ per checkout). Only the tag fields are
+read from the repo-local file — everything else stays global:
+
+| Key                   | Description                                                              |
+| --------------------- | ---------------------------------------------------------------------- |
+| `projectContainerTag` | Project/repo container for this repo. Outranks every other source.      |
+| `userContainerTag`    | Personal container added to the legacy read set for this repo.          |
+
+Resolution order for the project tag, highest first: `<repo>/.codex/supermemory.json`
+→ Claude Code's repo config → `SUPERMEMORY_REPO_TAG` → Cursor's repo config →
+global `~/.codex/supermemory.json` → generated `repo_<name>__<hash>`. The
+previously active tag stays in the read set, so memory written before the override
+is still found.
 
 ### Entity context
 

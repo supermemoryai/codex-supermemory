@@ -254,6 +254,53 @@ describe("container tags", () => {
     assert.ok(tags.personalReads.includes("shared_personal"));
     assert.equal(tags.projectReads[0], "shared_project");
   });
+
+  test("repo-local .codex/supermemory.json overrides the tag and outranks the global config", (t) => {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    const repoDir = join(tmpDir, "repo");
+    const homeDir = join(tmpDir, "home");
+    const globalCodexDir = join(homeDir, ".codex");
+    const repoCodexDir = join(repoDir, ".codex");
+    mkdirSync(globalCodexDir, { recursive: true });
+    mkdirSync(repoCodexDir, { recursive: true });
+    writeFileSync(
+      join(globalCodexDir, "supermemory.json"),
+      JSON.stringify({ projectContainerTag: "global_project" }),
+    );
+    writeFileSync(
+      join(repoCodexDir, "supermemory.json"),
+      JSON.stringify({
+        projectContainerTag: "proj_hac",
+        userContainerTag: "proj_hac_personal",
+      }),
+    );
+    runGit(["init"], repoDir);
+
+    const script = `
+      import { getTags } from ${JSON.stringify(tagsModule)};
+      console.log(JSON.stringify(getTags(process.argv.at(-1))));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, repoDir], {
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+      },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const tags = JSON.parse(result.stdout);
+    assert.equal(tags.canonical, "proj_hac");
+    assert.equal(tags.project, "proj_hac");
+    assert.equal(tags.user, "proj_hac");
+    assert.equal(tags.projectReads[0], "proj_hac");
+    // the global tag stays readable so memory written before the repo-local
+    // override still surfaces
+    assert.ok(tags.projectReads.includes("global_project"));
+    assert.ok(tags.personalReads.includes("proj_hac_personal"));
+  });
 });
 
 describe("cross-container result merging", () => {
