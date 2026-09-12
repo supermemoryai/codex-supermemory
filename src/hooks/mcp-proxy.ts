@@ -6,10 +6,6 @@ const MCP_URL =
   process.env.SUPERMEMORY_MCP_URL || "https://mcp.supermemory.ai/mcp";
 const REQUEST_TIMEOUT_MS = 30_000;
 
-// Hosted MCP treats a missing containerTag as the user's durable activeSpace,
-// which is shared across every MCP client and is not this repo. Hooks already
-// read/write the repo tag; inject it on space-scoped tools so MCP hits the
-// same container. Leave an explicit containerTag and set-active-tag alone.
 const REPO_SCOPED_TOOLS = new Set([
   "search_memory",
   "add_memory",
@@ -29,6 +25,7 @@ interface JsonRpcMessage {
   [key: string]: unknown;
 }
 
+// Hosted MCP omits to activeSpace; default space-scoped calls to this repo instead.
 function injectRepoContainerTag(
   message: JsonRpcMessage,
   containerTag: string | null,
