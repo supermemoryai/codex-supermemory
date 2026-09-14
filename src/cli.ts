@@ -43,7 +43,8 @@ const CODEX_PETS_DIR = join(CODEX_DIR, "pets");
 const SUPERMEMORY_PET_DIR = join(CODEX_PETS_DIR, "supermemory");
 const SUPERMEMORY_PET_MARKER = join(SUPERMEMORY_PET_DIR, ".codex-supermemory-owned");
 const SUPERMEMORY_PET_ID = "supermemory";
-const RECALL_TIMEOUT_SECONDS = 5;
+// Must cover SELF_HOSTED_HOOK_RECALL_TIMEOUT_MS so Codex does not kill the hook first; see #61.
+const RECALL_TIMEOUT_SECONDS = 60;
 const RECALL_APPROVE_TIMEOUT_SECONDS = 5;
 const FLUSH_TIMEOUT_SECONDS = 30;
 const SESSION_START_TIMEOUT_SECONDS = 30;

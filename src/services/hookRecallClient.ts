@@ -4,6 +4,19 @@ import { mergeProfileResults } from "./resultMerge.js";
 import { memoryText, recallProvenance } from "./resultText.js";
 
 export const HOOK_RECALL_TIMEOUT_MS = 3000;
+// Self-hosted backends need a longer cap than hosted; see #61.
+export const SELF_HOSTED_HOOK_RECALL_TIMEOUT_MS = 60_000;
+const HOSTED_API_HOSTNAME = "api.supermemory.ai";
+
+export function hookRecallTimeoutMs(baseUrl = getBaseUrl()): number {
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === HOSTED_API_HOSTNAME
+      ? HOOK_RECALL_TIMEOUT_MS
+      : SELF_HOSTED_HOOK_RECALL_TIMEOUT_MS;
+  } catch {
+    return HOOK_RECALL_TIMEOUT_MS;
+  }
+}
 
 interface HookRecallOptions {
   timeoutMs?: number;
@@ -103,7 +116,7 @@ export async function getHookProfileWithSearchMany(
   options: HookRecallOptions = {},
 ): Promise<ProfileWithSearchResult> {
   const resolved = {
-    timeoutMs: options.timeoutMs ?? HOOK_RECALL_TIMEOUT_MS,
+    timeoutMs: options.timeoutMs ?? hookRecallTimeoutMs(),
     fetchImpl: options.fetchImpl ?? fetch,
   };
   const uniqueTags = [...new Set(containerTags.filter(Boolean))];

@@ -587,6 +587,56 @@ describe("direct recall policy", () => {
     assert.equal(output.success, false);
     assert.ok(output.elapsed < 500, `abort took ${output.elapsed}ms`);
   });
+
+  test("uses 3s on api.supermemory.ai and 60s on self-hosted APIs", () => {
+    const script = `
+      import {
+        hookRecallTimeoutMs,
+        HOOK_RECALL_TIMEOUT_MS,
+        SELF_HOSTED_HOOK_RECALL_TIMEOUT_MS,
+      } from ${JSON.stringify(hookClientModule)};
+      console.log(JSON.stringify({
+        hosted: hookRecallTimeoutMs("https://api.supermemory.ai"),
+        hostedSlash: hookRecallTimeoutMs("https://api.supermemory.ai/"),
+        hostedCase: hookRecallTimeoutMs("https://API.SUPERMEMORY.AI"),
+        loopback: hookRecallTimeoutMs("http://127.0.0.1:6767"),
+        custom: hookRecallTimeoutMs("https://memory.example.com"),
+        invalid: hookRecallTimeoutMs("not-a-url"),
+        hostedMs: HOOK_RECALL_TIMEOUT_MS,
+        selfHostedMs: SELF_HOSTED_HOOK_RECALL_TIMEOUT_MS,
+      }));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf-8" });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.hostedMs, 3000);
+    assert.equal(output.selfHostedMs, 60_000);
+    assert.equal(output.hosted, 3000);
+    assert.equal(output.hostedSlash, 3000);
+    assert.equal(output.hostedCase, 3000);
+    assert.equal(output.loopback, 60_000);
+    assert.equal(output.custom, 60_000);
+    assert.equal(output.invalid, 3000);
+  });
+
+  test("default recall timeout follows SUPERMEMORY_API_URL", () => {
+    const script = `
+      import { hookRecallTimeoutMs } from ${JSON.stringify(hookClientModule)};
+      console.log(hookRecallTimeoutMs());
+    `;
+    const hosted = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, SUPERMEMORY_API_URL: "https://api.supermemory.ai" },
+      encoding: "utf-8",
+    });
+    const selfHosted = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, SUPERMEMORY_API_URL: "http://127.0.0.1:6767" },
+      encoding: "utf-8",
+    });
+    assert.equal(hosted.status, 0, hosted.stderr);
+    assert.equal(selfHosted.status, 0, selfHosted.stderr);
+    assert.equal(Number(hosted.stdout.trim()), 3000);
+    assert.equal(Number(selfHosted.stdout.trim()), 60_000);
+  });
 });
 
 // ─── session ids ────────────────────────────────────────────────────────────
@@ -906,7 +956,7 @@ describe("integration: install/uninstall", () => {
       { async: true, timeout: 30 },
     );
     assert.equal(recall.async, undefined);
-    assert.equal(recall.timeout, 5);
+    assert.equal(recall.timeout, 60);
     assert.equal(recallApprove.async, undefined);
     assert.equal(recallApprove.timeout, 5);
     assert.equal(recallApproveGroup.matcher, "^mcp__supermemory__");
