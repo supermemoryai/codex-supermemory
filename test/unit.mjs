@@ -4,9 +4,10 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import http from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -1198,6 +1199,86 @@ describe("hosted MCP hooks", () => {
     const output = JSON.parse(result.stdout);
     assert.equal(output.error.code, -32001);
     assert.match(output.error.message, /Start a new Codex task/);
+  });
+
+  function runProxy(t, env, lines) {
+    return new Promise((resolve, reject) => {
+      const child = spawn("node", [proxyBin], {
+        env: { ...process.env, ...env },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stdout = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk;
+      });
+      child.on("error", reject);
+      child.on("close", () =>
+        resolve(stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))),
+      );
+      for (const line of lines) child.stdin.write(`${JSON.stringify(line)}\n`);
+      child.stdin.end();
+    });
+  }
+
+  function startStubServer(t, handler) {
+    return new Promise((resolve) => {
+      const requests = [];
+      const server = http.createServer((req, res) => {
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk;
+        });
+        req.on("end", () => {
+          const record = { headers: req.headers, body };
+          requests.push(record);
+          handler(record, res);
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        t.after(() => server.close());
+        resolve({ url: `http://127.0.0.1:${server.address().port}`, requests });
+      });
+    });
+  }
+
+  test("injects the repo container tag when MCP tools omit it", async (t) => {
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader("Content-Type", "application/json");
+      const { id } = JSON.parse(record.body);
+      res.end(JSON.stringify({ jsonrpc: "2.0", id, result: { ok: true } }));
+    });
+
+    await runProxy(
+      t,
+      {
+        HOME: tmpDir,
+        USERPROFILE: tmpDir,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test_key_0123456789abcdef",
+        SUPERMEMORY_REPO_TAG: "repo_test_tag",
+        SUPERMEMORY_MCP_URL: `${stub.url}/mcp`,
+      },
+      [
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "search_memory", arguments: { query: "auth" } },
+        },
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "whoAmI" },
+        },
+      ],
+    );
+
+    const forwarded = stub.requests.map((r) => JSON.parse(r.body));
+    assert.equal(forwarded[0].params.arguments.containerTag, "repo_test_tag");
+    assert.equal(forwarded[0].params.arguments.query, "auth");
+    assert.equal(forwarded[1].params.arguments, undefined);
   });
 });
 
