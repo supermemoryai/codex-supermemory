@@ -65,6 +65,10 @@ function searchDirForSession(dir: string, sessionId: string): string | null {
   return null;
 }
 
+/** Tool call/result text is bounded before it's stored — raw tool output can be
+ * arbitrarily large and is not worth capturing in full. */
+const MAX_TOOL_TEXT_LENGTH = 500;
+
 const DUPLICATE_LINE_WINDOW = 5;
 
 interface ContentBlock {
@@ -90,6 +94,11 @@ function extractTextBlocks(
     .join(separator);
 }
 
+function truncateForCapture(text: string, maxLength = MAX_TOOL_TEXT_LENGTH): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}… [truncated, ${text.length - maxLength} more chars]`;
+}
+
 /**
  * Parse a Codex JSONL transcript file into TranscriptEntry[].
  *
@@ -98,7 +107,9 @@ function extractTextBlocks(
  * - Legacy assistant text: { type: "event_msg", payload: { type: "assistant_output_text", text: "..." } }
  * - Current messages: { type: "response_item", payload: { type: "message", role: "user" | "assistant", content: [...] } }
  *   - user content blocks use `input_text`
- *   - assistant content blocks use `output_text`
+ *   - assistant content blocks use `output_text` or `text`
+ * - Current tool calls: { type: "response_item", payload: { type: "function_call", name, arguments, call_id } }
+ * - Current tool results: { type: "response_item", payload: { type: "function_call_output", call_id, output } }
  *
  * Some rollouts contain both formats for the same turn. Identical nearby
  * entries are deduplicated so the stored conversation contains one copy.
@@ -139,6 +150,10 @@ export function parseTranscript(transcriptPath: string): TranscriptEntry[] {
             text?: string;
             role?: string;
             content?: unknown;
+            name?: string;
+            arguments?: string;
+            call_id?: string;
+            output?: unknown;
           };
         };
 
@@ -157,7 +172,7 @@ export function parseTranscript(transcriptPath: string): TranscriptEntry[] {
           }
         }
 
-        // Handle current response_item messages.
+        // Handle current response_item entries.
         if (parsed.type === "response_item" && parsed.payload) {
           const payload = parsed.payload;
           if (payload.role === "user" && payload.content) {
@@ -172,8 +187,18 @@ export function parseTranscript(transcriptPath: string): TranscriptEntry[] {
             pushEntry(
               i,
               "assistant",
-              extractTextBlocks(payload.content, ["output_text"]),
+              extractTextBlocks(payload.content, ["output_text", "text"]),
             );
+          } else if (payload.type === "function_call") {
+            const name = payload.name || "unknown_tool";
+            const args = truncateForCapture(payload.arguments ?? "");
+            pushEntry(i, "tool", `[tool_call] ${name}(${args})`);
+          } else if (payload.type === "function_call_output") {
+            const output =
+              typeof payload.output === "string"
+                ? payload.output
+                : JSON.stringify(payload.output ?? "");
+            pushEntry(i, "tool", `[tool_result] ${truncateForCapture(output)}`);
           }
         }
       } catch {
