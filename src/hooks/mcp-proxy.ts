@@ -1,15 +1,63 @@
 import { createInterface } from "node:readline";
 import { getApiKeyValue } from "../config.js";
+import { getProjectTag } from "../services/tags.js";
 
 const MCP_URL =
   process.env.SUPERMEMORY_MCP_URL || "https://mcp.supermemory.ai/mcp";
 const REQUEST_TIMEOUT_MS = 30_000;
 
+const REPO_SCOPED_TOOLS = new Set([
+  "search_memory",
+  "add_memory",
+  "listDocuments",
+  "listMemories",
+  "memory-graph",
+  "fetch-graph-data",
+  "save-memory",
+]);
+
 let sessionId: string | null = null;
 
 interface JsonRpcMessage {
   id?: string | number | null;
+  method?: string;
+  params?: unknown;
   [key: string]: unknown;
+}
+
+// Hosted MCP omits to activeSpace; default space-scoped calls to this repo instead.
+function injectRepoContainerTag(
+  message: JsonRpcMessage,
+  containerTag: string | null,
+): void {
+  if (!containerTag || message.method !== "tools/call") return;
+  const params = message.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) return;
+  const record = params as Record<string, unknown>;
+  if (typeof record.name !== "string" || !REPO_SCOPED_TOOLS.has(record.name)) {
+    return;
+  }
+
+  let args = record.arguments;
+  let encoded = false;
+  if (args == null) {
+    record.arguments = { containerTag };
+    return;
+  }
+  if (typeof args === "string") {
+    try {
+      args = JSON.parse(args) as unknown;
+      encoded = true;
+    } catch {
+      return;
+    }
+  }
+  if (!args || typeof args !== "object" || Array.isArray(args)) return;
+  const body = args as Record<string, unknown>;
+  if (typeof body.containerTag === "string" && body.containerTag.trim()) return;
+
+  body.containerTag = containerTag;
+  record.arguments = encoded ? JSON.stringify(body) : body;
 }
 
 function send(message: unknown): void {
@@ -74,6 +122,12 @@ async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
 
 function main(): void {
   const apiKey = getApiKeyValue();
+  let repoContainerTag: string | null = null;
+  try {
+    repoContainerTag = getProjectTag(process.cwd());
+  } catch {
+    repoContainerTag = null;
+  }
   let queue = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
 
@@ -98,6 +152,7 @@ function main(): void {
       }
 
       try {
+        injectRepoContainerTag(message, repoContainerTag);
         await forward(message, apiKey);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
