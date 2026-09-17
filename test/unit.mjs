@@ -891,7 +891,7 @@ describe("integration: install/uninstall", () => {
     assert.equal(pet.pixel(7 * 192 + 17, 178)[3], 0, "unused idle frames should be transparent");
   });
 
-  test("install keeps only status skill and registers hosted MCP", (t) => {
+  test("install keeps status and index skills and registers hosted MCP", (t) => {
     const { tmpDir, codexDir } = setupCodexHome(t);
 
     for (const legacy of ["supermemory-search", "supermemory-login", "supermemory-logout"]) {
@@ -904,6 +904,8 @@ describe("integration: install/uninstall", () => {
 
     const skillsDir = join(codexDir, "skills");
     assert.ok(existsSync(join(skillsDir, "supermemory-status", "SKILL.md")));
+    assert.ok(existsSync(join(skillsDir, "supermemory-index", "SKILL.md")));
+    assert.ok(!existsSync(join(codexDir, "supermemory", "index.js")));
     for (const legacy of ["supermemory-search", "supermemory-login", "supermemory-logout"]) {
       assert.ok(!existsSync(join(skillsDir, legacy)), `${legacy} should be removed`);
     }
@@ -975,6 +977,7 @@ describe("integration: install/uninstall", () => {
 
     const skillsDir = join(codexDir, "skills");
     assert.ok(!existsSync(join(skillsDir, "supermemory-status")));
+    assert.ok(!existsSync(join(skillsDir, "supermemory-index")));
     assert.ok(!existsSync(join(codexDir, "pets", "supermemory")));
   });
 

@@ -72,7 +72,7 @@ await Promise.all(
 );
 
 // Copy SKILL.md files to dist
-for (const skillName of ["supermemory-status"]) {
+for (const skillName of ["supermemory-status", "supermemory-index"]) {
   mkdirSync(`dist/skills/${skillName}`, { recursive: true });
   copyFileSync(
     `src/skills/${skillName}/SKILL.md`,
