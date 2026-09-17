@@ -51,9 +51,10 @@ const SESSION_START_TIMEOUT_SECONDS = 30;
 const SUPERMEMORY_MCP_MATCHER = "^mcp__supermemory__";
 
 // Skill metadata — single source of truth for install/uninstall/status.
-const SKILLS = [
+const SKILLS: ReadonlyArray<{ name: string; script?: string }> = [
   { name: "supermemory-status", script: "status.js" },
-] as const;
+  { name: "supermemory-index" },
+];
 
 const LEGACY_SUPERMEMORY_SCRIPTS = [
   "capture.js",
@@ -489,10 +490,12 @@ function install() {
 
   // Copy skill scripts and SKILL.md files
   for (const { name, script } of SKILLS) {
-    copyFileSync(
-      join(SCRIPT_DIR, "skills", script),
-      join(SUPERMEMORY_HOOKS_DIR, script)
-    );
+    if (script) {
+      copyFileSync(
+        join(SCRIPT_DIR, "skills", script),
+        join(SUPERMEMORY_HOOKS_DIR, script)
+      );
+    }
     const skillDir = join(CODEX_SKILLS_DIR, name);
     mkdirSync(skillDir, { recursive: true });
     copyFileSync(
@@ -501,7 +504,7 @@ function install() {
     );
   }
   console.log(`✓ Installed hooks and MCP proxy to ${SUPERMEMORY_HOOKS_DIR}`);
-  console.log(`✓ Installed the supermemory-status skill to ${CODEX_SKILLS_DIR}`);
+  console.log(`✓ Installed supermemory-status and supermemory-index skills to ${CODEX_SKILLS_DIR}`);
 
   // Install the persistent TUI mark without overwriting an existing pet.
   const petInstalled = installPetAssets();
@@ -526,6 +529,7 @@ You now have:
   • Automatic session and prompt recall (${getRecallModeSummary()})
   • Hosted Supermemory MCP tools for deeper search and explicit memory operations
   • The supermemory-status skill for connection diagnostics
+  • The supermemory-index skill to index this codebase via MCP add_memory
   • A persistent Supermemory mark in compatible Codex terminals${persistentIndicatorEnabled ? "" : " (existing pet selection preserved)"}
 
 ${hadExistingConfig
@@ -654,7 +658,7 @@ function status() {
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
   console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
   console.log(`  MCP server:    ${mcpInstalled ? "✓ registered (hosted tools via local proxy)" : "✗ not registered"}`);
-  console.log(`  Status skill:  ${statusSkillInstalled ? "✓ installed" : "✗ not installed"}`);
+  console.log(`  Skills:        ${statusSkillInstalled ? "✓ installed" : "✗ not installed"}`);
   console.log(`  Persistent mark: ${persistentIndicatorEnabled ? "✓ enabled" : ownsSupermemoryPet() ? "○ installed, another pet selection is active" : "✗ not installed"}`);
   console.log(`  config.toml:   ${configTomlExists ? "✓ exists" : "✗ not found"}`);
 

@@ -25,8 +25,9 @@ and the lessons learned across every project — automatically.
   `~/.codex/hooks.json` for you.
 - 🪶 **No runtime deps in hooks** — the hook scripts are pre-bundled with esbuild for
   fast cold starts.
-- 🔧 **Focused status skill** — `$supermemory-status` checks authentication and connectivity;
-  memory operations come from MCP instead of separate command skills.
+- 🔧 **Status and index skills** — `$supermemory-status` checks authentication and
+  connectivity; `$supermemory-index` explores the repo and saves focused memories
+  via MCP `add_memory`. Memory operations still come from MCP, not command skills.
 - ◪ **Persistent CLI mark** — compatible Codex terminals keep a quiet Supermemory badge
   at the bottom of the TUI, while hook notices report live recall and save activity.
 
@@ -64,7 +65,7 @@ The installer:
 - Registers the `supermemory` MCP server in `~/.codex/config.toml`
 - Registers the hooks in `~/.codex/hooks.json`
 - Copies pre-bundled hook scripts to `~/.codex/supermemory/`
-- Installs only the `supermemory-status` skill to `~/.codex/skills/`
+- Installs the `supermemory-status` and `supermemory-index` skills to `~/.codex/skills/`
 - Installs a static custom TUI badge to `~/.codex/pets/supermemory/`
 
 The installer selects the badge only when no Codex pet preference already exists. Terminals
@@ -149,7 +150,7 @@ but may miss some context. Disabled by default — all turns are captured.
 ## Commands
 
 ```bash
-npx codex-supermemory install     # set up hooks + MCP + status skill
+npx codex-supermemory install     # set up hooks + MCP + skills
 npx codex-supermemory uninstall   # remove hooks + config (keeps your memories)
 npx codex-supermemory status      # show current install status
 ```
@@ -159,6 +160,12 @@ npx codex-supermemory status      # show current install status
 Run `$supermemory-status` inside Codex to check the saved credential, API reachability,
 active project container, and account details. Browser authentication is automatic on
 `SessionStart`; there is no separate login skill.
+
+## Index a codebase
+
+Run `$supermemory-index` inside Codex to explore the repository and save several
+focused memories about architecture, conventions, and how to run it. The skill is
+an agent workflow; the actual writes go through the hosted MCP `add_memory` tool.
 
 ## Privacy
 
