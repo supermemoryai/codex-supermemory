@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { CONFIG, getApiBaseUrl, getApiKeyValue, isConfigured } from "../config.js";
+import { CONFIG, getApiBaseUrl, getApiKeyValue, getApiVersion, isConfigured } from "../config.js";
 import { loadCredentials } from "../services/auth.js";
 import { getTags } from "../services/tags.js";
+import { createV5Client } from "../services/api.js";
 
 const API_URL =
   getApiBaseUrl();
@@ -87,6 +88,14 @@ async function probeApi(containerTag: string): Promise<{
   if (!apiKey) return { ok: false, detail: "not checked (missing API key)" };
 
   try {
+    if (getApiVersion() === "v5") {
+      await createV5Client().profile(containerTag, {}, {
+        timeoutInSeconds: 8,
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(8_000),
+      });
+      return { ok: true, status: 200, detail: "reachable, key valid" };
+    }
     const response = await fetch(`${API_URL.replace(/\/+$/, "")}/v4/profile`, {
       method: "POST",
       headers: {
@@ -105,9 +114,14 @@ async function probeApi(containerTag: string): Promise<{
     }
     return { ok: false, status: response.status, detail: "API returned an error" };
   } catch (error) {
+    const status = error && typeof error === "object" && "statusCode" in error
+      ? error.statusCode : undefined;
     return {
       ok: false,
-      detail: error instanceof Error ? error.message : String(error),
+      status: typeof status === "number" ? status : undefined,
+      detail: status === 401 || status === 403
+        ? "reachable, key invalid or revoked"
+        : "API request failed",
     };
   }
 }
@@ -123,7 +137,8 @@ async function main(): Promise<void> {
   lines.push(`Authenticated: ${isConfigured() ? "yes" : "no"}`);
   lines.push(`Connected: ${isConfigured() ? "checking..." : "no"}`);
   lines.push(`API key: ${maskKey(apiKey)} (${getKeySource()})`);
-  lines.push(`API URL: ${API_URL}`);
+  const displayUrl = new URL(API_URL);
+  lines.push(`API URL: ${displayUrl.origin}${displayUrl.pathname}`);
   lines.push(`Memory scope: one project container with metadata scopes`);
   lines.push(`Auto-recall: ${getAutoRecallStatus()}`);
   lines.push("Auto-capture: after completed turns");

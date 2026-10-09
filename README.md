@@ -96,12 +96,60 @@ write destination. Older user/personal overrides remain in the legacy read set.
 
 ## Configuration
 
+### API v5 and existing installations
+
+Version 1.0.20 bundles the official `supermemory@5.0.1` SDK for document capture,
+profiles, search, and the status connectivity probe. Existing container-tag
+strings become namespace paths without renaming stored data. Config keys,
+credential files, session document IDs, capture cursors, legacy namespace reads,
+and recall approvals stay in place; no historical backfill or namespace move runs.
+Re-run `npx codex-supermemory@latest install` after upgrading to refresh the copied
+standalone hooks and status script. Updating npm dependencies alone doesn't
+update scripts already installed in `~/.codex/supermemory`.
+
+The hosted root `https://api.supermemory.ai` defaults to v5, including equivalent
+host casing and default-port spellings. Custom REST URLs, including URL prefixes,
+default to the bundled official SDK4 compatibility path so servers older than
+0.0.9 remain usable. After upgrading a custom server, set
+`SUPERMEMORY_API_VERSION=v5` or `apiVersion: "v5"` in the existing config. Select
+`legacy` explicitly to use v3/v4 where the server still supports them. Invalid
+version selections fail the operation; a failed v5 request never switches API
+versions or sends data to another host. REST URL selection remains independent
+of the hosted MCP and browser-auth endpoints, including their existing env fields.
+
+The v5 profile has no query; prompt recall runs profile and memory search in
+parallel. Separated search explicitly uses the guide's legacy defaults (memories,
+0.6 threshold, 10 candidates, no reranking/query rewriting), then preserves the
+local 0.55 floor, cross-namespace deduplication, and top-five/configured cap. The
+SDK search helper retains its existing hybrid mode and configured threshold and
+limit. Server-side ranking and historical-data availability aren't verified by
+local contract tests. Capture keeps its three-second budget and zero SDK retries,
+uses POST append/diff with the existing session ID, and advances the cursor only
+after valid acceptance. Dynamic processing is asynchronous; acceptance doesn't
+prove extraction completion or exactly-once billing after a lost response.
+
+The retained `dist/services/client.js` library exports still have their original
+30-second local wait and two-retry SDK cap for calls without hook options. SDK5's
+retryable statuses/backoff differ from SDK4, including no automatic 409 retry.
+Installed automatic hooks don't use that unbounded policy: a conflict keeps the
+capture cursor for a later attempt without an immediate retry. Explicit MCP
+operations still use their independent transport rather than these SDK helpers.
+
+Display-name updates (`/v3/container-tags/...`), account details (`/v3/session`),
+and the latent exact-content forget helper (`/v4/memories`) remain legacy-only
+ancillary operations against the configured REST server. They have no mechanical
+v5 equivalent. A v5-only server may leave names/account details unavailable or
+return an explicit forget error; the plugin does not substitute semantic deletion.
+Interactive MCP tools keep their independent protocol, endpoints, and approvals.
+
 ### Environment variables
 
 | Variable                       | Purpose                                                |
 | ------------------------------ | ------------------------------------------------------ |
 | `SUPERMEMORY_CODEX_API_KEY`    | Your Supermemory API key (browser auth is preferred).  |
 | `SUPERMEMORY_API_URL`          | Override the Supermemory API base URL (takes precedence over config). |
+| `SUPERMEMORY_BASE_URL`         | Older REST URL alias, used when `SUPERMEMORY_API_URL` is unset. |
+| `SUPERMEMORY_API_VERSION`      | Select `v5` or `legacy`; overrides `apiVersion` in config. |
 | `SUPERMEMORY_DEBUG`            | Set to any truthy value to enable debug logging to `~/.codex-supermemory.log`. |
 
 ### `~/.codex/supermemory.json` (optional)
@@ -112,6 +160,7 @@ Drop this file in to override defaults:
 | ------------------------ | ---------- | -------------- | -------------------------------------------------------------------------------------------- |
 | `apiKey`                 | `string`   | —              | API key (env var takes precedence, browser auth is preferred).                               |
 | `baseUrl`                | `string`   | `https://api.supermemory.ai` | Supermemory API base URL (`SUPERMEMORY_API_URL`/`SUPERMEMORY_BASE_URL` env vars take precedence). |
+| `apiVersion`             | `"v5" \| "legacy"` | auto | Hosted root API uses v5; custom REST URLs default to legacy compatibility. |
 | `similarityThreshold`    | `number`   | `0.6`          | Minimum similarity score for retrieved memories.                                             |
 | `maxMemories`            | `number`   | `5`            | Max memories injected per prompt.                                                            |
 | `maxProfileItems`        | `number`   | `5`            | Max profile items considered from each persistent/recent section.                            |
