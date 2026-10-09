@@ -289,24 +289,34 @@ function normalizeHookEvents(raw: unknown): HookEvents {
   return events;
 }
 
-/**
- * Ensure a hook is registered in the given event's MatcherGroup array.
- * If the command already exists, update its timeout and statusMessage.
- * Otherwise, append it to an existing global (no-matcher) group or create one.
- */
+function hookCommand(script: string): string {
+  if (process.platform === "win32") {
+    const encodedPath = Buffer.from(script, "utf-8").toString("base64");
+    return `node -e "require(Buffer.from('${encodedPath}','base64').toString('utf-8'))"`;
+  }
+  if (/^[a-zA-Z0-9_./-]+$/.test(script)) return `node ${script}`;
+  return `node '${script.replaceAll("'", "'\\''")}'`;
+}
+
+function matchesHookCommand(command: string, script: string): boolean {
+  return command === hookCommand(script) || command === `node ${script}`;
+}
+
 function ensureHookRegistered(
   groups: MatcherGroup[],
-  command: string,
+  script: string,
   timeout: number,
   statusMessage: string,
   background = false,
   matcher?: string,
 ): void {
-  const exists = groups.some((g) => g.hooks.some((h) => h.command === command));
+  const command = hookCommand(script);
+  const exists = groups.some((g) => g.hooks.some((h) => matchesHookCommand(h.command, script)));
   if (exists) {
     for (const group of groups) {
       for (const hook of group.hooks) {
-        if (hook.command === command) {
+        if (matchesHookCommand(hook.command, script)) {
+          hook.command = command;
           hook.timeout = timeout;
           hook.statusMessage = statusMessage;
           if (background) hook.async = true;
@@ -333,16 +343,14 @@ function ensureHookRegistered(
   }
 }
 
-/**
- * Remove all hooks matching any of the given commands from an event's groups.
- * Returns the filtered groups (empty groups are dropped).
- */
 function removeHookCommands(
   groups: MatcherGroup[],
-  commands: string[],
+  scripts: string[],
 ): MatcherGroup[] {
   return groups
-    .map((g) => ({ ...g, hooks: g.hooks.filter((h) => !commands.includes(h.command)) }))
+    .map((g) => ({ ...g, hooks: g.hooks.filter((h) =>
+      !scripts.some((script) => matchesHookCommand(h.command, script))
+    ) }))
     .filter((g) => g.hooks.length > 0);
 }
 
@@ -353,37 +361,32 @@ function mergeHooksJson(add: boolean) {
   }
 
   const hooks = readHooksJson();
+  const oldCaptureScript = join(SUPERMEMORY_HOOKS_DIR, "capture.js");
+  const oldTurnCaptureScript = join(SUPERMEMORY_HOOKS_DIR, "capture-turn.js");
 
   if (add) {
-    const recallCmd = `node ${RECALL_SCRIPT}`;
-    const recallApproveCmd = `node ${RECALL_APPROVE_SCRIPT}`;
-    const flushCmd = `node ${FLUSH_SCRIPT}`;
-    const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
-    const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
-    const oldTurnCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture-turn.js")}`;
-
     if (!hooks.SessionStart) hooks.SessionStart = [];
     ensureHookRegistered(
       hooks.SessionStart,
-      sessionStartCmd,
+      SESSION_START_SCRIPT,
       SESSION_START_TIMEOUT_SECONDS,
       "Loading memory profile...",
     );
 
     // Recall must stay synchronous because its output is injected.
     if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
-    ensureHookRegistered(hooks.UserPromptSubmit, recallCmd, RECALL_TIMEOUT_SECONDS, "Searching memories...");
+    ensureHookRegistered(hooks.UserPromptSubmit, RECALL_SCRIPT, RECALL_TIMEOUT_SECONDS, "Searching memories...");
 
     // Remove the old per-prompt capture hook. Stop now owns automatic capture.
     hooks.UserPromptSubmit = removeHookCommands(
       hooks.UserPromptSubmit,
-      [oldTurnCaptureCmd],
+      [oldTurnCaptureScript],
     );
 
     if (!hooks.PreToolUse) hooks.PreToolUse = [];
     ensureHookRegistered(
       hooks.PreToolUse,
-      recallApproveCmd,
+      RECALL_APPROVE_SCRIPT,
       RECALL_APPROVE_TIMEOUT_SECONDS,
       "Checking Supermemory recall...",
       false,
@@ -392,7 +395,7 @@ function mergeHooksJson(add: boolean) {
 
     // Remove old capture.js Stop hook from previous installs
     if (hooks.Stop) {
-      hooks.Stop = removeHookCommands(hooks.Stop, [oldCaptureCmd]);
+      hooks.Stop = removeHookCommands(hooks.Stop, [oldCaptureScript]);
       if (hooks.Stop.length === 0) delete hooks.Stop;
     }
 
@@ -400,37 +403,30 @@ function mergeHooksJson(add: boolean) {
     if (!hooks.Stop) hooks.Stop = [];
     ensureHookRegistered(
       hooks.Stop,
-      flushCmd,
+      FLUSH_SCRIPT,
       FLUSH_TIMEOUT_SECONDS,
       "Saving to memory...",
       true,
     );
   } else {
     // Remove our hooks from every MatcherGroup, then drop empty groups.
-    const recallCmd = `node ${RECALL_SCRIPT}`;
-    const recallApproveCmd = `node ${RECALL_APPROVE_SCRIPT}`;
-    const flushCmd = `node ${FLUSH_SCRIPT}`;
-    const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
-    const oldCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture.js")}`;
-    const oldTurnCaptureCmd = `node ${join(SUPERMEMORY_HOOKS_DIR, "capture-turn.js")}`;
-
     if (hooks.SessionStart) {
-      hooks.SessionStart = removeHookCommands(hooks.SessionStart, [sessionStartCmd]);
+      hooks.SessionStart = removeHookCommands(hooks.SessionStart, [SESSION_START_SCRIPT]);
       if (hooks.SessionStart.length === 0) delete hooks.SessionStart;
     }
     if (hooks.UserPromptSubmit) {
       hooks.UserPromptSubmit = removeHookCommands(
         hooks.UserPromptSubmit,
-        [recallCmd, oldTurnCaptureCmd],
+        [RECALL_SCRIPT, oldTurnCaptureScript],
       );
       if (hooks.UserPromptSubmit.length === 0) delete hooks.UserPromptSubmit;
     }
     if (hooks.PreToolUse) {
-      hooks.PreToolUse = removeHookCommands(hooks.PreToolUse, [recallApproveCmd]);
+      hooks.PreToolUse = removeHookCommands(hooks.PreToolUse, [RECALL_APPROVE_SCRIPT]);
       if (hooks.PreToolUse.length === 0) delete hooks.PreToolUse;
     }
     if (hooks.Stop) {
-      hooks.Stop = removeHookCommands(hooks.Stop, [flushCmd, oldCaptureCmd]);
+      hooks.Stop = removeHookCommands(hooks.Stop, [FLUSH_SCRIPT, oldCaptureScript]);
       if (hooks.Stop.length === 0) delete hooks.Stop;
     }
   }
@@ -603,22 +599,18 @@ function status() {
   if (hooksJsonExists) {
     try {
       const hooks = normalizeHookEvents(JSON.parse(readFileSync(CODEX_HOOKS_JSON, "utf-8")));
-      const recallCmd = `node ${RECALL_SCRIPT}`;
-      const recallApproveCmd = `node ${RECALL_APPROVE_SCRIPT}`;
-      const flushCmd = `node ${FLUSH_SCRIPT}`;
-      const sessionStartCmd = `node ${SESSION_START_SCRIPT}`;
       const recallRegistered = hooks.UserPromptSubmit?.some((g: MatcherGroup) =>
-        g.hooks.some((h: HookEntry) => h.command === recallCmd)
+        g.hooks.some((h: HookEntry) => matchesHookCommand(h.command, RECALL_SCRIPT))
       );
       const recallApproveRegistered = hooks.PreToolUse?.some((g: MatcherGroup) =>
         g.matcher === SUPERMEMORY_MCP_MATCHER &&
-        g.hooks.some((h: HookEntry) => h.command === recallApproveCmd)
+        g.hooks.some((h: HookEntry) => matchesHookCommand(h.command, RECALL_APPROVE_SCRIPT))
       );
       const flushRegistered = hooks.Stop?.some((g: MatcherGroup) =>
-        g.hooks.some((h: HookEntry) => h.command === flushCmd && h.async === true)
+        g.hooks.some((h: HookEntry) => matchesHookCommand(h.command, FLUSH_SCRIPT) && h.async === true)
       );
       const sessionStartRegistered = hooks.SessionStart?.some((g: MatcherGroup) =>
-        g.hooks.some((h: HookEntry) => h.command === sessionStartCmd)
+        g.hooks.some((h: HookEntry) => matchesHookCommand(h.command, SESSION_START_SCRIPT))
       );
       hooksEnabled = !!(
         recallRegistered &&
