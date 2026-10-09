@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +15,7 @@ const scripts = {
 };
 
 function fixture(t, name, platform = process.platform) {
-  const root = mkdtempSync(join(tmpdir(), "csm-hook-path-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "csm-hook-path-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, name);
   const codexDir = join(home, ".codex");
