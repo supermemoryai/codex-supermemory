@@ -9,6 +9,7 @@ export interface MemoryTextShape {
   filePath?: unknown;
   path?: unknown;
   metadata?: unknown;
+  system?: { updatedAt?: string; filepath?: string; filePath?: string; path?: string };
 }
 
 export const RECALL_MIN_SIMILARITY = 0.55;
@@ -56,6 +57,9 @@ export function recallProvenance(
       result.filepath,
       result.filePath,
       result.path,
+      result.system?.filepath,
+      result.system?.filePath,
+      result.system?.path,
       metadata.filepath,
       metadata.filePath,
       metadata.path,

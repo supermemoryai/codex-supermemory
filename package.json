@@ -1,6 +1,6 @@
 {
   "name": "codex-supermemory",
-  "version": "1.0.18",
+  "version": "1.0.20",
   "description": "Persistent memory for OpenAI Codex CLI \u2014 powered by Supermemory",
   "type": "module",
   "main": "dist/cli.js",
@@ -31,7 +31,8 @@
   ],
   "dependencies": {
     "@iarna/toml": "^2.2.5",
-    "supermemory": "4.0.0"
+    "supermemory": "5.0.1",
+    "supermemory-legacy": "npm:supermemory@4.0.0"
   },
   "devDependencies": {
     "@types/iarna__toml": "^2.0.5",
