@@ -161,6 +161,33 @@ function loadClaudeProjectConfig(directory: string): {
   }
 }
 
+/**
+ * Repo-local Codex config: `<git root>/.codex/supermemory.json`, same shape and
+ * field names as the global `~/.codex/supermemory.json`. Lets a team check a
+ * stable per-repo container tag into the repo instead of every member setting
+ * `projectContainerTag` in their global config (whose value has to change per
+ * checkout). Only the tag fields are read here; other keys stay global-only.
+ */
+function loadCodexProjectConfig(directory: string): {
+  projectContainerTag?: string;
+  userContainerTag?: string;
+} | null {
+  try {
+    const configPath = join(
+      getProjectBasePath(directory),
+      ".codex",
+      "supermemory.json",
+    );
+    if (!existsSync(configPath)) return null;
+    return JSON.parse(readFileSync(configPath, "utf-8")) as {
+      projectContainerTag?: string;
+      userContainerTag?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
 function stripJsoncComments(content: string): string {
   let result = "";
   let index = 0;
@@ -372,6 +399,7 @@ export function getProjectIdentity(directory: string): string {
 
 export function getProjectTag(directory: string): string {
   return (
+    loadCodexProjectConfig(directory)?.projectContainerTag ||
     loadClaudeProjectConfig(directory)?.repoContainerTag ||
     process.env.SUPERMEMORY_REPO_TAG ||
     loadLegacyCursorConfig(directory).repoContainerTag ||
@@ -471,9 +499,11 @@ function uniqueTags(tags: Array<string | null | undefined>): string[] {
 export function getPersonalReadTags(directory: string): string[] {
   const projectHash = sha256(getProjectBasePath(directory));
   const claudeConfig = loadClaudeProjectConfig(directory);
+  const codexProjectConfig = loadCodexProjectConfig(directory);
   return uniqueTags([
     getPersonalTag(directory),
     getGeneratedProjectTag(directory),
+    codexProjectConfig?.userContainerTag,
     claudeConfig?.personalContainerTag,
     CONFIG.userContainerTag,
     getGeneratedPersonalTag(directory),
