@@ -470,6 +470,7 @@ function install() {
   copyFileSync(mcpProxySrc, MCP_PROXY_SCRIPT);
   copyFileSync(flushSrc, FLUSH_SCRIPT);
   copyFileSync(sessionStartSrc, SESSION_START_SCRIPT);
+  copyFileSync(join(SCRIPT_DIR, "THIRD_PARTY_LICENSES"), join(SUPERMEMORY_HOOKS_DIR, "THIRD_PARTY_LICENSES"));
 
   // Remove script names left by older package layouts.
   for (const script of LEGACY_SUPERMEMORY_SCRIPTS) {

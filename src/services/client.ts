@@ -1,14 +1,11 @@
 import Supermemory from "supermemory";
-import type { ProfileParams } from "supermemory/resources/top-level.js";
-import { CONFIG, isConfigured, getApiKeyValue, getBaseUrl, PLUGIN_VERSION } from "../config.js";
+import LegacySupermemory from "supermemory-legacy";
+import { CONFIG, isConfigured, getApiKeyValue, getBaseUrl, getApiVersion, PLUGIN_VERSION } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 import { mergeProfileResults, mergeSearchResponses } from "./resultMerge.js";
 import { memoryText, recallProvenance } from "./resultText.js";
-
-type ProfileParamsWithFilters = ProfileParams & {
-  filters?: ReturnType<typeof getScopeFilters>;
-};
+import { createV5Client, readV5Profile, profileFacts, normalizeSearchItem, scopeFilter, apiErrorMessage } from "./api.js";
 
 const TIMEOUT_MS = 30000;
 export const HOOK_API_TIMEOUT_MS = 3000;
@@ -39,11 +36,7 @@ interface BoundedRequestOptions {
   timeoutMs: number;
 }
 
-/**
- * Hook requests need both SDK-level cancellation and a local backstop. Passing
- * timeout/maxRetries/signal makes the SDK abort the real fetch rather than only
- * abandoning its promise, while the race still protects us from SDK regressions.
- */
+// Cancel the transport as well as bounding the hook's wait.
 function withBoundedSdkRequest<T>(
   request: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
@@ -77,6 +70,7 @@ export interface SearchResultItem {
   updatedAt?: string;
   metadata?: Record<string, unknown> | null;
   containerTag?: string;
+  system?: { updatedAt?: string; filepath?: string; filePath?: string; path?: string };
 }
 
 /** Response shape returned by search APIs. */
@@ -138,27 +132,67 @@ export const PROJECT_ENTITY_CONTEXT = AGENT_ENTITY_CONTEXT;
 
 export class SupermemoryClient {
   private client: Supermemory | null = null;
+  private legacyClient: LegacySupermemory | null = null;
 
   private getClient(): Supermemory {
     if (!this.client) {
       if (!isConfigured()) {
         throw new Error("SUPERMEMORY_API_KEY not set");
       }
-      // `x-sm-source` is read by mono's API to attribute searches and
-      // writes to the Codex plugin in PostHog / `document.source`.
-      this.client = new Supermemory({
-        apiKey: getApiKeyValue(),
-        baseURL: getBaseUrl(),
-        defaultHeaders: { "x-sm-source": CODEX_SOURCE },
-      });
+      this.client = createV5Client();
     }
     return this.client;
   }
 
-  /**
-   * Get a profile with embedded search results from one container. A scope is
-   * optional because default recall searches the unified project container.
-   */
+  private getLegacyClient(): LegacySupermemory {
+    if (!this.legacyClient) {
+      if (!isConfigured()) throw new Error("SUPERMEMORY_API_KEY not set");
+      this.legacyClient = new LegacySupermemory({
+        apiKey: getApiKeyValue(),
+        baseURL: getBaseUrl(),
+        defaultHeaders: { "x-sm-source": CODEX_SOURCE },
+        timeout: 60000,
+        maxRetries: 2,
+      });
+    }
+    return this.legacyClient;
+  }
+
+  private async requestProfile(
+    containerTag: string,
+    query?: string,
+    scope?: MemoryScope,
+    requestOptions?: BoundedRequestOptions,
+  ) {
+    if (getApiVersion() === "legacy") {
+      const profileParams = {
+        containerTag,
+        q: query,
+        filters: scope ? getScopeFilters(scope) : undefined,
+      };
+      return requestOptions
+        ? await withBoundedSdkRequest(
+            (signal) => this.getLegacyClient().profile(profileParams, {
+              timeout: requestOptions.timeoutMs,
+              maxRetries: 0,
+              signal,
+            }),
+            requestOptions.timeoutMs,
+          )
+        : await withTimeout(this.getLegacyClient().profile(profileParams), TIMEOUT_MS);
+    }
+    return requestOptions
+      ? await withBoundedSdkRequest(
+          (abortSignal) => readV5Profile(this.getClient(), containerTag, query, scope, {
+            timeoutInSeconds: requestOptions.timeoutMs / 1000,
+            maxRetries: 0,
+            abortSignal,
+          }),
+          requestOptions.timeoutMs,
+        )
+      : await withTimeout(readV5Profile(this.getClient(), containerTag, query, scope), TIMEOUT_MS);
+  }
+
   async getProfileWithSearch(
     containerTag: string,
     query?: string,
@@ -167,21 +201,7 @@ export class SupermemoryClient {
   ): Promise<ProfileWithSearchResult> {
     log("getProfileWithSearch: start", { containerTag, hasQuery: !!query });
     try {
-      const profileParams = {
-        containerTag,
-        q: query,
-        filters: scope ? getScopeFilters(scope) : undefined,
-      } satisfies ProfileParamsWithFilters as ProfileParams;
-      const result = requestOptions
-        ? await withBoundedSdkRequest(
-            (signal) => this.getClient().profile(profileParams, {
-              timeout: requestOptions.timeoutMs,
-              maxRetries: 0,
-              signal,
-            }),
-            requestOptions.timeoutMs,
-          )
-        : await withTimeout(this.getClient().profile(profileParams), TIMEOUT_MS);
+      const result = await this.requestProfile(containerTag, query, scope, requestOptions);
 
       // Dedupe across static, dynamic, and search results
       const seen = new Set<string>();
@@ -193,8 +213,8 @@ export class SupermemoryClient {
           return true;
         });
 
-      const staticFacts = dedupeWithSeen(result.profile?.static || [], (x) => x);
-      const dynamicFacts = dedupeWithSeen(result.profile?.dynamic || [], (x) => x);
+      const staticFacts = dedupeWithSeen(profileFacts(result.profile?.static));
+      const dynamicFacts = dedupeWithSeen(profileFacts(result.profile?.dynamic));
 
       let searchResults: ProfileWithSearchResult["searchResults"];
       if (result.searchResults) {
@@ -232,7 +252,7 @@ export class SupermemoryClient {
         searchResults,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = apiErrorMessage(error);
       log("getProfileWithSearch: error", { error: errorMessage });
       return { success: false, error: errorMessage, profile: null };
     }
@@ -274,8 +294,6 @@ export class SupermemoryClient {
     return mergeProfileResults(results, CONFIG.maxMemories);
   }
 
-  // Keep old methods for backward compatibility
-
   async searchMemories(
     query: string,
     containerTag: string,
@@ -283,25 +301,40 @@ export class SupermemoryClient {
   ): Promise<SearchResponse> {
     log("searchMemories: start", { containerTag });
     try {
-      const result = await withTimeout(
-        this.getClient().search.memories({
+      const legacy = getApiVersion() === "legacy";
+      const result = await withTimeout<
+        Awaited<ReturnType<Supermemory["search"]>> |
+        Awaited<ReturnType<LegacySupermemory["search"]["memories"]>>
+      >(
+        legacy ? this.getLegacyClient().search.memories({
           q: query,
           containerTag,
           threshold: CONFIG.similarityThreshold,
           limit: CONFIG.maxMemories,
           searchMode: "hybrid",
           filters: scope ? getScopeFilters(scope) : undefined,
+        }) : this.getClient().search(containerTag, {
+          query,
+          filter: scopeFilter(scope),
+          threshold: CONFIG.similarityThreshold,
+          limit: CONFIG.maxMemories,
+          searchMode: "hybrid",
+          rerank: "none",
+          rewriteQuery: false,
+          include: { documents: false, related: false, forgotten: false },
         }),
         TIMEOUT_MS
       );
       log("searchMemories: success", { count: result.results?.length || 0 });
       const results = (result.results as SearchResultItem[]).map((item) => ({
-        ...item,
+        ...normalizeSearchItem(item),
         containerTag,
       }));
-      return { success: true, results, total: result.total, timing: result.timing };
+      return { success: true, results,
+        total: "total" in result ? result.total : results.length,
+        timing: "searchTime" in result ? result.searchTime : result.timing };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = apiErrorMessage(error);
       log("searchMemories: error", { error: errorMessage });
       return { success: false, error: errorMessage, results: [], total: 0, timing: 0 };
     }
@@ -338,20 +371,11 @@ export class SupermemoryClient {
   }
 
   async getProfile(containerTag: string, query?: string, scope?: MemoryScope) {
-    log("getProfile: start", { containerTag });
     try {
-      const result = await withTimeout(
-        this.getClient().profile({
-          containerTag,
-          q: query,
-          filters: scope ? getScopeFilters(scope) : undefined,
-        } satisfies ProfileParamsWithFilters as ProfileParams),
-        TIMEOUT_MS
-      );
-      log("getProfile: success", { hasProfile: !!result?.profile });
-      return { success: true as const, ...result };
+      const result = await this.requestProfile(containerTag, query, scope);
+      return { ...result, success: true as const };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = apiErrorMessage(error);
       log("getProfile: error", { error: errorMessage });
       return { success: false as const, error: errorMessage, profile: null };
     }
@@ -392,9 +416,6 @@ export class SupermemoryClient {
       hasEntityContext: !!options?.entityContext,
     });
     try {
-      // Always stamp `sm_source` so mono's `document.source` column attributes
-      // these writes to the Codex plugin. Caller-provided metadata wins on
-      // conflicts so a tool can override the source if it ever needs to.
       const mergedMetadata = {
         sm_source: CODEX_SOURCE,
         sm_client: CODEX_SOURCE,
@@ -419,20 +440,43 @@ export class SupermemoryClient {
       if (options?.entityContext) {
         payload.entityContext = options.entityContext;
       }
-      const result = options?.timeoutMs
+      const legacy = getApiVersion() === "legacy";
+      const v5Payload = {
+        content,
+        id: options?.customId,
+        supportingContext: options?.entityContext,
+        metadata: mergedMetadata,
+        taskType: "memory" as const,
+        dreaming: "dynamic" as const,
+      };
+      const result = legacy ? options?.timeoutMs
         ? await withBoundedSdkRequest(
-            (signal) => this.getClient().memories.add(payload, {
+            (signal) => this.getLegacyClient().memories.add(payload, {
               timeout: options.timeoutMs,
               maxRetries: 0,
               signal,
             }),
             options.timeoutMs,
           )
-        : await withTimeout(this.getClient().memories.add(payload), TIMEOUT_MS);
+        : await withTimeout(this.getLegacyClient().memories.add(payload), TIMEOUT_MS)
+        : options?.timeoutMs
+          ? await withBoundedSdkRequest(
+              (abortSignal) => this.getClient().add(containerTag, v5Payload, {
+                timeoutInSeconds: options.timeoutMs! / 1000,
+                maxRetries: 0,
+                abortSignal,
+              }),
+              options.timeoutMs,
+            )
+          : await withTimeout(this.getClient().add(containerTag, v5Payload), TIMEOUT_MS);
+      if (typeof result.id !== "string" || !result.id.trim() || result.status === "failed" || (!legacy &&
+        !["unknown", "queued", "extracting", "chunking", "embedding", "indexing", "done"].includes(result.status))) {
+        throw new Error("Document was not accepted for processing");
+      }
       log("addMemory: success", { id: result.id });
       return { success: true as const, ...result };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = apiErrorMessage(error);
       log("addMemory: error", { error: errorMessage });
       return { success: false as const, error: errorMessage };
     }
@@ -441,7 +485,8 @@ export class SupermemoryClient {
   async updateContainerTagName(containerTag: string, name: string) {
     log("updateContainerTagName: start", { containerTag, name });
     try {
-      const baseUrl = getBaseUrl();
+      getApiVersion();
+      const baseUrl = getBaseUrl().replace(/\/+$/, "");
       const currentResponse = await withTimeout(
         fetch(`${baseUrl}/v3/container-tags/${encodeURIComponent(containerTag)}`, {
           headers: {
@@ -507,10 +552,14 @@ export class SupermemoryClient {
   async forgetMemory(content: string, containerTag: string): Promise<{ success: true; message: string; id?: string } | { success: false; error: string }> {
     log("forgetMemory: start", { containerTag, contentLength: content.length });
     try {
+      getApiVersion();
       const result = await withTimeout(
-        this.getClient().memories.forget({ containerTag, content }),
+        this.getLegacyClient().memories.forget({ containerTag, content }),
         TIMEOUT_MS
       );
+      if (result.forgotten !== true || typeof result.id !== "string" || !result.id.trim()) {
+        throw new Error("Memory was not forgotten");
+      }
       log("forgetMemory: success", { id: result.id });
       return { success: true, message: "Memory forgotten", id: result.id };
     } catch (error) {

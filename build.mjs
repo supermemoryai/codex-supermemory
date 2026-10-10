@@ -9,6 +9,14 @@ if (typeof packageJson.version !== "string" || !packageJson.version) {
   throw new Error("package.json must contain a version");
 }
 
+const sdkLicenses = ["supermemory", "supermemory-legacy"].map((name) => {
+  const sdkPackage = JSON.parse(readFileSync(`node_modules/${name}/package.json`, "utf-8"));
+  if (sdkPackage.version !== (name === "supermemory" ? "5.0.1" : "4.0.0")) {
+    throw new Error(`Unexpected ${name} version: ${sdkPackage.version}`);
+  }
+  return `${name} ${sdkPackage.version}\n${readFileSync(`node_modules/${name}/LICENSE`, "utf-8")}`;
+}).join("\n\n");
+
 const sharedConfig = {
   bundle: true,
   platform: "node",
@@ -36,6 +44,8 @@ const executableEntries = [
 ];
 
 rmSync("dist", { recursive: true, force: true });
+mkdirSync("dist", { recursive: true });
+writeFileSync("dist/THIRD_PARTY_LICENSES", sdkLicenses);
 
 const libraryEntries = [
   { in: "src/services/session.ts", out: "dist/services/session.js" },

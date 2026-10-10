@@ -15,6 +15,7 @@ export const DEFAULT_RECALL_DIRECTIVE =
 interface CodexSupermemoryConfig {
   apiKey?: string;
   baseUrl?: string;
+  apiVersion?: "v5" | "legacy";
   similarityThreshold?: number;
   maxMemories?: number;
   maxProfileItems?: number;
@@ -191,6 +192,19 @@ export function getBaseUrl(): string {
     throw new Error("Invalid baseUrl: expected an absolute http(s) URL");
   }
   return normalized;
+}
+
+export function getApiVersion(): "v5" | "legacy" {
+  const configured = process.env.SUPERMEMORY_API_VERSION ?? fileConfig.apiVersion;
+  if (configured !== undefined) {
+    if (configured === "v5" || configured === "legacy") return configured;
+    throw new Error('Invalid apiVersion: expected "v5" or "legacy"');
+  }
+  const url = new URL(getBaseUrl());
+  return url.origin === DEFAULT_BASE_URL && url.pathname === "/" &&
+    !url.username && !url.password && !url.search && !url.hash
+    ? "v5"
+    : "legacy";
 }
 
 // Backwards-compatible alias for the credential-based accessor introduced on main.

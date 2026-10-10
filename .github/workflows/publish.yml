@@ -27,13 +27,19 @@ jobs:
       - run: npm ci
 
       - name: Bump patch version
+        env:
+          BEFORE_REF: ${{ github.event.before }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          npm version patch --no-git-tag-version
           VERSION="$(node -p "require('./package.json').version")"
-          git add package.json package-lock.json
-          git commit -m "chore(release): ${VERSION}"
+          PREVIOUS_VERSION="$(git show "${BEFORE_REF}:package.json" | node -e 'let text=""; process.stdin.on("data", chunk => text += chunk); process.stdin.on("end", () => console.log(JSON.parse(text).version))')"
+          if [ "$VERSION" = "$PREVIOUS_VERSION" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            npm version patch --no-git-tag-version
+            VERSION="$(node -p "require('./package.json').version")"
+            git add package.json package-lock.json
+            git commit -m "chore(release): ${VERSION}"
+          fi
 
       # Build after the bump so the embedded PLUGIN_VERSION matches the publish.
       - run: npm run build --if-present

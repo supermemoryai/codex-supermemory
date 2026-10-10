@@ -1,7 +1,8 @@
-import { CONFIG, getApiKeyValue, getBaseUrl } from "../config.js";
+import { CONFIG, getApiKeyValue, getBaseUrl, getApiVersion } from "../config.js";
 import type { ProfileWithSearchResult, SearchResultItem } from "./client.js";
 import { mergeProfileResults } from "./resultMerge.js";
 import { memoryText, recallProvenance } from "./resultText.js";
+import { createV5Client, readV5Profile, apiErrorMessage } from "./api.js";
 
 export const HOOK_RECALL_TIMEOUT_MS = 3000;
 // Self-hosted backends need a longer cap than hosted; see #61.
@@ -85,6 +86,13 @@ async function fetchProfile(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
+    if (getApiVersion() === "v5") {
+      return await readV5Profile(createV5Client(options.fetchImpl), containerTag, query, undefined, {
+        timeoutInSeconds: options.timeoutMs / 1000,
+        maxRetries: 0,
+        abortSignal: controller.signal,
+      });
+    }
     const response = await options.fetchImpl(`${getBaseUrl().replace(/\/+$/, "")}/v4/profile`, {
       method: "POST",
       headers: {
@@ -102,7 +110,7 @@ async function fetchProfile(
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: apiErrorMessage(error),
       profile: null,
     };
   } finally {
