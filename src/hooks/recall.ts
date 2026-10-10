@@ -56,7 +56,7 @@ function formatRecall(items: RecallItem[], containerTag: string): string {
 ◪ Recalled from supermemory for this prompt (relevance-ranked):
 ${lines.join("\n")}
 
-When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool (containerTag: "${containerTag}").
+When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool — it defaults to this project's container (${containerTag}). Pass containerTag only to search a different space.
 </supermemory-recall>`;
 }
 
