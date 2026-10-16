@@ -6,8 +6,8 @@ import {
   copyFileSync,
   rmSync,
 } from "node:fs";
-import { loadCredentials } from "./services/auth.js";
-import { writeInstallDefaults, CONFIG_FILE, getRecallModeSummary } from "./config.js";
+import { loadCredentialData, startAuthFlow, clearCredentials } from "./services/auth.js";
+import { writeInstallDefaults, CONFIG_FILE, getRecallModeSummary, getApiKeyValue, isConfigured } from "./config.js";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -578,14 +578,9 @@ function uninstall() {
 }
 
 function status() {
-  const envApiKey = process.env.SUPERMEMORY_CODEX_API_KEY;
-  const credentialsApiKey = !envApiKey ? loadCredentials() : undefined;
-  const apiKey = envApiKey || credentialsApiKey;
-  const apiKeySource = envApiKey
-    ? "SUPERMEMORY_CODEX_API_KEY env var"
-    : credentialsApiKey
-    ? "credentials file (~/.codex/supermemory/credentials.json)"
-    : null;
+  const apiKey = getApiKeyValue();
+  const credentials = loadCredentialData();
+  const configured = isConfigured();
 
   const hooksInstalled =
     existsSync(RECALL_SCRIPT) &&
@@ -646,7 +641,11 @@ function status() {
   }
 
   console.log("codex-supermemory status:\n");
-  console.log(`  API key:       ${apiKey ? `✓ set (${apiKeySource})` : "✗ not set"}`);
+  console.log(`  Authentication: ${apiKey ? "API key" : credentials?.type === "oauth" ? "OAuth" : "not configured"}`);
+  if (!apiKey && credentials?.type === "oauth") {
+    console.log(`  OAuth client:  ${credentials.clientId}`);
+    console.log(`  Login needed:  ${configured ? "no" : "yes"}`);
+  }
   console.log(`  Recall mode:   ${getRecallModeSummary()}`);
   console.log(`  Hook scripts:  ${hooksInstalled ? `✓ installed at ${SUPERMEMORY_HOOKS_DIR}` : "✗ not installed"}`);
   console.log(`  hooks.json:    ${hooksEnabled ? "✓ registered (implicit memory)" : "✗ not registered"}`);
@@ -655,15 +654,16 @@ function status() {
   console.log(`  Persistent mark: ${persistentIndicatorEnabled ? "✓ enabled" : ownsSupermemoryPet() ? "○ installed, another pet selection is active" : "✗ not installed"}`);
   console.log(`  config.toml:   ${configTomlExists ? "✓ exists" : "✗ not found"}`);
 
-  if (!apiKey || !hooksInstalled || !hooksEnabled || !mcpInstalled || !statusSkillInstalled) {
+  if (!configured || !hooksInstalled || !hooksEnabled || !mcpInstalled || !statusSkillInstalled) {
     console.log("\nRun `npx codex-supermemory install` to set up.");
+    if (!configured) console.log("Run `npx codex-supermemory login` to authenticate.");
   } else {
     console.log("\nAll good! Memory is active.");
   }
 }
 
-const command = process.argv[2];
-try {
+async function main(): Promise<void> {
+  const command = process.argv[2];
   switch (command) {
     case "install":
       install();
@@ -674,11 +674,23 @@ try {
     case "status":
       status();
       break;
+    case "login":
+      await startAuthFlow();
+      console.log("Supermemory connected through OAuth.");
+      if (getApiKeyValue()) console.log("An environment/config API key still takes precedence. Remove it to use OAuth.");
+      break;
+    case "logout":
+      await clearCredentials();
+      console.log("Supermemory saved credentials cleared; automatic login is paused until you run login.");
+      if (getApiKeyValue()) console.log("An environment/config API key is still configured and has not been removed.");
+      break;
     default:
-      console.log("Usage: codex-supermemory <install|uninstall|status>");
+      console.log("Usage: codex-supermemory <install|uninstall|status|login|logout>");
       process.exit(1);
   }
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
 }
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});

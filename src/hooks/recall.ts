@@ -72,8 +72,8 @@ async function main() {
     // UserPromptSubmit has a 5s backstop and must never launch browser auth.
     // SessionStart owns authentication.
     exitWithContext(
-      "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-      "Start a new Codex task to authenticate, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
+      "[SUPERMEMORY] Memory is installed but NOT active — authentication required.\n" +
+      "Run `npx codex-supermemory login`, start a new Codex task to authenticate, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
     );
   }
 

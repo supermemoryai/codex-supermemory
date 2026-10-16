@@ -1,12 +1,12 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { isConfigured, CONFIG, PLUGIN_VERSION, reloadApiKey } from "../config.js";
+import { getAuthToken, CONFIG, PLUGIN_VERSION } from "../config.js";
 import { HOOK_API_TIMEOUT_MS, SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
-import { startAuthFlow, AUTH_BASE_URL } from "../services/auth.js";
+import { startAuthFlow, isAuthRequired, isLoggedOut } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
 
@@ -72,15 +72,17 @@ async function main() {
     process.exit(0);
   }
 
-  if (!isConfigured()) {
+  try {
+    await getAuthToken(1000);
+  } catch (error) {
     try {
+      // Transient refresh failures must not launch another browser login.
+      if (!isAuthRequired(error) || isLoggedOut()) throw error;
       await startAuthFlow(getSessionStartAuthTimeoutMs());
-      reloadApiKey();
     } catch {
       exitWithContext(
-        "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-        `Visit: ${AUTH_BASE_URL}\n` +
-        "A new Codex task will try browser authentication again, or set SUPERMEMORY_CODEX_API_KEY."
+        "[SUPERMEMORY] Memory is installed but NOT active — authentication unavailable.\n" +
+        "Run `npx codex-supermemory login` to connect, or set SUPERMEMORY_CODEX_API_KEY."
       );
     }
   }

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { loadCredentialData, loadCredentials } from "./services/auth.js";
+import { loadCredentialData, loadCredentials, getAccessToken, getOAuthConfig, hasOAuthCredentials, authRequired } from "./services/auth.js";
 
 export { PLUGIN_VERSION } from "./version.js";
 
@@ -160,12 +160,42 @@ export const CONFIG = {
 };
 
 export function isConfigured(): boolean {
-  return !!SUPERMEMORY_API_KEY;
+  if (getApiKey()) return true;
+  try {
+    return hasOAuthCredentials(getOAuthConfig(getBaseUrl(), getMcpUrl()));
+  } catch {
+    return false;
+  }
 }
 
 export function getApiKeyValue(): string | undefined {
-  return SUPERMEMORY_API_KEY;
+  return getApiKey();
 }
+
+export async function getAuthToken(timeoutMs?: number, apiBaseUrl?: string): Promise<string> {
+  const apiKey = getApiKey();
+  if (apiKey) return apiKey;
+  if (loadCredentialData()?.type !== "oauth") throw authRequired();
+  return getAccessToken(getOAuthConfig(apiBaseUrl ?? getBaseUrl(), getMcpUrl()), timeoutMs);
+}
+
+// The legacy SDK only accepts a static API key. Resolve the bearer at send time
+// so cached SDK clients and retries observe rotated tokens and logout.
+export const authenticatedFetch: typeof fetch = async (input, init) => {
+  const target = new URL(input instanceof Request ? input.url : input.toString());
+  const base = new URL(getBaseUrl());
+  const basePath = base.pathname.replace(/\/+$/, "");
+  if (target.origin !== base.origin || !target.pathname.startsWith(`${basePath}/`)) {
+    throw authRequired();
+  }
+  const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+  signal?.throwIfAborted();
+  const token = await getAuthToken(undefined, base.toString());
+  signal?.throwIfAborted();
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  headers.set("Authorization", `Bearer ${token}`);
+  return fetch(input, { ...init, headers });
+};
 
 function normalizeBaseUrl(baseUrl: unknown): string | null {
   if (typeof baseUrl !== "string" || !baseUrl.trim()) return null;
@@ -192,6 +222,23 @@ export function getBaseUrl(): string {
     throw new Error("Invalid baseUrl: expected an absolute http(s) URL");
   }
   return normalized;
+}
+
+export function getMcpUrl(): string {
+  if (process.env.SUPERMEMORY_MCP_URL) {
+    const configured = normalizeBaseUrl(process.env.SUPERMEMORY_MCP_URL);
+    if (!configured) throw new Error("Invalid SUPERMEMORY_MCP_URL");
+    return configured;
+  }
+  const api = new URL(getBaseUrl());
+  if (api.hostname.startsWith("api.")) {
+    api.hostname = api.hostname.replace(/^api\./, "mcp.");
+    api.pathname = "/mcp";
+    api.search = "";
+    api.hash = "";
+    return api.toString();
+  }
+  throw new Error("Set SUPERMEMORY_MCP_URL for OAuth or MCP on a custom Supermemory backend.");
 }
 
 export function getApiVersion(): "v5" | "legacy" {
