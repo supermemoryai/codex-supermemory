@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
 import { getAuthToken, getMcpUrl } from "../config.js";
-import { isAuthRequired } from "../services/auth.js";
+import { isAuthRequired , settleAuth } from "../services/auth.js";
 const REQUEST_TIMEOUT_MS = 30_000;
 
 let sessionId: string | null = null;
@@ -102,7 +102,8 @@ function main(): void {
   });
 
   lines.on("close", () => {
-    queue.finally(() => process.exit(0));
+    // Let a refresh that is still rotating tokens save them before exiting.
+    queue.finally(() => settleAuth().finally(() => process.exit(0)));
   });
 }
 

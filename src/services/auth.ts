@@ -14,6 +14,7 @@ const LOGGED_OUT_FILE = join(SUPERMEMORY_DIR, ".logged-out");
 const AUTH_PORT = 19877;
 const REDIRECT_URI = `http://127.0.0.1:${AUTH_PORT}/callback`;
 const REFRESH_TIMEOUT = 3000;
+const REFRESH_REQUEST_TIMEOUT = 10_000;
 const REFRESH_SKEW = 60_000;
 const AUTH_SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><title>Connected - Supermemory</title><style>
@@ -64,7 +65,7 @@ export type Credentials =
       savedAt?: string;
     };
 
-class AuthError extends Error {
+export class AuthError extends Error {
   constructor(
     message: string,
     readonly code: string,
@@ -349,14 +350,15 @@ async function exchangeToken(
   return data.access_token;
 }
 
-export async function getAccessToken(
-  config: OAuthConfig,
-  timeoutMs = REFRESH_TIMEOUT,
-): Promise<string> {
-  const saved = loadCredentialData();
-  if (saved?.type !== "oauth" || !sameConfig(saved, config)) throw authRequired();
-  if (saved.accessToken && saved.expiresAt > Date.now() + REFRESH_SKEW) return saved.accessToken;
-  return withAuthLock(async (remaining) => {
+// Rotates the refresh token. The request always runs to completion and saves
+// the replacement, whatever the caller's deadline: aborting it mid-flight would
+// leave the server holding a rotated refresh token we never stored, and the next
+// refresh would fail with invalid_grant and sign the user out.
+let pendingRefresh: Promise<string> | null = null;
+
+function refreshCredentials(config: OAuthConfig): Promise<string> {
+  if (pendingRefresh) return pendingRefresh;
+  const refresh = withAuthLock(async (remaining) => {
     const credentials = loadCredentialData();
     if (credentials?.type !== "oauth" || !sameConfig(credentials, config)) throw authRequired();
     if (credentials.accessToken && credentials.expiresAt > Date.now() + REFRESH_SKEW)
@@ -381,7 +383,62 @@ export async function getAccessToken(
       }
       throw error;
     }
-  }, timeoutMs);
+  }, REFRESH_REQUEST_TIMEOUT).finally(() => {
+    pendingRefresh = null;
+  });
+  // Callers may stop waiting before the refresh settles.
+  refresh.catch(() => {});
+  pendingRefresh = refresh;
+  return refresh;
+}
+
+// Bounds only how long the caller waits; the refresh itself keeps running.
+function waitFor<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const expired = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new AuthError("Supermemory token refresh is still in progress.", "AUTH_PENDING");
+      error.name = "TimeoutError";
+      reject(error);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
+
+export async function getAccessToken(
+  config: OAuthConfig,
+  timeoutMs = REFRESH_TIMEOUT,
+): Promise<string> {
+  const saved = loadCredentialData();
+  if (saved?.type !== "oauth" || !sameConfig(saved, config)) throw authRequired();
+  if (saved.accessToken && saved.expiresAt > Date.now() + REFRESH_SKEW) return saved.accessToken;
+  return waitFor(refreshCredentials(config), timeoutMs);
+}
+
+// Resolves once any in-flight refresh has saved or failed, so a process that
+// exits explicitly can let the rotated tokens land first.
+export async function settleAuth(): Promise<void> {
+  while (pendingRefresh) {
+    await pendingRefresh.catch(() => {});
+  }
+}
+
+// Hooks exit through process.exit, which would discard a refresh that is still
+// rotating tokens. exitHook schedules the exit after the refresh settles and
+// unwinds the caller with HookExit, which hook entrypoints must let through.
+export class HookExit extends Error {
+  constructor(readonly exitCode: number) {
+    super("HOOK_EXIT");
+  }
+}
+
+export function isHookExit(error: unknown): error is HookExit {
+  return error instanceof HookExit;
+}
+
+export function exitHook(code = 0): never {
+  void settleAuth().finally(() => process.exit(code));
+  throw new HookExit(code);
 }
 
 export async function clearCredentials(): Promise<void> {

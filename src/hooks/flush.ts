@@ -1,3 +1,4 @@
+import { settleAuth } from "../services/auth.js";
 import { readFileSync } from "node:fs";
 import { isConfigured } from "../config.js";
 import { SupermemoryClient } from "../services/client.js";
@@ -51,6 +52,7 @@ async function main() {
   }
 }
 
+// Let a refresh that is still rotating tokens save them before exiting.
 main()
   .catch(() => {})
-  .finally(() => process.exit(0));
+  .finally(() => settleAuth().finally(() => process.exit(0)));

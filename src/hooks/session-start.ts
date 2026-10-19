@@ -6,7 +6,7 @@ import { HOOK_API_TIMEOUT_MS, SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
-import { startAuthFlow, isAuthRequired, isLoggedOut } from "../services/auth.js";
+import { startAuthFlow, isAuthRequired, isLoggedOut, exitHook, isHookExit, AuthError } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
 
@@ -46,7 +46,7 @@ function exitWithContext(additionalContext: string, systemMessage?: string): nev
       })
     );
   }
-  process.exit(0);
+  exitHook(0);
 }
 
 function combineContextParts(parts: Array<string | null | undefined>): string {
@@ -69,7 +69,7 @@ async function main() {
   try {
     rawInput = readFileSync(0, "utf-8");
   } catch {
-    process.exit(0);
+    exitHook(0);
   }
 
   try {
@@ -79,7 +79,15 @@ async function main() {
       // Transient refresh failures must not launch another browser login.
       if (!isAuthRequired(error) || isLoggedOut()) throw error;
       await startAuthFlow(getSessionStartAuthTimeoutMs());
-    } catch {
+    } catch (authError) {
+      // A refresh that outlives the hook's wait still completes and saves in
+      // the background; the next hook will find the rotated token.
+      if (authError instanceof AuthError && authError.code === "AUTH_PENDING") {
+        exitWithContext(
+          "[SUPERMEMORY] Memory is installed; the Supermemory sign-in is still refreshing. " +
+            "Memories will load on the next prompt.",
+        );
+      }
       exitWithContext(
         "[SUPERMEMORY] Memory is installed but NOT active — authentication unavailable.\n" +
         "Run `npx codex-supermemory login` to connect, or set SUPERMEMORY_CODEX_API_KEY."
@@ -159,6 +167,7 @@ ${text}
       markTip(),
     ]));
   } catch (error) {
+    if (isHookExit(error)) throw error;
     log("session-start: error", { error: String(error) });
     exitWithContext(
       "",
@@ -170,9 +179,12 @@ ${text}
   }
 }
 
-main().catch(() => {
-  exitWithContext(
-    "",
-    "◪ supermemory · profile unavailable; continuing without recalled context",
-  );
-});
+main()
+  .catch((error) => {
+    if (isHookExit(error)) return;
+    exitWithContext(
+      "",
+      "◪ supermemory · profile unavailable; continuing without recalled context",
+    );
+  })
+  .catch(() => {});

@@ -4,7 +4,8 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import http from "node:http";
 import { createHash } from "node:crypto";
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -640,6 +641,96 @@ describe("direct recall policy", () => {
 });
 
 // ─── session ids ────────────────────────────────────────────────────────────
+
+describe("oauth refresh", () => {
+  const authModule = new URL("../dist/services/auth.js", import.meta.url).href;
+
+  test("a slow refresh still saves the rotated tokens after the hook stops waiting", async (t) => {
+    const { tmpDir } = setupCodexHome(t);
+    const requests = [];
+    const stub = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        requests.push({ url: req.url, body });
+        setTimeout(() => {
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({
+            access_token: "rotated-access",
+            refresh_token: "rotated-refresh",
+            token_type: "Bearer",
+            expires_in: 3600,
+          }));
+        }, 300);
+      });
+    });
+    const url = await new Promise((resolve) => {
+      stub.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${stub.address().port}`));
+    });
+    t.after(() => stub.close());
+    const credentialsDir = join(tmpDir, ".codex", "supermemory");
+    mkdirSync(credentialsDir, { recursive: true });
+    writeFileSync(join(credentialsDir, "credentials.json"), JSON.stringify({
+      type: "oauth",
+      apiBaseUrl: url,
+      issuer: `${url}/api/auth`,
+      resource: `${url}/mcp`,
+      clientId: "client-1",
+      tokenEndpoint: `${url}/api/auth/oauth2/token`,
+      accessToken: "stale-access",
+      refreshToken: "stale-refresh",
+      expiresAt: Date.now() - 1,
+    }));
+    const script = `
+      import { getAccessToken, getOAuthConfig, settleAuth, CREDENTIALS_FILE } from ${JSON.stringify(authModule)};
+      import { readFileSync } from "node:fs";
+      const config = getOAuthConfig(${JSON.stringify(url)}, ${JSON.stringify(`${url}/mcp`)});
+      const started = Date.now();
+      let rejected;
+      try {
+        await getAccessToken(config, 50);
+      } catch (error) {
+        rejected = { code: error.code, name: error.name, elapsed: Date.now() - started };
+      }
+      const savedWhenRejected = JSON.parse(readFileSync(CREDENTIALS_FILE, "utf8")).accessToken;
+      await settleAuth();
+      const saved = JSON.parse(readFileSync(CREDENTIALS_FILE, "utf8"));
+      const reused = await getAccessToken(config, 50);
+      console.log(JSON.stringify({ rejected, savedWhenRejected, saved, reused }));
+    `;
+    // The stub answers from this process, so the child must not block it.
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn("node", ["--input-type=module", "-e", script], {
+        env: { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      child.on("error", reject);
+      child.on("close", (status) => resolve({ status, stdout, stderr }));
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.rejected.code, "AUTH_PENDING");
+    assert.equal(output.rejected.name, "TimeoutError");
+    assert.ok(output.rejected.elapsed < 250, `hook waited ${output.rejected.elapsed}ms`);
+    assert.equal(output.savedWhenRejected, "stale-access");
+    assert.equal(output.saved.accessToken, "rotated-access");
+    assert.equal(output.saved.refreshToken, "rotated-refresh");
+    assert.equal(output.reused, "rotated-access");
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].body, /refresh_token=stale-refresh/);
+    assert.ok(!existsSync(join(credentialsDir, "auth.lock")));
+  });
+});
 
 describe("session ids", () => {
   const sessionModule = new URL("../dist/services/session.js", import.meta.url).href;
