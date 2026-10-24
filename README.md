@@ -137,9 +137,10 @@ Installed automatic hooks don't use that unbounded policy: a conflict keeps the
 capture cursor for a later attempt without an immediate retry. Explicit MCP
 operations still use their independent transport rather than these SDK helpers.
 
-Display-name updates (`/v3/container-tags/...`), account details (`/v3/session`),
-and the latent exact-content forget helper (`/v4/memories`) remain legacy-only
-ancillary operations against the configured REST server. They have no mechanical
+Display-name updates (`/v3/container-tags/...`) and the latent exact-content
+forget helper (`/v4/memories`) remain legacy-only ancillary operations against
+the configured REST server. Account details use `/session`, falling back to the
+deprecated `/v3/session` on older servers. They have no mechanical
 v5 equivalent. A v5-only server may leave names/account details unavailable or
 return an explicit forget error; the plugin does not substitute semantic deletion.
 Interactive MCP tools keep their independent protocol, endpoints, and approvals.

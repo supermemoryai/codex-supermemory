@@ -64,7 +64,8 @@ async function fetchJson(path: string): Promise<unknown | null> {
 }
 
 async function getAccountInfo(): Promise<{ email?: string; name?: string; userId?: string; orgName?: string }> {
-  const data = await fetchJson("/v3/session");
+  // /session is the unversioned path; older API servers only serve /v3/session.
+  const data = (await fetchJson("/session")) ?? (await fetchJson("/v3/session"));
   if (!data || typeof data !== "object") return {};
 
   const session = data as {
