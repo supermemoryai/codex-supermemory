@@ -350,10 +350,8 @@ async function exchangeToken(
   return data.access_token;
 }
 
-// Rotates the refresh token. The request always runs to completion and saves
-// the replacement, whatever the caller's deadline: aborting it mid-flight would
-// leave the server holding a rotated refresh token we never stored, and the next
-// refresh would fail with invalid_grant and sign the user out.
+// Never abort a refresh mid-flight: the server would rotate a refresh token we
+// never stored, and the next refresh would fail with invalid_grant.
 let pendingRefresh: Promise<string> | null = null;
 
 function refreshCredentials(config: OAuthConfig): Promise<string> {
@@ -423,9 +421,8 @@ export async function settleAuth(): Promise<void> {
   }
 }
 
-// Hooks exit through process.exit, which would discard a refresh that is still
-// rotating tokens. exitHook schedules the exit after the refresh settles and
-// unwinds the caller with HookExit, which hook entrypoints must let through.
+// process.exit would discard an in-flight refresh, so exitHook exits after it
+// settles. Hook entrypoints must let HookExit through.
 export class HookExit extends Error {
   constructor(readonly exitCode: number) {
     super("HOOK_EXIT");

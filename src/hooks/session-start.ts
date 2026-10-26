@@ -80,8 +80,7 @@ async function main() {
       if (!isAuthRequired(error) || isLoggedOut()) throw error;
       await startAuthFlow(getSessionStartAuthTimeoutMs());
     } catch (authError) {
-      // A refresh that outlives the hook's wait still completes and saves in
-      // the background; the next hook will find the rotated token.
+      // The refresh still completes in the background for the next hook.
       if (authError instanceof AuthError && authError.code === "AUTH_PENDING") {
         exitWithContext(
           "[SUPERMEMORY] Memory is installed; the Supermemory sign-in is still refreshing. " +
