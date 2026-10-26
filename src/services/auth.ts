@@ -458,7 +458,7 @@ export async function clearCredentials(): Promise<void> {
   }, REFRESH_TIMEOUT);
 }
 
-export async function startAuthFlow(timeoutMs = AUTH_TIMEOUT): Promise<string> {
+export async function startAuthFlow(timeoutMs = AUTH_TIMEOUT, { printUrl = false } = {}): Promise<string> {
   // Resolve configuration lazily: config.ts reads legacy credentials at startup.
   const { getBaseUrl, getMcpUrl } = await import("../config.js");
   const config = getOAuthConfig(getBaseUrl(), getMcpUrl());
@@ -558,6 +558,11 @@ export async function startAuthFlow(timeoutMs = AUTH_TIMEOUT): Promise<string> {
           ),
         );
         server.listen(AUTH_PORT, "127.0.0.1", () => {
+          // The Supermemory CLI collects these links to approve several plugins on one consent screen.
+          if (printUrl) {
+            process.stdout.write(`SUPERMEMORY_AUTHORIZE_URL=${authorizationUrl}\n`);
+            return;
+          }
           openUrl(authorizationUrl).catch(() =>
             reject(
               new Error("Failed to open the browser. Retry login from an interactive terminal."),

@@ -675,7 +675,7 @@ async function main(): Promise<void> {
       status();
       break;
     case "login":
-      await startAuthFlow();
+      await startAuthFlow(undefined, { printUrl: process.argv.includes("--print-url") });
       console.log("Supermemory connected through OAuth.");
       if (getApiKeyValue()) console.log("An environment/config API key still takes precedence. Remove it to use OAuth.");
       break;
