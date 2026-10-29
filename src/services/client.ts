@@ -570,4 +570,75 @@ export class SupermemoryClient {
     }
   }
 
+  // Post the raw rollout delta to the namespace document route. The session gate
+  // middleware detects x-sm-session, stores the raw bytes, and runs the codex
+  // adapter before the normal memory pipeline. Returns 2xx success so the hook
+  // only advances its cursor once the bytes are accepted.
+  async addSession(
+    containerTag: string,
+    raw: string,
+    options: {
+      sessionId: string;
+      generation?: number;
+      offset?: number;
+      metadata?: Record<string, string | number | boolean | string[]>;
+      supportingContext?: string;
+      timeoutMs?: number;
+    },
+  ): Promise<{ success: boolean; status?: number; error?: string }> {
+    const namespace = encodeURIComponent(containerTag);
+    // Carry the same base + caller metadata the old memory path sent so
+    // session-created memories keep sm_scope and are found by scoped recall.
+    const metadata: Record<string, string | number | boolean | string[]> = {
+      sm_source: CODEX_SOURCE,
+      sm_client: CODEX_SOURCE,
+      sm_plugin_version: PLUGIN_VERSION,
+      ...(options.metadata ?? {}),
+    };
+    if (options.generation != null) metadata.sm_session_generation = options.generation;
+    if (options.offset != null) metadata.sm_session_offset = options.offset;
+    const body: {
+      content: string;
+      id: string;
+      metadata: Record<string, string | number | boolean | string[]>;
+      supportingContext?: string;
+    } = {
+      content: raw,
+      id: options.sessionId,
+      metadata,
+    };
+    if (options.supportingContext) body.supportingContext = options.supportingContext;
+
+    log("addSession: start", {
+      containerTag,
+      bytes: raw.length,
+      generation: options.generation,
+      offset: options.offset,
+    });
+    try {
+      const baseUrl = getBaseUrl().replace(/\/+$/, "");
+      const response = await fetch(`${baseUrl}/ns/${namespace}/document`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${getApiKeyValue()}`,
+          "Content-Type": "application/json",
+          "x-sm-source": CODEX_SOURCE,
+          "x-sm-session": CODEX_SOURCE,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(options.timeoutMs ?? HOOK_API_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        log("addSession: http error", { status: response.status });
+        return { success: false, status: response.status, error: `HTTP ${response.status}` };
+      }
+      log("addSession: success", { status: response.status });
+      return { success: true, status: response.status };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("addSession: error", { error: errorMessage });
+      return { success: false, error: errorMessage };
+    }
+  }
+
 }
