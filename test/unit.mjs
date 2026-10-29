@@ -4,9 +4,10 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { createServer } from "node:http";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -730,9 +731,91 @@ describe("browser auth opener", () => {
   test("SessionStart owns browser authentication with a bounded window", () => {
     const authSource = readFileSync(new URL("../src/services/auth.ts", import.meta.url), "utf-8");
     const sessionStartSource = readFileSync(new URL("../src/hooks/session-start.ts", import.meta.url), "utf-8");
-    assert.ok(authSource.includes("startAuthFlow(timeoutMs = AUTH_TIMEOUT, "));
-    assert.ok(sessionStartSource.includes("startAuthFlow(getSessionStartAuthTimeoutMs())"));
+    assert.ok(authSource.includes("  timeoutMs = AUTH_TIMEOUT,\n"));
+    assert.ok(sessionStartSource.includes("startBackgroundAuth(getSessionStartAuthTimeoutMs())"));
     assert.ok(!existsSync(new URL("../src/skills/login.ts", import.meta.url)));
+  });
+
+  test("SessionStart login keeps listening after the hook returns", async (t) => {
+    const tmpDir = makeTmpDir();
+    const binDir = join(tmpDir, "bin");
+    const urlFile = join(tmpDir, "authorize-url");
+    const lockFile = join(tmpDir, ".codex", "supermemory", "auth.lock");
+    mkdirSync(binDir);
+    for (const opener of ["open", "xdg-open"]) {
+      writeFileSync(join(binDir, opener), `#!/bin/sh\nprintf '%s' "$1" > "${urlFile}"\n`);
+      chmodSync(join(binDir, opener), 0o755);
+    }
+
+    let bearer = null;
+    const server = createServer((req, res) => {
+      const url = new URL(req.url, base);
+      const json = (body) => res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body));
+      if (req.headers.authorization) bearer = req.headers.authorization;
+      if (url.pathname === "/.well-known/oauth-authorization-server/api/auth") {
+        json({
+          issuer: `${base}/api/auth`,
+          authorization_endpoint: `${base}/api/auth/authorize`,
+          token_endpoint: `${base}/api/auth/token`,
+          registration_endpoint: `${base}/api/auth/register`,
+          revocation_endpoint: `${base}/api/auth/revoke`,
+        });
+      } else if (url.pathname === "/api/auth/register") {
+        json({ client_id: "client-1", token_endpoint_auth_method: "none" });
+      } else if (url.pathname === "/api/auth/authorize") {
+        const callback = new URL(url.searchParams.get("redirect_uri"));
+        callback.search = new URLSearchParams({ code: "code-1", state: url.searchParams.get("state") }).toString();
+        res.writeHead(302, { Location: callback.toString() }).end();
+      } else if (url.pathname === "/api/auth/token") {
+        json({ access_token: "access-1", token_type: "Bearer", expires_in: 3600, refresh_token: "refresh-1" });
+      } else {
+        res.writeHead(404, { "Content-Type": "application/json" }).end("{}");
+      }
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    t.after(() => {
+      try {
+        process.kill(JSON.parse(readFileSync(lockFile, "utf-8")).pid);
+      } catch {}
+      server.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    const env = {
+      ...process.env,
+      HOME: tmpDir,
+      USERPROFILE: tmpDir,
+      PATH: `${binDir}:${process.env.PATH}`,
+      SUPERMEMORY_CODEX_API_KEY: "",
+      SUPERMEMORY_AUTH_TIMEOUT: "",
+      SUPERMEMORY_API_URL: base,
+      SUPERMEMORY_MCP_URL: `${base}/mcp`,
+    };
+    const runSessionStart = () => new Promise((resolve) => {
+      const child = spawn("node", [fileURLToPath(new URL("../dist/hooks/session-start.js", import.meta.url))], { env });
+      let stdout = "";
+      child.stdout.on("data", (chunk) => (stdout += chunk));
+      child.on("exit", () => resolve(stdout));
+      child.stdin.end(JSON.stringify({ session_id: "s1", cwd: tmpDir }));
+    });
+
+    const startedAt = Date.now();
+    const pending = await runSessionStart();
+    assert.ok(Date.now() - startedAt < 30_000, "SessionStart must return before Codex's 30s timeout");
+    assert.match(pending, /Finish connecting Supermemory in the browser window/);
+    assert.ok(!existsSync(join(tmpDir, ".codex", "supermemory", "credentials.json")));
+
+    // Approve consent only after the hook has exited.
+    const authorize = await fetch(readFileSync(urlFile, "utf-8"), { redirect: "manual" });
+    const callback = await fetch(authorize.headers.get("location"));
+    assert.equal(callback.status, 200);
+    const credentials = JSON.parse(readFileSync(join(tmpDir, ".codex", "supermemory", "credentials.json"), "utf-8"));
+    assert.equal(credentials.accessToken, "access-1");
+
+    const active = await runSessionStart();
+    assert.doesNotMatch(active, /NOT active|Finish connecting/);
+    assert.equal(bearer, "Bearer access-1");
   });
 
   test("SessionStart keeps update notices out of model context", () => {
