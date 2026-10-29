@@ -38,6 +38,7 @@ const RECALL_APPROVE_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "recall-approve.js");
 const MCP_PROXY_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "mcp-proxy.js");
 const FLUSH_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "flush.js");
 const SESSION_START_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "session-start.js");
+const AUTH_SERVER_SCRIPT = join(SUPERMEMORY_HOOKS_DIR, "auth-server.js");
 const CODEX_SKILLS_DIR = join(homedir(), ".codex", "skills");
 const CODEX_PETS_DIR = join(CODEX_DIR, "pets");
 const SUPERMEMORY_PET_DIR = join(CODEX_PETS_DIR, "supermemory");
@@ -449,6 +450,7 @@ function install() {
   const mcpProxySrc = join(DIST_HOOKS_DIR, "mcp-proxy.js");
   const flushSrc = join(DIST_HOOKS_DIR, "flush.js");
   const sessionStartSrc = join(DIST_HOOKS_DIR, "session-start.js");
+  const authServerSrc = join(DIST_HOOKS_DIR, "auth-server.js");
   const petManifestSrc = join(DIST_PET_DIR, "pet.json");
   const petSpritesheetSrc = join(DIST_PET_DIR, "spritesheet.png");
 
@@ -458,6 +460,7 @@ function install() {
     !existsSync(mcpProxySrc) ||
     !existsSync(flushSrc) ||
     !existsSync(sessionStartSrc) ||
+    !existsSync(authServerSrc) ||
     !existsSync(petManifestSrc) ||
     !existsSync(petSpritesheetSrc)
   ) {
@@ -470,6 +473,7 @@ function install() {
   copyFileSync(mcpProxySrc, MCP_PROXY_SCRIPT);
   copyFileSync(flushSrc, FLUSH_SCRIPT);
   copyFileSync(sessionStartSrc, SESSION_START_SCRIPT);
+  copyFileSync(authServerSrc, AUTH_SERVER_SCRIPT);
   copyFileSync(join(SCRIPT_DIR, "THIRD_PARTY_LICENSES"), join(SUPERMEMORY_HOOKS_DIR, "THIRD_PARTY_LICENSES"));
 
   // Remove script names left by older package layouts.

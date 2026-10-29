@@ -1,10 +1,14 @@
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { PLUGIN_VERSION } from "../version.js";
 import { openUrl } from "./openUrl.js";
+
+// Provided by Node in the CJS bundles esbuild emits.
+declare const __dirname: string;
 
 const SUPERMEMORY_DIR = join(homedir(), ".codex", "supermemory");
 export const CREDENTIALS_FILE = join(SUPERMEMORY_DIR, "credentials.json");
@@ -16,6 +20,7 @@ const REDIRECT_URI = `http://127.0.0.1:${AUTH_PORT}/callback`;
 const REFRESH_TIMEOUT = 3000;
 const REFRESH_REQUEST_TIMEOUT = 10_000;
 const REFRESH_SKEW = 60_000;
+const POLL_MS = 500;
 const AUTH_SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><title>Connected - Supermemory</title><style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -150,25 +155,44 @@ function recoverAbandonedLock(): void {
   }
 }
 
+// A login started by SessionStart waits in the background, so a newer login
+// stops it instead of waiting up to five minutes for the lock.
+function stopBackgroundLogin(): void {
+  const owner = readJson<{ pid: number; background?: boolean }>(LOCK_FILE);
+  if (!owner?.background || !Number.isInteger(owner.pid) || owner.pid <= 0) return;
+  try {
+    process.kill(owner.pid);
+  } catch {}
+}
+
 async function withAuthLock<T>(
   action: (remaining: number) => Promise<T>,
   timeoutMs: number,
+  { background = false, preempt = false } = {},
 ): Promise<T> {
   fs.mkdirSync(SUPERMEMORY_DIR, { recursive: true, mode: 0o700 });
   const deadline = Date.now() + timeoutMs;
   let descriptor: number | undefined;
+  let stopped = false;
   while (descriptor === undefined) {
     try {
       descriptor = fs.openSync(LOCK_FILE, "wx", 0o600);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (preempt && !stopped) {
+        stopBackgroundLogin();
+        stopped = true;
+      }
       recoverAbandonedLock();
       if (Date.now() >= deadline) throw new Error("Supermemory authentication is busy. Try again.");
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
   try {
-    fs.writeFileSync(descriptor, JSON.stringify({ pid: process.pid }));
+    fs.writeFileSync(
+      descriptor,
+      JSON.stringify({ pid: process.pid, ...(background && { background }) }),
+    );
     return await action(Math.max(1, deadline - Date.now()));
   } finally {
     fs.closeSync(descriptor);
@@ -216,6 +240,16 @@ export function hasOAuthCredentials(config: OAuthConfig): boolean {
     (!!credentials.refreshToken ||
       (!!credentials.accessToken && credentials.expiresAt > Date.now() + REFRESH_SKEW))
   );
+}
+
+function freshAccessToken(config: OAuthConfig): string | undefined {
+  const credentials = loadCredentialData();
+  return credentials?.type === "oauth" &&
+    sameConfig(credentials, config) &&
+    credentials.accessToken &&
+    credentials.expiresAt > Date.now() + REFRESH_SKEW
+    ? credentials.accessToken
+    : undefined;
 }
 
 export function isLoggedOut(): boolean {
@@ -458,11 +492,21 @@ export async function clearCredentials(): Promise<void> {
   }, REFRESH_TIMEOUT);
 }
 
-export async function startAuthFlow(timeoutMs = AUTH_TIMEOUT, { printUrl = false } = {}): Promise<string> {
-  // Resolve configuration lazily: config.ts reads legacy credentials at startup.
+// Resolve configuration lazily: config.ts reads legacy credentials at startup.
+async function loadOAuthConfig(): Promise<OAuthConfig> {
   const { getBaseUrl, getMcpUrl } = await import("../config.js");
-  const config = getOAuthConfig(getBaseUrl(), getMcpUrl());
+  return getOAuthConfig(getBaseUrl(), getMcpUrl());
+}
+
+export async function startAuthFlow(
+  timeoutMs = AUTH_TIMEOUT,
+  { printUrl = false, background = false } = {},
+): Promise<string> {
+  const config = await loadOAuthConfig();
   return withAuthLock(async (remaining) => {
+    // Another login may have finished while this one waited for the lock.
+    const current = background ? freshAccessToken(config) : undefined;
+    if (current) return current;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error("AUTH_TIMEOUT")), remaining);
     let server: Server | undefined;
@@ -576,5 +620,45 @@ export async function startAuthFlow(timeoutMs = AUTH_TIMEOUT, { printUrl = false
       server?.close();
       server?.closeAllConnections();
     }
-  }, timeoutMs);
+  }, timeoutMs, { background, preempt: true });
+}
+
+// Codex stops waiting for SessionStart at 30s, so the login runs detached for
+// five minutes and the hook only waits briefly for it. auth-server.js is
+// installed next to the session-start.js bundle.
+export async function startBackgroundAuth(waitMs: number): Promise<string> {
+  const config = await loadOAuthConfig();
+  const child = spawn(process.execPath, [join(__dirname, "auth-server.js")], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+
+  return new Promise<string>((resolve, reject) => {
+    const startedAt = Date.now();
+    const done = (error: AuthError | null, token?: string) => {
+      clearInterval(timer);
+      child.removeAllListeners();
+      if (error) reject(error);
+      else resolve(token as string);
+    };
+    child.on("error", () =>
+      done(new AuthError("Supermemory login could not start.", "AUTH_FAILED")),
+    );
+    // A newer login stopping this one (a signal) is not a failure.
+    child.on("exit", (code, signal) => {
+      if (code !== 0 && !signal) {
+        done(new AuthError("Supermemory login failed.", "AUTH_FAILED"));
+      }
+    });
+    const timer = setInterval(() => {
+      const token = freshAccessToken(config);
+      if (token) {
+        done(null, token);
+      } else if (Date.now() - startedAt > waitMs) {
+        done(new AuthError("Supermemory login is waiting for the browser.", "AUTH_PENDING"));
+      }
+    }, POLL_MS);
+  });
 }
