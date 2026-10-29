@@ -1,6 +1,6 @@
 import Supermemory from "supermemory";
 import LegacySupermemory from "supermemory-legacy";
-import { CONFIG, isConfigured, getApiKeyValue, getBaseUrl, getApiVersion, PLUGIN_VERSION } from "../config.js";
+import { CONFIG, isConfigured, getApiKeyValue, getAuthToken, authenticatedFetch, getBaseUrl, getApiVersion, PLUGIN_VERSION } from "../config.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 import { mergeProfileResults, mergeSearchResponses } from "./resultMerge.js";
@@ -137,7 +137,7 @@ export class SupermemoryClient {
   private getClient(): Supermemory {
     if (!this.client) {
       if (!isConfigured()) {
-        throw new Error("SUPERMEMORY_API_KEY not set");
+        throw new Error("Supermemory authentication required");
       }
       this.client = createV5Client();
     }
@@ -146,9 +146,10 @@ export class SupermemoryClient {
 
   private getLegacyClient(): LegacySupermemory {
     if (!this.legacyClient) {
-      if (!isConfigured()) throw new Error("SUPERMEMORY_API_KEY not set");
+      if (!isConfigured()) throw new Error("Supermemory authentication required");
       this.legacyClient = new LegacySupermemory({
-        apiKey: getApiKeyValue(),
+        apiKey: getApiKeyValue() || "oauth",
+        fetch: authenticatedFetch,
         baseURL: getBaseUrl(),
         defaultHeaders: { "x-sm-source": CODEX_SOURCE },
         timeout: 60000,
@@ -490,7 +491,7 @@ export class SupermemoryClient {
       const currentResponse = await withTimeout(
         fetch(`${baseUrl}/v3/container-tags/${encodeURIComponent(containerTag)}`, {
           headers: {
-            Authorization: `Bearer ${getApiKeyValue()}`,
+            Authorization: `Bearer ${await getAuthToken(undefined, baseUrl)}`,
           },
         }),
         SPACE_NAME_TIMEOUT_MS
@@ -524,7 +525,7 @@ export class SupermemoryClient {
         fetch(`${baseUrl}/v3/container-tags/${encodeURIComponent(containerTag)}`, {
           method: "PATCH",
           headers: {
-            Authorization: `Bearer ${getApiKeyValue()}`,
+            Authorization: `Bearer ${await getAuthToken(undefined, baseUrl)}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ name }),

@@ -1,8 +1,6 @@
 import { createInterface } from "node:readline";
-import { getApiKeyValue } from "../config.js";
-
-const MCP_URL =
-  process.env.SUPERMEMORY_MCP_URL || "https://mcp.supermemory.ai/mcp";
+import { getAuthToken, getMcpUrl } from "../config.js";
+import { isAuthRequired , settleAuth } from "../services/auth.js";
 const REQUEST_TIMEOUT_MS = 30_000;
 
 let sessionId: string | null = null;
@@ -43,7 +41,7 @@ async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
   };
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
 
-  const response = await fetch(MCP_URL, {
+  const response = await fetch(getMcpUrl(), {
     method: "POST",
     headers,
     body: JSON.stringify(message),
@@ -73,7 +71,6 @@ async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
 }
 
 function main(): void {
-  const apiKey = getApiKeyValue();
   let queue = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
 
@@ -88,18 +85,16 @@ function main(): void {
     }
 
     queue = queue.then(async () => {
-      if (!apiKey) {
-        sendError(
-          message.id,
-          -32001,
-          "Supermemory is not authenticated. Start a new Codex task to log in, or set SUPERMEMORY_CODEX_API_KEY.",
-        );
-        return;
-      }
-
       try {
+        // SessionStart may authenticate after the proxy has already started.
+        const apiKey = await getAuthToken();
         await forward(message, apiKey);
       } catch (error) {
+        if (isAuthRequired(error)) {
+          sessionId = null;
+          sendError(message.id, -32001, "Supermemory is not authenticated. Start a new Codex task to log in, run `npx codex-supermemory login`, or set SUPERMEMORY_CODEX_API_KEY.");
+          return;
+        }
         const detail = error instanceof Error ? error.message : String(error);
         sendError(message.id, -32000, `Supermemory MCP proxy error: ${detail}`);
       }
@@ -107,7 +102,8 @@ function main(): void {
   });
 
   lines.on("close", () => {
-    queue.finally(() => process.exit(0));
+    // Let a refresh that is still rotating tokens save them before exiting.
+    queue.finally(() => settleAuth().finally(() => process.exit(0)));
   });
 }
 

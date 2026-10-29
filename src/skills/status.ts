@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { CONFIG, getApiBaseUrl, getApiKeyValue, getApiVersion, isConfigured } from "../config.js";
-import { loadCredentials } from "../services/auth.js";
+import { CONFIG, getApiBaseUrl, getApiKeyValue, getAuthToken, getApiVersion, isConfigured } from "../config.js";
+import { loadCredentials, loadCredentialData } from "../services/auth.js";
 import { getTags } from "../services/tags.js";
 import { createV5Client } from "../services/api.js";
 
@@ -45,10 +45,8 @@ function getAutoRecallStatus(): string {
 }
 
 async function fetchJson(path: string): Promise<unknown | null> {
-  const apiKey = getApiKeyValue();
-  if (!apiKey) return null;
-
   try {
+    const apiKey = await getAuthToken(undefined, API_URL);
     const response = await fetch(`${API_URL.replace(/\/+$/, "")}${path}`, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -85,17 +83,15 @@ async function probeApi(containerTag: string): Promise<{
   status?: number;
   detail: string;
 }> {
-  const apiKey = getApiKeyValue();
-  if (!apiKey) return { ok: false, detail: "not checked (missing API key)" };
-
   try {
+    const apiKey = await getAuthToken(undefined, API_URL);
     if (getApiVersion() === "v5") {
       await createV5Client().profile(containerTag, {}, {
         timeoutInSeconds: 8,
         maxRetries: 0,
         abortSignal: AbortSignal.timeout(8_000),
       });
-      return { ok: true, status: 200, detail: "reachable, key valid" };
+      return { ok: true, status: 200, detail: "reachable, credentials valid" };
     }
     const response = await fetch(`${API_URL.replace(/\/+$/, "")}/v4/profile`, {
       method: "POST",
@@ -108,10 +104,10 @@ async function probeApi(containerTag: string): Promise<{
       signal: AbortSignal.timeout(8_000),
     });
     if (response.status === 200) {
-      return { ok: true, status: 200, detail: "reachable, key valid" };
+      return { ok: true, status: 200, detail: "reachable, credentials valid" };
     }
     if (response.status === 401 || response.status === 403) {
-      return { ok: false, status: response.status, detail: "reachable, key invalid or revoked" };
+      return { ok: false, status: response.status, detail: "reachable, credentials invalid or revoked" };
     }
     return { ok: false, status: response.status, detail: "API returned an error" };
   } catch (error) {
@@ -121,7 +117,7 @@ async function probeApi(containerTag: string): Promise<{
       ok: false,
       status: typeof status === "number" ? status : undefined,
       detail: status === 401 || status === 403
-        ? "reachable, key invalid or revoked"
+        ? "reachable, credentials invalid or revoked"
         : "API request failed",
     };
   }
@@ -131,13 +127,18 @@ async function main(): Promise<void> {
   const cwd = process.cwd();
   const tags = getTags(cwd);
   const apiKey = getApiKeyValue();
+  const credentials = loadCredentialData();
   const lines: string[] = [];
 
   lines.push("supermemory status");
   lines.push("");
   lines.push(`Authenticated: ${isConfigured() ? "yes" : "no"}`);
   lines.push(`Connected: ${isConfigured() ? "checking..." : "no"}`);
-  lines.push(`API key: ${maskKey(apiKey)} (${getKeySource()})`);
+  if (!apiKey && credentials?.type === "oauth") {
+    lines.push(`Authentication: OAuth (client ${credentials.clientId})`);
+  } else {
+    lines.push(`API key: ${maskKey(apiKey)} (${getKeySource()})`);
+  }
   const displayUrl = new URL(API_URL);
   lines.push(`API URL: ${displayUrl.origin}${displayUrl.pathname}`);
   lines.push(`Memory scope: one project container with metadata scopes`);
@@ -147,9 +148,9 @@ async function main(): Promise<void> {
   lines.push(`Reads (including legacy): ${tags.allReads.join(", ")}`);
 
   if (!isConfigured()) {
-    lines[2] = "Connected: no";
+    lines[3] = "Connected: no";
     lines.push("");
-    lines.push("Start a new Codex task to connect automatically, or set SUPERMEMORY_CODEX_API_KEY.");
+    lines.push("Start a new Codex task to connect automatically, run `npx codex-supermemory login`, or set SUPERMEMORY_CODEX_API_KEY.");
     console.log(lines.join("\n"));
     process.exit(0);
   }
@@ -171,7 +172,7 @@ async function main(): Promise<void> {
     if (accountInfo.orgName) lines.push(`Organization: ${accountInfo.orgName}`);
   } else {
     lines.push("");
-    lines.push("Account: authenticated API key (account details unavailable from API key)");
+    lines.push("Account: details unavailable for these credentials");
   }
 
   if (!probe.ok) {

@@ -730,7 +730,7 @@ describe("browser auth opener", () => {
   test("SessionStart owns browser authentication with a bounded window", () => {
     const authSource = readFileSync(new URL("../src/services/auth.ts", import.meta.url), "utf-8");
     const sessionStartSource = readFileSync(new URL("../src/hooks/session-start.ts", import.meta.url), "utf-8");
-    assert.ok(authSource.includes("startAuthFlow(timeoutMs = AUTH_TIMEOUT)"));
+    assert.ok(authSource.includes("startAuthFlow(timeoutMs = AUTH_TIMEOUT, "));
     assert.ok(sessionStartSource.includes("startAuthFlow(getSessionStartAuthTimeoutMs())"));
     assert.ok(!existsSync(new URL("../src/skills/login.ts", import.meta.url)));
   });
