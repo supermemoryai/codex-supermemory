@@ -313,6 +313,10 @@ Anything wrapped in `<private>...</private>` is replaced with `[REDACTED]` befor
 being sent to Supermemory. Use this for secrets, tokens, or anything you'd rather
 not have stored.
 
+Codex adds its own context to the transcript as user messages: the
+`<environment_context>` block (working directory, approval policy, sandbox mode)
+and your AGENTS.md instructions. Capture drops these, so only what you typed is saved.
+
 ## License
 
 MIT

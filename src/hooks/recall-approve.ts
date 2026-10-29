@@ -3,6 +3,12 @@ import { readFileSync } from "node:fs";
 const TOOL_NAME_RE = /^mcp__supermemory__(.+)$/;
 const READ_ONLY_TOOLS = new Set([
   "search_memory",
+  "get_profile",
+  "list_documents",
+  "get_document",
+  "list_memories",
+  "list_spaces",
+  "who_am_i",
   "listSpaces",
   "listMemories",
   "listDocuments",

@@ -11,7 +11,7 @@ Show whether Supermemory is connected and which credential source is active:
 node ~/.codex/supermemory/status.js
 ```
 
-Then call the `mcp__supermemory__whoAmI` tool when it is available. Report API
+Then call the `mcp__supermemory__who_am_i` tool when it is available. Report API
 reachability and MCP reachability separately; a working direct API probe does not
 prove that the MCP tool path is connected.
 
