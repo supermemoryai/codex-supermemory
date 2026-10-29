@@ -534,12 +534,12 @@ ${hadExistingConfig
     : "Fresh install: direct relevant-memory recall plus session-start profile and turn-stop flush.\nSet recallMode to off or advisory in ~/.codex/supermemory.json if preferred.\n"}
 
 Next steps:
-  1. Start Codex — on your first prompt, a browser window will open to
-     authenticate with Supermemory automatically.
+  1. Start Codex. When the session starts, a browser window opens so you can
+     sign in to Supermemory. No API key is needed.
 
-  Or set SUPERMEMORY_CODEX_API_KEY="sm_..." in your shell profile.
+  2. To sign in now instead, run: npx codex-supermemory login
 
-  2. Get an API key at: https://console.supermemory.ai (if needed)
+  Prefer an API key? Set SUPERMEMORY_CODEX_API_KEY="sm_..." in your shell profile.
 
 Optional: Enable debug logging:
   export SUPERMEMORY_DEBUG=true
