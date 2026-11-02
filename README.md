@@ -259,7 +259,6 @@ Drop this file in to override defaults:
 | `containerTagPrefix`     | `string`   | `"codex"`      | Legacy prefix retained when reading containers created by older versions.                    |
 | `userContainerTag`       | `string`   | auto           | Legacy personal container retained for backward-compatible reads.                            |
 | `projectContainerTag`    | `string`   | auto (per-repo) | Explicit unified project-container override, also honored by Claude Code.                    |
-| `filterPrompt`           | `string`   | (sensible)     | Filter prompt used by Supermemory's stateful filter.                                         |
 | `debug`                  | `boolean`  | `false`        | Enable debug logging.                                                                        |
 | `recallMode`             | `"direct" \| "off" \| "advisory"` | `"direct"` | Directly retrieve relevant memory, disable prompt recall, or inject an advisory directive. |
 | `recallDirective`        | `string`   | (sensible)     | Context injected when `recallMode` is `"advisory"`.                                        |
