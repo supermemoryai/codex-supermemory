@@ -23,7 +23,6 @@ interface CodexSupermemoryConfig {
   containerTagPrefix?: string;
   userContainerTag?: string;
   projectContainerTag?: string;
-  filterPrompt?: string;
   debug?: boolean;
   signalExtraction?: boolean;
   signalKeywords?: string[];
@@ -52,8 +51,6 @@ const DEFAULTS = {
   maxProfileItems: 5,
   injectProfile: true,
   containerTagPrefix: "codex",
-  filterPrompt:
-    "You are a stateful coding agent. Remember all the information, including but not limited to user's coding preferences, tech stack, behaviours, workflows, and any other relevant details.",
   debug: false,
   signalExtraction: false,
   signalKeywords: DEFAULT_SIGNAL_KEYWORDS,
@@ -143,7 +140,6 @@ export const CONFIG = {
   containerTagPrefix: fileConfig.containerTagPrefix ?? DEFAULTS.containerTagPrefix,
   userContainerTag: fileConfig.userContainerTag,
   projectContainerTag: fileConfig.projectContainerTag,
-  filterPrompt: fileConfig.filterPrompt ?? DEFAULTS.filterPrompt,
   debug: fileConfig.debug ?? DEFAULTS.debug,
   signalExtraction: fileConfig.signalExtraction ?? DEFAULTS.signalExtraction,
   signalKeywords: fileConfig.signalKeywords ?? DEFAULTS.signalKeywords,
