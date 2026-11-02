@@ -409,6 +409,54 @@ describe("capture tracker", () => {
     assert.equal(captured.capturedContent.match(/Remember that we use PostgreSQL\./g)?.length, 1);
   });
 
+  test("drops Codex's environment context and AGENTS.md instructions from captured user text", (t) => {
+    const homeDir = makeTmpDir();
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const transcriptFile = join(homeDir, "transcript.jsonl");
+    const userItem = (...texts) => JSON.stringify({ type: "response_item", payload: {
+      type: "message", role: "user", content: texts.map((text) => ({ type: "input_text", text })),
+    } });
+    writeFileSync(
+      transcriptFile,
+      [
+        userItem(
+          "# AGENTS.md instructions for /Users/me/repo\n\n<INSTRUCTIONS>\nAlways run the linter.\n</INSTRUCTIONS>",
+          "<environment_context>\n  <cwd>/Users/me/repo</cwd>\n  <approval_policy>never</approval_policy>\n  <sandbox_mode>danger-full-access</sandbox_mode>\n</environment_context>",
+        ),
+        userItem("<user_instructions>\nLegacy AGENTS.md body\n</user_instructions>"),
+        userItem("Fix the flaky login test."),
+        JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [
+          { type: "output_text", text: "Fixed." },
+        ] } }),
+      ].join("\n"),
+    );
+    const script = `
+      import { captureEntries } from ${JSON.stringify(captureModule)};
+      let capturedContent = "";
+      const client = { addMemory: async (content) => {
+        capturedContent = content;
+        return { success: true };
+      } };
+      await captureEntries("flush", client, "context-session", ${JSON.stringify(transcriptFile)}, {
+        canonical: "repo_test__1234567890abcdef",
+        project: "repo_test__1234567890abcdef",
+        user: "repo_test__1234567890abcdef",
+        projectName: "test",
+        projectId: "1234567890abcdef",
+      });
+      console.log(JSON.stringify(capturedContent));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, SUPERMEMORY_CODEX_API_KEY: "sm_test" },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      JSON.parse(result.stdout),
+      "[Session context-session]\n1. [user] Fix the flaky login test.\n2. [assistant] Fixed.",
+    );
+  });
+
   test("serializes overlapping capture transactions and keeps the cursor monotonic", (t) => {
     const homeDir = makeTmpDir();
     t.after(() => rmSync(homeDir, { recursive: true, force: true }));
@@ -1187,6 +1235,27 @@ describe("hosted MCP hooks", () => {
     assert.deepEqual(output.hookSpecificOutput.updatedInput, {
       query: "company employment full time",
     });
+  });
+
+  test("snake_case read tools are allowed; writes and other servers are not", () => {
+    const decide = (toolName) => {
+      const result = spawnSync("node", [approveBin], {
+        input: JSON.stringify({ tool_name: toolName, tool_input: {} }),
+        encoding: "utf-8",
+      });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout ? JSON.parse(result.stdout).hookSpecificOutput.permissionDecision : null;
+    };
+    for (const tool of [
+      "get_profile", "list_documents", "get_document", "list_memories", "list_spaces", "who_am_i",
+      "listMemories", "listDocuments", "getDocument", "listSpaces", "whoAmI",
+    ]) {
+      assert.equal(decide(`mcp__supermemory__${tool}`), "allow", tool);
+    }
+    for (const tool of ["add_memory", "forget_memory", "save-memory", "set-active-tag", "upload-file"]) {
+      assert.equal(decide(`mcp__supermemory__${tool}`), null, tool);
+    }
+    assert.equal(decide("mcp__mem0__search_memory"), null);
   });
 
   test("MCP proxy fails clearly when SessionStart has not authenticated", (t) => {
