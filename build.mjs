@@ -33,7 +33,7 @@ const sharedConfig = {
 
 const executableEntries = [
   { in: "src/cli.ts", out: "dist/cli.js" },
-  ...["recall", "recall-approve", "mcp-proxy", "flush", "session-start"].map((n) => ({
+  ...["recall", "recall-approve", "mcp-proxy", "flush", "session-start", "auth-server"].map((n) => ({
     in: `src/hooks/${n}.ts`,
     out: `dist/hooks/${n}.js`,
   })),
