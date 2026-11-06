@@ -588,6 +588,36 @@ describe("direct recall policy", () => {
     assert.ok(output.elapsed < 500, `abort took ${output.elapsed}ms`);
   });
 
+  test("prompt recall on v5 searches each tag without re-fetching the profile", () => {
+    const script = `
+      import { getHookProfileWithSearchMany } from ${JSON.stringify(hookClientModule)};
+      const urls = [];
+      const fetchImpl = async (input) => {
+        urls.push(String(input instanceof Request ? input.url : input));
+        return new Response(JSON.stringify({ results: [], searchTime: 1 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      };
+      const result = await getHookProfileWithSearchMany(["repo_a", "repo_b"], "substantive recall query", {
+        timeoutMs: 2000,
+        fetchImpl,
+      });
+      console.log(JSON.stringify({ success: result.success, urls }));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, SUPERMEMORY_CODEX_API_KEY: "sm_test", SUPERMEMORY_API_VERSION: "v5" },
+      encoding: "utf-8",
+      timeout: 5_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.success, true);
+    assert.equal(output.urls.length, 2, output.urls.join(", "));
+    assert.ok(output.urls.every((url) => url.includes("/search")), output.urls.join(", "));
+    assert.ok(!output.urls.some((url) => url.includes("/profile")), output.urls.join(", "));
+  });
+
   test("uses 3s on api.supermemory.ai and 60s on self-hosted APIs", () => {
     const script = `
       import {
