@@ -7,6 +7,8 @@ import { getSeenFacts, addSeenFacts, factKey } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
 import { getHookProfileWithSearchMany } from "../services/hookRecallClient.js";
 import { prepareRecallQuery, shouldRecallPrompt } from "../services/recallPolicy.js";
+import { getSessionSkipReason } from "../services/sessionGate.js";
+import { isRepeatedRecallQuery } from "../services/dedupe.js";
 
 const MAX_RESULT_CHARS = 300;
 
@@ -85,6 +87,12 @@ async function main() {
     exitWithContext("");
   }
 
+  const skipReason = getSessionSkipReason(payload);
+  if (skipReason) {
+    log("recall: skipped", { skipReason });
+    exitWithContext("");
+  }
+
   const query = payload.prompt || payload.input || "";
   if (!query.trim()) {
     exitWithContext("");
@@ -111,11 +119,14 @@ async function main() {
 
   if (!shouldRecallPrompt(query)) exitWithContext("");
 
+  const recallQuery = prepareRecallQuery(query);
+  if (CONFIG.dedupeRecallQueries && isRepeatedRecallQuery(tags.canonical, recallQuery)) {
+    log("recall: skipped repeated query", { containerTag: tags.canonical });
+    exitWithContext("");
+  }
+
   try {
-    const profileResult = await getHookProfileWithSearchMany(
-      tags.allReads,
-      prepareRecallQuery(query),
-    );
+    const profileResult = await getHookProfileWithSearchMany(tags.allReads, recallQuery);
 
     if (!profileResult.success) {
       exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");

@@ -9,6 +9,7 @@ import { log } from "../services/logger.js";
 import { startAuthFlow, isAuthRequired, isLoggedOut, exitHook, isHookExit, AuthError } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
+import { getSessionSkipReason } from "../services/sessionGate.js";
 
 const MARK_TIP_FILE = join(homedir(), ".codex", "supermemory", ".mark-tip-shown");
 const UPDATE_COMMAND = "npx codex-supermemory@latest install";
@@ -26,6 +27,7 @@ function getSessionStartAuthTimeoutMs(): number {
 
 interface CodexHookPayload {
   session_id?: string;
+  transcript_path?: string | null;
   cwd?: string;
   [key: string]: unknown;
 }
@@ -72,6 +74,17 @@ async function main() {
     exitHook(0);
   }
 
+  let payload: CodexHookPayload | null = null;
+  try {
+    payload = JSON.parse(rawInput) as CodexHookPayload;
+  } catch {}
+
+  const skipReason = payload ? getSessionSkipReason(payload) : null;
+  if (skipReason) {
+    log("session-start: skipped", { skipReason });
+    exitHook(0);
+  }
+
   try {
     await getAuthToken(1000);
   } catch (error) {
@@ -94,12 +107,7 @@ async function main() {
     }
   }
 
-  let payload: CodexHookPayload = {};
-  try {
-    payload = JSON.parse(rawInput) as CodexHookPayload;
-  } catch {
-    exitWithContext("");
-  }
+  if (!payload) exitWithContext("");
 
   const sessionId = payload.session_id || `codex_${Date.now()}`;
   const cwd = payload.cwd || process.cwd();

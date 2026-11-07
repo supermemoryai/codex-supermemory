@@ -33,6 +33,11 @@ interface CodexSupermemoryConfig {
   recallMode?: RecallMode;
   recallDirective?: string;
   captureEveryNTurns?: number;
+  captureSubagents?: boolean;
+  captureHeadless?: boolean;
+  captureOrchestrated?: boolean;
+  dedupeOpeningPrompt?: boolean;
+  dedupeRecallQueries?: boolean;
 }
 
 const DEFAULT_SIGNAL_KEYWORDS = [
@@ -132,6 +137,17 @@ export function reloadApiKey(): void {
 
 const recallMode = resolveRecallMode(fileConfig);
 
+function envFlag(name: string): boolean | undefined {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
+  return undefined;
+}
+
+function resolveFlag(envName: string, configured: unknown, fallback: boolean): boolean {
+  return envFlag(envName) ?? (typeof configured === "boolean" ? configured : fallback);
+}
+
 export const CONFIG = {
   similarityThreshold: fileConfig.similarityThreshold ?? DEFAULTS.similarityThreshold,
   maxMemories: fileConfig.maxMemories ?? DEFAULTS.maxMemories,
@@ -153,6 +169,11 @@ export const CONFIG = {
   /** @deprecated Prefer recallMode. */
   autoRecallEveryPrompt: recallMode === "direct",
   captureEveryNTurns: resolveCaptureEveryNTurns(fileConfig),
+  captureSubagents: resolveFlag("SUPERMEMORY_CAPTURE_SUBAGENTS", fileConfig.captureSubagents, false),
+  captureHeadless: resolveFlag("SUPERMEMORY_CAPTURE_HEADLESS", fileConfig.captureHeadless, false),
+  captureOrchestrated: resolveFlag("SUPERMEMORY_CAPTURE_ORCHESTRATED", fileConfig.captureOrchestrated, true),
+  dedupeOpeningPrompt: resolveFlag("SUPERMEMORY_DEDUPE_OPENING_PROMPT", fileConfig.dedupeOpeningPrompt, true),
+  dedupeRecallQueries: resolveFlag("SUPERMEMORY_DEDUPE_RECALL_QUERIES", fileConfig.dedupeRecallQueries, true),
 };
 
 export function isConfigured(): boolean {

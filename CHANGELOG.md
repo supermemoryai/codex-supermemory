@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Skip Supermemory profile, recall, and capture for Codex subagents, internal helper
+  sessions, and `codex exec` runs by default. Opt back in with `captureSubagents` /
+  `captureHeadless` or `SUPERMEMORY_CAPTURE_SUBAGENTS` / `SUPERMEMORY_CAPTURE_HEADLESS`.
+- Treat Conductor and Vibe Kanban sessions as interactive; `captureOrchestrated: false`
+  skips them.
+- Send a one-line marker instead of an opening prompt already captured for the same
+  container (`dedupeOpeningPrompt`), and skip exact recall repeats within 10 minutes
+  (`dedupeRecallQueries`).
+
 ## 1.0.20
 
 - Use the official Supermemory 5.0.1 SDK for hosted capture, profile, search, and
