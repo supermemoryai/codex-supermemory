@@ -9,6 +9,7 @@ export interface TranscriptEntry {
   index: number;
   role: string;
   content: string;
+  prompt?: boolean;
 }
 
 /**
@@ -110,16 +111,19 @@ export function parseTranscript(transcriptPath: string): TranscriptEntry[] {
     return entries;
   }
 
-  function pushEntry(index: number, role: string, rawContent: string): void {
+  function pushEntry(index: number, role: string, rawContent: string, prompt = false): void {
     const cleaned = cleanContent(stripPrivateContent(rawContent));
     if (!cleaned) return;
 
     for (let i = entries.length - 1; i >= 0; i--) {
       if (index - entries[i].index > DUPLICATE_LINE_WINDOW) break;
-      if (entries[i].role === role && entries[i].content === cleaned) return;
+      if (entries[i].role === role && entries[i].content === cleaned) {
+        if (prompt) entries[i].prompt = true;
+        return;
+      }
     }
 
-    entries.push({ index, role, content: cleaned });
+    entries.push(prompt ? { index, role, content: cleaned, prompt } : { index, role, content: cleaned });
   }
 
   try {
@@ -139,6 +143,9 @@ export function parseTranscript(transcriptPath: string): TranscriptEntry[] {
             text?: string;
             role?: string;
             content?: unknown;
+            internal_chat_message_metadata_passthrough?: {
+              content_item_metadata?: Array<{ provenance?: { type?: string } } | null>;
+            };
           };
         };
 
@@ -148,7 +155,7 @@ export function parseTranscript(transcriptPath: string): TranscriptEntry[] {
 
           // User message
           if (payload.type === "user_message" && payload.message) {
-            pushEntry(i, "user", payload.message);
+            pushEntry(i, "user", payload.message, true);
           }
 
           // Assistant output text
@@ -167,6 +174,8 @@ export function parseTranscript(transcriptPath: string): TranscriptEntry[] {
               i,
               "user",
               extractTextBlocks(payload.content, ["input_text"], ""),
+              payload.internal_chat_message_metadata_passthrough?.content_item_metadata
+                ?.some((item) => item?.provenance?.type === "user") === true,
             );
           } else if (payload.role === "assistant" && payload.content) {
             pushEntry(

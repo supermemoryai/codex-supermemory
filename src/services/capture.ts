@@ -22,6 +22,13 @@ import {
   withSessionCaptureLock,
 } from "./tracker.js";
 import { filterBySignals, groupEntriesIntoTurns } from "./signals.js";
+import {
+  OPENING_PROMPT_MARKER,
+  hasCapturedOpeningPrompt,
+  openingPromptKey,
+  rememberOpeningPrompt,
+} from "./dedupe.js";
+import { CONFIG } from "../config.js";
 import type { ResolvedTags } from "./tags.js";
 
 export interface CaptureOptions {
@@ -161,7 +168,20 @@ async function captureEntriesLocked(
     lastIndex,
   });
 
-  const transcript = formatTranscript(signalEntries);
+  const openingPrompt = CONFIG.dedupeOpeningPrompt
+    ? entries.find((entry) => entry.role === "user" && entry.prompt)
+    : undefined;
+  const openingKey = openingPrompt && signalEntries.includes(openingPrompt)
+    ? openingPromptKey(tags.canonical, openingPrompt.content)
+    : undefined;
+  const repeatedOpening = openingKey !== undefined && hasCapturedOpeningPrompt(openingKey);
+  const transcript = formatTranscript(
+    repeatedOpening
+      ? signalEntries.map((entry) =>
+          entry === openingPrompt ? { ...entry, content: OPENING_PROMPT_MARKER } : entry,
+        )
+      : signalEntries,
+  );
   const rawContent = `[Session ${sessionId}]\n${transcript}`;
 
   const content = rawContent
@@ -200,11 +220,13 @@ async function captureEntriesLocked(
 
     const lastEntry = newEntries[newEntries.length - 1];
     setLastCapturedIndex(sessionId, lastEntry.index);
+    if (openingKey && !repeatedOpening) rememberOpeningPrompt(openingKey);
 
     log(`${caller}: captured entries`, {
       sessionId,
       count: newEntries.length,
       lastIndex: lastEntry.index,
+      repeatedOpening,
     });
     return { status: "captured", entryCount: newEntries.length };
   } catch (error) {

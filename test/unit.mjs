@@ -1462,3 +1462,168 @@ describe("memory deduplication", () => {
     assert.equal(result.length, 1, "should keep one logical memory");
   });
 });
+
+// ─── session gating ─────────────────────────────────────────────────────────
+
+describe("session gating", () => {
+  const gateModule = new URL("../dist/services/sessionGate.js", import.meta.url).href;
+
+  function writeRollout(dir, name, source) {
+    const file = join(dir, `${name}.jsonl`);
+    writeFileSync(file, [
+      JSON.stringify({ type: "session_meta", payload: { id: name, originator: "codex", source, base_instructions: { text: "x".repeat(100_000) } } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }),
+    ].join("\n"));
+    return file;
+  }
+
+  function skipReasons(home, payloads, env = {}) {
+    const script = `
+      import { getSessionSkipReason } from ${JSON.stringify(gateModule)};
+      console.log(JSON.stringify(JSON.parse(process.argv.at(-1)).map(getSessionSkipReason)));
+    `;
+    const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      !key.startsWith("SUPERMEMORY_CAPTURE_") && !key.startsWith("CONDUCTOR_") && !key.startsWith("VK_")));
+    const result = spawnSync("node", ["--input-type=module", "-e", script, JSON.stringify(payloads)], {
+      env: { ...cleanEnv, HOME: home, USERPROFILE: home, ...env },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+
+  test("classifies Codex subagents, helper sessions and exec runs from host signals", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const payloads = [
+      { transcript_path: writeRollout(home, "cli", "cli") },
+      { transcript_path: writeRollout(home, "app-server", "vscode") },
+      { transcript_path: writeRollout(home, "custom", { custom: "atlas" }) },
+      { transcript_path: writeRollout(home, "exec", "exec") },
+      { agent_id: "child", agent_type: "default", transcript_path: null },
+      { transcript_path: writeRollout(home, "spawn", { subagent: { thread_spawn: { parent_thread_id: "p", depth: 1 } } }) },
+      { transcript_path: writeRollout(home, "review", { subagent: "review" }) },
+      { transcript_path: writeRollout(home, "guardian", { internal: "guardian" }) },
+      { transcript_path: join(home, "missing.jsonl") },
+    ];
+    assert.deepEqual(skipReasons(home, payloads), [
+      null, null, null, "headless", "subagent", "subagent", "helper", "helper", null,
+    ]);
+    assert.deepEqual(
+      skipReasons(home, payloads, { SUPERMEMORY_CAPTURE_SUBAGENTS: "true", SUPERMEMORY_CAPTURE_HEADLESS: "true" }),
+      payloads.map(() => null),
+    );
+  });
+
+  test("reads opt-in flags from supermemory.json and lets env override them", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "supermemory.json"), JSON.stringify({ captureSubagents: true, captureHeadless: true }));
+    const payloads = [{ transcript_path: writeRollout(home, "exec", "exec") }, { agent_id: "child" }];
+    assert.deepEqual(skipReasons(home, payloads), [null, null]);
+    assert.deepEqual(
+      skipReasons(home, payloads, { SUPERMEMORY_CAPTURE_SUBAGENTS: "false", SUPERMEMORY_CAPTURE_HEADLESS: "false" }),
+      ["headless", "subagent"],
+    );
+  });
+
+  test("treats orchestrator-launched exec runs as interactive unless orchestrated capture is off", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const payloads = [{ transcript_path: writeRollout(home, "exec", "exec") }, { agent_id: "child" }];
+    for (const env of [{ CONDUCTOR_WORKSPACE_PATH: home }, { CONDUCTOR_SESSION_ID: "s" }, { VK_WORKSPACE_ID: "w" }]) {
+      assert.deepEqual(skipReasons(home, payloads, env), [null, "subagent"]);
+      assert.deepEqual(
+        skipReasons(home, payloads, { ...env, SUPERMEMORY_CAPTURE_ORCHESTRATED: "false" }),
+        ["orchestrated", "orchestrated"],
+      );
+    }
+  });
+});
+
+// ─── capture and recall deduplication ───────────────────────────────────────
+
+describe("capture and recall deduplication", () => {
+  const captureModule = new URL("../dist/services/capture.js", import.meta.url).href;
+  const dedupeModule = new URL("../dist/services/dedupe.js", import.meta.url).href;
+  const tags = {
+    canonical: "repo_test__1234567890abcdef",
+    project: "repo_test__1234567890abcdef",
+    user: "repo_test__1234567890abcdef",
+    projectName: "test",
+    projectId: "1234567890abcdef",
+  };
+
+  function userItem(text, provenance) {
+    return JSON.stringify({ type: "response_item", payload: {
+      type: "message", role: "user", content: [{ type: "input_text", text }],
+      internal_chat_message_metadata_passthrough: { content_item_metadata: [{ provenance: { type: provenance } }] },
+    } });
+  }
+
+  function captureSessions(home, sessions, env = {}) {
+    const script = `
+      import { captureEntries } from ${JSON.stringify(captureModule)};
+      const contents = [];
+      const client = { addMemory: async (content) => { contents.push(content); return { success: true }; } };
+      for (const [sessionId, transcript] of JSON.parse(process.argv.at(-1))) {
+        await captureEntries("flush", client, sessionId, transcript, ${JSON.stringify(tags)});
+      }
+      console.log(JSON.stringify(contents));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, JSON.stringify(sessions)], {
+      env: { ...process.env, HOME: home, USERPROFILE: home, SUPERMEMORY_CODEX_API_KEY: "sm_test", ...env },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+
+  test("replaces an opening prompt already captured for the same container", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const sessions = ["a", "b", "c"].map((id, index) => {
+      const file = join(home, `${id}.jsonl`);
+      writeFileSync(file, [
+        userItem(`<environment_context><cwd>/work/${id}</cwd></environment_context>`, "harness"),
+        userItem(index < 2 ? "Fix the flaky login test" : "Something else entirely", "user"),
+        JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `done ${id}` }] } }),
+      ].join("\n"));
+      return [id, file];
+    });
+    const [first, second, third] = captureSessions(home, sessions);
+    assert.match(first, /2\. \[user\] Fix the flaky login test/);
+    assert.match(second, /2\. \[user\] \[opening prompt identical to an earlier session\]/);
+    assert.doesNotMatch(second, /Fix the flaky login test/);
+    assert.match(second, /<cwd>\/work\/b<\/cwd>/);
+    assert.match(third, /2\. \[user\] Something else entirely/);
+
+    const optOutHome = makeTmpDir();
+    t.after(() => rmSync(optOutHome, { recursive: true, force: true }));
+    const optedOut = captureSessions(optOutHome, sessions.slice(0, 2), { SUPERMEMORY_DEDUPE_OPENING_PROMPT: "false" });
+    assert.match(optedOut[1], /Fix the flaky login test/);
+  });
+
+  test("skips exact recall repeats for the same container within ten minutes", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const script = `
+      import { isRepeatedRecallQuery, RECALL_QUERY_WINDOW_MS } from ${JSON.stringify(dedupeModule)};
+      const now = Date.now();
+      console.log(JSON.stringify([
+        isRepeatedRecallQuery("tag_a", "Fix the login test", now),
+        isRepeatedRecallQuery("tag_a", "  Fix  the login test ", now + 1000),
+        isRepeatedRecallQuery("tag_b", "Fix the login test", now + 1000),
+        isRepeatedRecallQuery("tag_a", "fix the login test", now + 1000),
+        isRepeatedRecallQuery("tag_a", "Fix the login test", now + RECALL_QUERY_WINDOW_MS),
+      ]));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), [false, true, false, false, false]);
+  });
+});
