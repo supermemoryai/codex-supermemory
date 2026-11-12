@@ -139,8 +139,8 @@ const recallMode = resolveRecallMode(fileConfig);
 
 function envFlag(name: string): boolean | undefined {
   const value = process.env[name]?.trim().toLowerCase();
-  if (value === "true" || value === "1") return true;
-  if (value === "false" || value === "0") return false;
+  if (value === "true" || value === "1" || value === "yes" || value === "on") return true;
+  if (value === "false" || value === "0" || value === "no" || value === "off") return false;
   return undefined;
 }
 

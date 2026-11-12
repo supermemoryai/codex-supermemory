@@ -1,17 +1,33 @@
 import { closeSync, openSync, readSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { CONFIG } from "../config.js";
+import { readJsonIndex, writeJsonIndex } from "./dedupe.js";
 
 export type SessionSkipReason = "orchestrated" | "subagent" | "helper" | "headless";
 
 export interface CodexSessionPayload {
+  session_id?: unknown;
   agent_id?: unknown;
   agent_type?: unknown;
   transcript_path?: unknown;
+  hook_event_name?: unknown;
+  source?: unknown;
+}
+
+interface SessionState {
+  at: number;
+  source: unknown;
+  resumed?: boolean;
 }
 
 const ORCHESTRATOR_ENV_VARS = ["CONDUCTOR_WORKSPACE_PATH", "CONDUCTOR_SESSION_ID", "VK_WORKSPACE_ID"];
 const META_CHUNK_BYTES = 64 * 1024;
 const MAX_META_BYTES = 4 * 1024 * 1024;
+const SESSION_STATE_FILE = join(homedir(), ".codex-supermemory", "trackers", "session-sources.json");
+const SESSION_STATE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_SESSION_STATES = 500;
 
 /** Conductor and Vibe Kanban export these variables to the agents they launch. */
 export function isOrchestratedSession(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -47,19 +63,37 @@ export function readCodexSessionSource(transcriptPath: unknown): unknown {
   }
 }
 
+/** Rollout source cached per session; any SessionStart resume marks it interactive because TUI and `codex exec resume` send the same payload. */
+function getSessionState(payload: CodexSessionPayload): Omit<SessionState, "at"> {
+  const transcriptPath = payload.transcript_path;
+  if (typeof transcriptPath !== "string" || !transcriptPath) return { source: undefined };
+  const key = createHash("sha256")
+    .update(`${String(payload.session_id ?? "")}\n${transcriptPath}`)
+    .digest("hex")
+    .slice(0, 32);
+  const index = readJsonIndex<SessionState>(SESSION_STATE_FILE, SESSION_STATE_TTL_MS);
+  const cached = index[key];
+  const resumed = payload.hook_event_name === "SessionStart" && payload.source === "resume";
+  if (cached && (cached.resumed || !resumed)) return cached;
+
+  const source = cached ? cached.source : readCodexSessionSource(transcriptPath);
+  if (source === undefined) return { source };
+  index[key] = { at: Date.now(), source, ...(resumed ? { resumed } : {}) };
+  writeJsonIndex(SESSION_STATE_FILE, index, MAX_SESSION_STATES);
+  return index[key];
+}
+
 /** Why a hook must not call Supermemory for this Codex session, or null when it may. */
 export function getSessionSkipReason(payload: CodexSessionPayload): SessionSkipReason | null {
-  const orchestrated = isOrchestratedSession();
-  if (orchestrated && !CONFIG.captureOrchestrated) return "orchestrated";
   if (!CONFIG.captureSubagents && (payload.agent_id || payload.agent_type)) return "subagent";
-  if (CONFIG.captureSubagents && (CONFIG.captureHeadless || orchestrated)) return null;
 
-  const source = readCodexSessionSource(payload.transcript_path);
+  const { source, resumed } = getSessionState(payload);
   if (!CONFIG.captureSubagents && source && typeof source === "object") {
     const subagent = (source as Record<string, unknown>).subagent;
     if (subagent && typeof subagent === "object" && "thread_spawn" in subagent) return "subagent";
     if (subagent !== undefined || "internal" in source) return "helper";
   }
-  if (source === "exec" && !orchestrated && !CONFIG.captureHeadless) return "headless";
-  return null;
+  if (source !== "exec" || resumed) return null;
+  if (isOrchestratedSession()) return CONFIG.captureOrchestrated ? null : "orchestrated";
+  return CONFIG.captureHeadless ? null : "headless";
 }

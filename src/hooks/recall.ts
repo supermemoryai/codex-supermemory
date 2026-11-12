@@ -8,7 +8,7 @@ import { getSessionId } from "../services/session.js";
 import { getHookProfileWithSearchMany } from "../services/hookRecallClient.js";
 import { prepareRecallQuery, shouldRecallPrompt } from "../services/recallPolicy.js";
 import { getSessionSkipReason } from "../services/sessionGate.js";
-import { isRepeatedRecallQuery } from "../services/dedupe.js";
+import { getCachedRecall, rememberRecall } from "../services/dedupe.js";
 
 const MAX_RESULT_CHARS = 300;
 
@@ -120,20 +120,23 @@ async function main() {
   if (!shouldRecallPrompt(query)) exitWithContext("");
 
   const recallQuery = prepareRecallQuery(query);
-  if (CONFIG.dedupeRecallQueries && isRepeatedRecallQuery(tags.canonical, recallQuery)) {
-    log("recall: skipped repeated query", { containerTag: tags.canonical });
-    exitWithContext("");
-  }
 
   try {
-    const profileResult = await getHookProfileWithSearchMany(tags.allReads, recallQuery);
+    let matches = CONFIG.dedupeRecallQueries ? getCachedRecall(tags.canonical, recallQuery) : undefined;
+    if (matches) {
+      log("recall: reused cached search", { containerTag: tags.canonical, matchCount: matches.length });
+    } else {
+      const profileResult = await getHookProfileWithSearchMany(tags.allReads, recallQuery);
 
-    if (!profileResult.success) {
-      exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
+      if (!profileResult.success) {
+        exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
+      }
+
+      matches = profileResult.searchResults?.results ?? [];
+      if (CONFIG.dedupeRecallQueries) rememberRecall(tags.canonical, recallQuery, matches);
     }
 
     const seen = getSeenFacts(sessionId);
-    const matches = profileResult.searchResults?.results ?? [];
     const fresh = matches
       .filter((item) => !seen.has(factKey(item.memory)))
       .slice(0, Math.min(CONFIG.maxMemories, 5));

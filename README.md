@@ -242,11 +242,11 @@ or all-traffic-local guarantee.
 | `SUPERMEMORY_API_VERSION`      | Select `v5` or `legacy`; overrides `apiVersion` in config. |
 | `SUPERMEMORY_MCP_URL`          | Override only the MCP endpoint; must be explicitly forwarded to the stdio proxy as described above. |
 | `SUPERMEMORY_DEBUG`            | Set to any truthy value to enable debug logging to `~/.codex-supermemory.log`. |
-| `SUPERMEMORY_CAPTURE_SUBAGENTS` | `true`/`false`; overrides `captureSubagents`. |
-| `SUPERMEMORY_CAPTURE_HEADLESS` | `true`/`false`; overrides `captureHeadless`. |
-| `SUPERMEMORY_CAPTURE_ORCHESTRATED` | `true`/`false`; overrides `captureOrchestrated`. |
-| `SUPERMEMORY_DEDUPE_OPENING_PROMPT` | `true`/`false`; overrides `dedupeOpeningPrompt`. |
-| `SUPERMEMORY_DEDUPE_RECALL_QUERIES` | `true`/`false`; overrides `dedupeRecallQueries`. |
+| `SUPERMEMORY_CAPTURE_SUBAGENTS` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `captureSubagents`. |
+| `SUPERMEMORY_CAPTURE_HEADLESS` | Same values; overrides `captureHeadless`. |
+| `SUPERMEMORY_CAPTURE_ORCHESTRATED` | Same values; overrides `captureOrchestrated`. |
+| `SUPERMEMORY_DEDUPE_OPENING_PROMPT` | Same values; overrides `dedupeOpeningPrompt`. |
+| `SUPERMEMORY_DEDUPE_RECALL_QUERIES` | Same values; overrides `dedupeRecallQueries`. |
 
 ### `~/.codex/supermemory.json` (optional)
 
@@ -274,9 +274,9 @@ Drop this file in to override defaults:
 | `signalTurnsBefore`      | `number`   | `3`            | Include N turns before a signal for context.                                                 |
 | `captureSubagents`       | `boolean`  | `false`        | Recall and capture for Codex subagents and internal helper sessions (review, compact, guardian). |
 | `captureHeadless`        | `boolean`  | `false`        | Recall and capture for `codex exec` runs.                                                     |
-| `captureOrchestrated`    | `boolean`  | `true`         | Recall and capture for sessions launched by Conductor or Vibe Kanban.                        |
-| `dedupeOpeningPrompt`    | `boolean`  | `true`         | Replace an opening prompt already captured for the same container with a one-line marker.    |
-| `dedupeRecallQueries`    | `boolean`  | `true`         | Skip prompt recall for an exact query already recalled for the same container in the last 10 minutes. |
+| `captureOrchestrated`    | `boolean`  | `true`         | Recall and capture for `codex exec` runs launched by Conductor or Vibe Kanban.               |
+| `dedupeOpeningPrompt`    | `boolean`  | `true`         | Replace an opening prompt of 200+ characters captured for the same container in the last 24 hours with a one-line marker. |
+| `dedupeRecallQueries`    | `boolean`  | `true`         | Reuse the last successful recall for an exact query against the same container in the last 10 minutes. |
 
 Project tags combine the sanitized repository name with a normalized Git-remote
 hash. Linked worktrees and clones of the same remote therefore share one container;
@@ -294,11 +294,13 @@ By default the hooks make no Supermemory calls (profile, recall, or capture) for
   consolidation. Codex records them in the rollout's `session_meta.source` as
   `{"subagent": ...}` or `{"internal": ...}`.
 - **Headless runs.** `codex exec` writes `"source": "exec"` to `session_meta`. The TUI
-  (`cli`), IDE and `app-server` sessions keep recall and capture.
+  (`cli`), IDE and `app-server` sessions keep recall and capture. Resuming an exec
+  session counts as interactive: Codex sends the same `SessionStart` resume payload for
+  `codex resume` and `codex exec resume`, so both are captured.
 
-Sessions launched by Conductor (`CONDUCTOR_WORKSPACE_PATH` or `CONDUCTOR_SESSION_ID`) or
-Vibe Kanban (`VK_WORKSPACE_ID`) count as interactive even when they run `codex exec`.
-Set `captureOrchestrated: false` to skip them. `codex exec --ephemeral` writes no rollout
+`codex exec` runs launched by Conductor (`CONDUCTOR_WORKSPACE_PATH` or `CONDUCTOR_SESSION_ID`)
+or Vibe Kanban (`VK_WORKSPACE_ID`) count as interactive. Set `captureOrchestrated: false` to
+skip those exec runs; interactive sessions that inherit these variables are still captured. `codex exec --ephemeral` writes no rollout
 and sends no other signal, so it can't be told apart and is still captured.
 
 Set `captureSubagents: true` or `captureHeadless: true` in `~/.codex/supermemory.json`
@@ -306,10 +308,11 @@ Set `captureSubagents: true` or `captureHeadless: true` in `~/.codex/supermemory
 the previous behaviour for that class.
 
 Two small local indexes under `~/.codex-supermemory/trackers/` cut repeated traffic.
-When a session's opening prompt matches one already captured from this machine for the
-same container, capture sends `[opening prompt identical to an earlier session]` in its
-place. Prompt recall is skipped when the exact same query already ran against the same
-container in the last 10 minutes. Disable them with `dedupeOpeningPrompt: false` and
+When a session's opening prompt is at least 200 characters and matches one captured from
+this machine for the same container in the last 24 hours, capture sends
+`[opening prompt identical to an earlier session]` in its place. When the exact same query
+already recalled successfully against the same container in the last 10 minutes, prompt
+recall reuses that result instead of calling the API; a failed recall is never cached. Disable them with `dedupeOpeningPrompt: false` and
 `dedupeRecallQueries: false`.
 
 ### Entity context
