@@ -189,6 +189,14 @@ export function getApiKeyValue(): string | undefined {
   return getApiKey();
 }
 
+/** Secret that identifies the signed-in account without a network call; a new login yields a new value. */
+export function getCredentialIdentity(): string | undefined {
+  const apiKey = getApiKey();
+  if (apiKey) return apiKey;
+  const credentials = loadCredentialData();
+  return credentials?.type === "oauth" ? credentials.refreshToken ?? credentials.accessToken : undefined;
+}
+
 export async function getAuthToken(timeoutMs?: number, apiBaseUrl?: string): Promise<string> {
   const apiKey = getApiKey();
   if (apiKey) return apiKey;

@@ -48,8 +48,8 @@ export function writeJsonIndex<T extends Timestamped>(file: string, index: Recor
   const newest = Object.entries(index).sort((a, b) => a[1].at - b[1].at).slice(-max);
   const tempFile = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
-    mkdirSync(TRACKER_DIR, { recursive: true });
-    writeFileSync(tempFile, JSON.stringify(Object.fromEntries(newest)));
+    mkdirSync(TRACKER_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(tempFile, JSON.stringify(Object.fromEntries(newest)), { mode: 0o600 });
     renameSync(tempFile, file);
   } catch {
     rmSync(tempFile, { force: true });
@@ -72,20 +72,25 @@ export function rememberOpeningPrompt(key: string, now = Date.now()): void {
   writeJsonIndex(OPENING_PROMPTS_FILE, index, MAX_OPENING_PROMPTS);
 }
 
-function recallKey(containerTag: string, query: string): string {
-  return hashKey(containerTag, query.trim().replace(/\s+/g, " "));
+/** Scope is every input that selects the results: backend, credential and read tags. */
+function recallKey(scope: string[], query: string): string {
+  return hashKey(...scope, query.trim().replace(/\s+/g, " "));
 }
 
-export function getCachedRecall(containerTag: string, query: string, now = Date.now()): CachedRecallItem[] | undefined {
-  const entry = readJsonIndex<RecallEntry>(RECALL_QUERIES_FILE, RECALL_QUERY_WINDOW_MS, now)[recallKey(containerTag, query)];
+export function getCachedRecall(scope: string[], query: string, now = Date.now()): CachedRecallItem[] | undefined {
+  const entry = readJsonIndex<RecallEntry>(RECALL_QUERIES_FILE, RECALL_QUERY_WINDOW_MS, now)[recallKey(scope, query)];
   return Array.isArray(entry?.results) ? entry.results : undefined;
 }
 
-export function rememberRecall(containerTag: string, query: string, results: CachedRecallItem[], now = Date.now()): void {
+export function rememberRecall(scope: string[], query: string, results: CachedRecallItem[], now = Date.now()): void {
   const index = readJsonIndex<RecallEntry>(RECALL_QUERIES_FILE, RECALL_QUERY_WINDOW_MS, now);
-  index[recallKey(containerTag, query)] = {
+  index[recallKey(scope, query)] = {
     at: now,
     results: results.map(({ memory, title, filepath }) => ({ memory, title, filepath })),
   };
   writeJsonIndex(RECALL_QUERIES_FILE, index, MAX_RECALL_QUERIES);
+}
+
+export function clearRecallCache(): void {
+  rmSync(RECALL_QUERIES_FILE, { force: true });
 }

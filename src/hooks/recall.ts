@@ -1,6 +1,6 @@
 import { exitHook, isHookExit } from "../services/auth.js";
 import { readFileSync } from "node:fs";
-import { isConfigured, CONFIG } from "../config.js";
+import { isConfigured, CONFIG, getApiVersion, getBaseUrl, getCredentialIdentity } from "../config.js";
 import { getTags } from "../services/tags.js";
 import { log } from "../services/logger.js";
 import { getSeenFacts, addSeenFacts, factKey } from "../services/factCache.js";
@@ -122,7 +122,11 @@ async function main() {
   const recallQuery = prepareRecallQuery(query);
 
   try {
-    let matches = CONFIG.dedupeRecallQueries ? getCachedRecall(tags.canonical, recallQuery) : undefined;
+    const credential = CONFIG.dedupeRecallQueries ? getCredentialIdentity() : undefined;
+    const recallScope = credential
+      ? [getBaseUrl(), getApiVersion(), credential, ...[...new Set(tags.allReads)].sort()]
+      : undefined;
+    let matches = recallScope ? getCachedRecall(recallScope, recallQuery) : undefined;
     if (matches) {
       log("recall: reused cached search", { containerTag: tags.canonical, matchCount: matches.length });
     } else {
@@ -133,7 +137,7 @@ async function main() {
       }
 
       matches = profileResult.searchResults?.results ?? [];
-      if (CONFIG.dedupeRecallQueries) rememberRecall(tags.canonical, recallQuery, matches);
+      if (recallScope) rememberRecall(recallScope, recallQuery, matches);
     }
 
     const seen = getSeenFacts(sessionId);

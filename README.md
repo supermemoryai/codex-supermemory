@@ -311,8 +311,9 @@ Two small local indexes under `~/.codex-supermemory/trackers/` cut repeated traf
 When a session's opening prompt is at least 200 characters and matches one captured from
 this machine for the same container in the last 24 hours, capture sends
 `[opening prompt identical to an earlier session]` in its place. When the exact same query
-already recalled successfully against the same container in the last 10 minutes, prompt
-recall reuses that result instead of calling the API; a failed recall is never cached. Disable them with `dedupeOpeningPrompt: false` and
+already recalled successfully with the same API URL, credentials and containers in the last
+10 minutes, prompt recall reuses that result instead of calling the API; a failed recall is
+never cached. The cache file is private (`0600`) and logout deletes it. Disable them with `dedupeOpeningPrompt: false` and
 `dedupeRecallQueries: false`.
 
 ### Entity context

@@ -6,7 +6,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -1656,14 +1656,17 @@ describe("capture and recall deduplication", () => {
       import { getCachedRecall, rememberRecall, RECALL_QUERY_WINDOW_MS } from ${JSON.stringify(dedupeModule)};
       const now = Date.now();
       const hits = [{ memory: "Login uses a fake clock", title: "auth", filepath: "auth.ts" }];
-      const before = getCachedRecall("tag_a", "Fix the login test", now) ?? null;
-      rememberRecall("tag_a", "Fix the login test", hits, now);
+      const scope = ["https://api.example", "v5", "sm_key_a", "tag_a"];
+      const before = getCachedRecall(scope, "Fix the login test", now) ?? null;
+      rememberRecall(scope, "Fix the login test", hits, now);
       console.log(JSON.stringify([
         before,
-        getCachedRecall("tag_a", "  Fix  the login test ", now + 1000),
-        getCachedRecall("tag_b", "Fix the login test", now + 1000) ?? null,
-        getCachedRecall("tag_a", "fix the login test", now + 1000) ?? null,
-        getCachedRecall("tag_a", "Fix the login test", now + RECALL_QUERY_WINDOW_MS) ?? null,
+        getCachedRecall(scope, "  Fix  the login test ", now + 1000),
+        getCachedRecall([...scope.slice(0, 3), "tag_b"], "Fix the login test", now + 1000) ?? null,
+        getCachedRecall(["https://api.example", "v5", "sm_key_b", "tag_a"], "Fix the login test", now + 1000) ?? null,
+        getCachedRecall(["https://self.hosted", "v5", "sm_key_a", "tag_a"], "Fix the login test", now + 1000) ?? null,
+        getCachedRecall(scope, "fix the login test", now + 1000) ?? null,
+        getCachedRecall(scope, "Fix the login test", now + RECALL_QUERY_WINDOW_MS) ?? null,
       ]));
     `;
     const result = spawnSync("node", ["--input-type=module", "-e", script], {
@@ -1672,6 +1675,9 @@ describe("capture and recall deduplication", () => {
     });
     assert.equal(result.status, 0, result.stderr);
     const hits = [{ memory: "Login uses a fake clock", title: "auth", filepath: "auth.ts" }];
-    assert.deepEqual(JSON.parse(result.stdout), [null, hits, null, null, null]);
+    assert.deepEqual(JSON.parse(result.stdout), [null, hits, null, null, null, null, null]);
+    const cacheFile = join(home, ".codex-supermemory", "trackers", "recall-queries.json");
+    assert.doesNotMatch(readFileSync(cacheFile, "utf-8"), /sm_key_a/);
+    if (process.platform !== "win32") assert.equal(statSync(cacheFile).mode & 0o777, 0o600);
   });
 });
