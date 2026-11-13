@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
 - Skip Supermemory profile, recall, and capture for Codex subagents, internal helper
   sessions, and `codex exec` runs by default. Opt back in with `captureSubagents` /
