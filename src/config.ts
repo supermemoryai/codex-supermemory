@@ -139,8 +139,8 @@ const recallMode = resolveRecallMode(fileConfig);
 
 function envFlag(name: string): boolean | undefined {
   const value = process.env[name]?.trim().toLowerCase();
-  if (value === "true" || value === "1") return true;
-  if (value === "false" || value === "0") return false;
+  if (value === "true" || value === "1" || value === "yes" || value === "on") return true;
+  if (value === "false" || value === "0" || value === "no" || value === "off") return false;
   return undefined;
 }
 
@@ -187,6 +187,14 @@ export function isConfigured(): boolean {
 
 export function getApiKeyValue(): string | undefined {
   return getApiKey();
+}
+
+/** Secret that identifies the signed-in account without a network call; a new login yields a new value. */
+export function getCredentialIdentity(): string | undefined {
+  const apiKey = getApiKey();
+  if (apiKey) return apiKey;
+  const credentials = loadCredentialData();
+  return credentials?.type === "oauth" ? credentials.refreshToken ?? credentials.accessToken : undefined;
 }
 
 export async function getAuthToken(timeoutMs?: number, apiBaseUrl?: string): Promise<string> {

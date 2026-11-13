@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -7,61 +7,90 @@ const TRACKER_DIR = join(homedir(), ".codex-supermemory", "trackers");
 const OPENING_PROMPTS_FILE = join(TRACKER_DIR, "opening-prompts.json");
 const RECALL_QUERIES_FILE = join(TRACKER_DIR, "recall-queries.json");
 export const MAX_OPENING_PROMPTS = 1000;
-export const MAX_RECALL_QUERIES = 500;
+export const MAX_RECALL_QUERIES = 100;
 export const RECALL_QUERY_WINDOW_MS = 10 * 60 * 1000;
+export const OPENING_PROMPT_MIN_CHARS = 200;
+export const OPENING_PROMPT_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const OPENING_PROMPT_MARKER = "[opening prompt identical to an earlier session]";
 
-type HashIndex = Record<string, number>;
-
-function hashKey(containerTag: string, text: string): string {
-  return createHash("sha256").update(`${containerTag}\n${text}`).digest("hex").slice(0, 32);
+export interface CachedRecallItem {
+  memory: string;
+  title?: string;
+  filepath?: string;
 }
 
-function readIndex(file: string): HashIndex {
+interface Timestamped {
+  at: number;
+}
+
+type RecallEntry = Timestamped & { results: CachedRecallItem[] };
+
+function hashKey(...parts: string[]): string {
+  return createHash("sha256").update(parts.join("\n")).digest("hex").slice(0, 32);
+}
+
+export function readJsonIndex<T extends Timestamped>(file: string, maxAgeMs: number, now = Date.now()): Record<string, T> {
   try {
     const parsed = JSON.parse(readFileSync(file, "utf-8")) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     return Object.fromEntries(
-      Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === "number"),
+      Object.entries(parsed as Record<string, unknown>).filter((entry): entry is [string, T] => {
+        const at = (entry[1] as Partial<Timestamped> | null)?.at;
+        return typeof at === "number" && at <= now && now - at < maxAgeMs;
+      }),
     );
   } catch {
     return {};
   }
 }
 
-function writeIndex(file: string, index: HashIndex, max: number): void {
-  const newest = Object.entries(index).sort((a, b) => a[1] - b[1]).slice(-max);
+export function writeJsonIndex<T extends Timestamped>(file: string, index: Record<string, T>, max: number): void {
+  const newest = Object.entries(index).sort((a, b) => a[1].at - b[1].at).slice(-max);
+  const tempFile = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
-    mkdirSync(TRACKER_DIR, { recursive: true });
-    const tempFile = `${file}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(tempFile, JSON.stringify(Object.fromEntries(newest)));
+    mkdirSync(TRACKER_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(tempFile, JSON.stringify(Object.fromEntries(newest)), { mode: 0o600 });
     renameSync(tempFile, file);
-  } catch {}
-}
-
-export function openingPromptKey(containerTag: string, prompt: string): string {
-  return hashKey(containerTag, prompt.trim());
-}
-
-export function hasCapturedOpeningPrompt(key: string): boolean {
-  return Object.hasOwn(readIndex(OPENING_PROMPTS_FILE), key);
-}
-
-export function rememberOpeningPrompt(key: string): void {
-  const index = readIndex(OPENING_PROMPTS_FILE);
-  index[key] = Date.now();
-  writeIndex(OPENING_PROMPTS_FILE, index, MAX_OPENING_PROMPTS);
-}
-
-/** True when this exact query already ran recall for the tag within the window; otherwise records it. */
-export function isRepeatedRecallQuery(containerTag: string, query: string, now = Date.now()): boolean {
-  const key = hashKey(containerTag, query.trim().replace(/\s+/g, " "));
-  const index = readIndex(RECALL_QUERIES_FILE);
-  for (const [entry, usedAt] of Object.entries(index)) {
-    if (now - usedAt >= RECALL_QUERY_WINDOW_MS || usedAt > now) delete index[entry];
+  } catch {
+    rmSync(tempFile, { force: true });
   }
-  if (Object.hasOwn(index, key)) return true;
-  index[key] = now;
-  writeIndex(RECALL_QUERIES_FILE, index, MAX_RECALL_QUERIES);
-  return false;
+}
+
+/** Key for an opening prompt worth deduplicating, or undefined when it is too short. */
+export function openingPromptKey(containerTag: string, prompt: string): string | undefined {
+  const text = prompt.trim();
+  return text.length >= OPENING_PROMPT_MIN_CHARS ? hashKey(containerTag, text) : undefined;
+}
+
+export function hasCapturedOpeningPrompt(key: string, now = Date.now()): boolean {
+  return Object.hasOwn(readJsonIndex(OPENING_PROMPTS_FILE, OPENING_PROMPT_WINDOW_MS, now), key);
+}
+
+export function rememberOpeningPrompt(key: string, now = Date.now()): void {
+  const index = readJsonIndex<Timestamped>(OPENING_PROMPTS_FILE, OPENING_PROMPT_WINDOW_MS, now);
+  index[key] = { at: now };
+  writeJsonIndex(OPENING_PROMPTS_FILE, index, MAX_OPENING_PROMPTS);
+}
+
+/** Scope is every input that selects the results: backend, credential and read tags. */
+function recallKey(scope: string[], query: string): string {
+  return hashKey(...scope, query.trim().replace(/\s+/g, " "));
+}
+
+export function getCachedRecall(scope: string[], query: string, now = Date.now()): CachedRecallItem[] | undefined {
+  const entry = readJsonIndex<RecallEntry>(RECALL_QUERIES_FILE, RECALL_QUERY_WINDOW_MS, now)[recallKey(scope, query)];
+  return Array.isArray(entry?.results) ? entry.results : undefined;
+}
+
+export function rememberRecall(scope: string[], query: string, results: CachedRecallItem[], now = Date.now()): void {
+  const index = readJsonIndex<RecallEntry>(RECALL_QUERIES_FILE, RECALL_QUERY_WINDOW_MS, now);
+  index[recallKey(scope, query)] = {
+    at: now,
+    results: results.map(({ memory, title, filepath }) => ({ memory, title, filepath })),
+  };
+  writeJsonIndex(RECALL_QUERIES_FILE, index, MAX_RECALL_QUERIES);
+}
+
+export function clearRecallCache(): void {
+  rmSync(RECALL_QUERIES_FILE, { force: true });
 }
