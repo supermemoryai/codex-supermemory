@@ -6,7 +6,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -1460,5 +1460,264 @@ describe("memory deduplication", () => {
     });
 
     assert.equal(result.length, 1, "should keep one logical memory");
+  });
+});
+
+// ─── session gating ─────────────────────────────────────────────────────────
+
+describe("session gating", () => {
+  const gateModule = new URL("../dist/services/sessionGate.js", import.meta.url).href;
+
+  function writeRollout(dir, name, source) {
+    const file = join(dir, `${name}.jsonl`);
+    writeFileSync(file, [
+      JSON.stringify({ type: "session_meta", payload: { id: name, originator: "codex", source, base_instructions: { text: "x".repeat(100_000) } } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }),
+    ].join("\n"));
+    return file;
+  }
+
+  function skipReasons(home, payloads, env = {}) {
+    const script = `
+      import { getSessionSkipReason } from ${JSON.stringify(gateModule)};
+      console.log(JSON.stringify(JSON.parse(process.argv.at(-1)).map(getSessionSkipReason)));
+    `;
+    const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      !key.startsWith("SUPERMEMORY_CAPTURE_") && !key.startsWith("CONDUCTOR_") && !key.startsWith("VK_")));
+    const result = spawnSync("node", ["--input-type=module", "-e", script, JSON.stringify(payloads)], {
+      env: { ...cleanEnv, HOME: home, USERPROFILE: home, ...env },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+
+  test("classifies Codex subagents, helper sessions and exec runs from host signals", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const payloads = [
+      { transcript_path: writeRollout(home, "cli", "cli") },
+      { transcript_path: writeRollout(home, "app-server", "vscode") },
+      { transcript_path: writeRollout(home, "custom", { custom: "atlas" }) },
+      { transcript_path: writeRollout(home, "exec", "exec") },
+      { agent_id: "child", agent_type: "default", transcript_path: null },
+      { transcript_path: writeRollout(home, "spawn", { subagent: { thread_spawn: { parent_thread_id: "p", depth: 1 } } }) },
+      { transcript_path: writeRollout(home, "review", { subagent: "review" }) },
+      { transcript_path: writeRollout(home, "guardian", { internal: "guardian" }) },
+      { transcript_path: join(home, "missing.jsonl") },
+    ];
+    assert.deepEqual(skipReasons(home, payloads), [
+      null, null, null, "headless", "subagent", "subagent", "helper", "helper", null,
+    ]);
+    assert.deepEqual(
+      skipReasons(home, payloads, { SUPERMEMORY_CAPTURE_SUBAGENTS: "true", SUPERMEMORY_CAPTURE_HEADLESS: "true" }),
+      payloads.map(() => null),
+    );
+  });
+
+  test("reads opt-in flags from supermemory.json and lets env override them", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "supermemory.json"), JSON.stringify({ captureSubagents: true, captureHeadless: true }));
+    const payloads = [{ transcript_path: writeRollout(home, "exec", "exec") }, { agent_id: "child" }];
+    assert.deepEqual(skipReasons(home, payloads), [null, null]);
+    assert.deepEqual(
+      skipReasons(home, payloads, { SUPERMEMORY_CAPTURE_SUBAGENTS: "false", SUPERMEMORY_CAPTURE_HEADLESS: "false" }),
+      ["headless", "subagent"],
+    );
+    assert.deepEqual(
+      skipReasons(home, payloads, { SUPERMEMORY_CAPTURE_SUBAGENTS: "Off", SUPERMEMORY_CAPTURE_HEADLESS: "NO" }),
+      ["headless", "subagent"],
+    );
+    writeFileSync(join(home, ".codex", "supermemory.json"), JSON.stringify({ captureSubagents: false, captureHeadless: false }));
+    assert.deepEqual(
+      skipReasons(home, payloads, { SUPERMEMORY_CAPTURE_SUBAGENTS: "yes", SUPERMEMORY_CAPTURE_HEADLESS: "ON" }),
+      [null, null],
+    );
+  });
+
+  test("treats orchestrator-launched exec runs as interactive unless orchestrated capture is off", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const payloads = [
+      { transcript_path: writeRollout(home, "exec", "exec") },
+      { agent_id: "child" },
+      { transcript_path: writeRollout(home, "cli", "cli") },
+    ];
+    for (const env of [{ CONDUCTOR_WORKSPACE_PATH: home }, { CONDUCTOR_SESSION_ID: "s" }, { VK_WORKSPACE_ID: "w" }]) {
+      assert.deepEqual(skipReasons(home, payloads, env), [null, "subagent", null]);
+      assert.deepEqual(
+        skipReasons(home, payloads, { ...env, SUPERMEMORY_CAPTURE_ORCHESTRATED: "false" }),
+        ["orchestrated", "subagent", null],
+      );
+    }
+  });
+
+  test("captures an exec rollout once it is resumed and caches the rollout source per session", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const transcript = writeRollout(home, "exec", "exec");
+    const other = writeRollout(home, "other-exec", "exec");
+    assert.deepEqual(skipReasons(home, [
+      { session_id: "s1", transcript_path: transcript, hook_event_name: "UserPromptSubmit" },
+      { session_id: "s1", transcript_path: transcript, hook_event_name: "SessionStart", source: "resume" },
+      { session_id: "s1", transcript_path: transcript, hook_event_name: "UserPromptSubmit" },
+      { session_id: "s1", transcript_path: transcript, hook_event_name: "Stop" },
+      { session_id: "s2", transcript_path: other, hook_event_name: "SessionStart", source: "startup" },
+    ]), ["headless", null, null, null, "headless"]);
+
+    writeRollout(home, "other-exec", "cli");
+    assert.deepEqual(
+      skipReasons(home, [{ session_id: "s2", transcript_path: other, hook_event_name: "Stop" }]),
+      ["headless"],
+    );
+  });
+});
+
+// ─── capture and recall deduplication ───────────────────────────────────────
+
+describe("capture and recall deduplication", () => {
+  const captureModule = new URL("../dist/services/capture.js", import.meta.url).href;
+  const dedupeModule = new URL("../dist/services/dedupe.js", import.meta.url).href;
+  const tags = {
+    canonical: "repo_test__1234567890abcdef",
+    project: "repo_test__1234567890abcdef",
+    user: "repo_test__1234567890abcdef",
+    projectName: "test",
+    projectId: "1234567890abcdef",
+  };
+
+  function userItem(text, provenance) {
+    return JSON.stringify({ type: "response_item", payload: {
+      type: "message", role: "user", content: [{ type: "input_text", text }],
+      internal_chat_message_metadata_passthrough: { content_item_metadata: [{ provenance: { type: provenance } }] },
+    } });
+  }
+
+  function captureSessions(home, sessions, env = {}) {
+    const script = `
+      import { captureEntries } from ${JSON.stringify(captureModule)};
+      const contents = [];
+      const client = { addMemory: async (content) => { contents.push(content); return { success: true }; } };
+      for (const [sessionId, transcript] of JSON.parse(process.argv.at(-1))) {
+        await captureEntries("flush", client, sessionId, transcript, ${JSON.stringify(tags)});
+      }
+      console.log(JSON.stringify(contents));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, JSON.stringify(sessions)], {
+      env: { ...process.env, HOME: home, USERPROFILE: home, SUPERMEMORY_CODEX_API_KEY: "sm_test", ...env },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+
+  test("replaces a long opening prompt captured for the same container within a day", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const longPrompt = "Fix the flaky login test. " + "Follow the repository checklist before you open a pull request. ".repeat(4);
+    const prompts = [longPrompt, longPrompt, "Something else entirely", "fix the failing tests", "fix the failing tests", longPrompt];
+    const sessions = ["a", "b", "c", "d", "e", "f"].map((id, index) => {
+      const file = join(home, `${id}.jsonl`);
+      writeFileSync(file, [
+        userItem(`<environment_context><cwd>/work/${id}</cwd></environment_context>`, "harness"),
+        userItem(prompts[index], "user"),
+        JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `done ${id}` }] } }),
+      ].join("\n"));
+      return [id, file];
+    });
+    const [first, second, third, fourth, fifth] = captureSessions(home, sessions.slice(0, 5));
+    assert.match(first, /2\. \[user\] Fix the flaky login test/);
+    assert.match(second, /2\. \[user\] \[opening prompt identical to an earlier session\]/);
+    assert.doesNotMatch(second, /Fix the flaky login test/);
+    assert.match(second, /<cwd>\/work\/b<\/cwd>/);
+    assert.match(third, /2\. \[user\] Something else entirely/);
+    assert.match(fourth, /2\. \[user\] fix the failing tests/);
+    assert.match(fifth, /2\. \[user\] fix the failing tests/);
+
+    const repeat = (id, prompt = longPrompt, reply = `done ${id}`) => {
+      const file = join(home, `${id}.jsonl`);
+      writeFileSync(file, [
+        userItem(prompt, "user"),
+        JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: reply }] } }),
+      ].join("\n"));
+      return [[id, file]];
+    };
+    assert.match(captureSessions(home, repeat("other-key"), { SUPERMEMORY_CODEX_API_KEY: "sm_other" })[0], /Fix the flaky login test/);
+    assert.match(captureSessions(home, repeat("other-url"), { SUPERMEMORY_API_URL: "https://self.hosted.example" })[0], /Fix the flaky login test/);
+    assert.match(captureSessions(home, repeat("same-key"))[0], /\[opening prompt identical to an earlier session\]/);
+
+    const indexFile = join(home, ".codex-supermemory", "trackers", "opening-prompts.json");
+    assert.doesNotMatch(readFileSync(indexFile, "utf-8"), /sm_test|sm_other/);
+    if (process.platform !== "win32") assert.equal(statSync(indexFile).mode & 0o777, 0o600);
+
+    const signalHome = makeTmpDir();
+    t.after(() => rmSync(signalHome, { recursive: true, force: true }));
+    mkdirSync(join(signalHome, ".codex"), { recursive: true });
+    writeFileSync(join(signalHome, ".codex", "supermemory.json"), JSON.stringify({ signalExtraction: true }));
+    const signalPrompt = "Please remember that releases go out on Thursdays. " + "Follow the repository checklist before you open a pull request. ".repeat(4);
+    const signalSessions = [
+      [join(signalHome, "s1.jsonl"), "noted the release day"],
+      [join(signalHome, "s2.jsonl"), "second session reply about Thursdays"],
+    ].map(([file, reply], index) => {
+      writeFileSync(file, [
+        userItem(signalPrompt, "user"),
+        JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: reply }] } }),
+      ].join("\n"));
+      return [`signal-${index}`, file];
+    });
+    const [, signalSecond] = captureSessions(signalHome, signalSessions);
+    assert.match(signalSecond, /\[user\] \[opening prompt identical to an earlier session\]/);
+    assert.match(signalSecond, /second session reply about Thursdays/);
+    const aged = Object.fromEntries(Object.keys(JSON.parse(readFileSync(indexFile, "utf-8")))
+      .map((key) => [key, { at: Date.now() - 25 * 60 * 60 * 1000 }]));
+    writeFileSync(indexFile, JSON.stringify(aged));
+    const [afterDay] = captureSessions(home, sessions.slice(5));
+    assert.match(afterDay, /2\. \[user\] Fix the flaky login test/);
+
+    const optOutHome = makeTmpDir();
+    t.after(() => rmSync(optOutHome, { recursive: true, force: true }));
+    const optedOut = captureSessions(optOutHome, sessions.slice(0, 2), { SUPERMEMORY_DEDUPE_OPENING_PROMPT: "false" });
+    assert.match(optedOut[1], /Fix the flaky login test/);
+
+    const logout = spawnSync("node", [fileURLToPath(new URL("../dist/cli.js", import.meta.url)), "logout"], {
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: "utf-8",
+    });
+    assert.equal(logout.status, 0, logout.stderr);
+    assert.equal(existsSync(indexFile), false);
+  });
+
+  test("re-serves a successful recall for the same container and query within ten minutes", (t) => {
+    const home = makeTmpDir();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const script = `
+      import { getCachedRecall, rememberRecall, RECALL_QUERY_WINDOW_MS } from ${JSON.stringify(dedupeModule)};
+      const now = Date.now();
+      const hits = [{ memory: "Login uses a fake clock", title: "auth", filepath: "auth.ts" }];
+      const scope = ["https://api.example", "v5", "sm_key_a", "tag_a"];
+      const before = getCachedRecall(scope, "Fix the login test", now) ?? null;
+      rememberRecall(scope, "Fix the login test", hits, now);
+      console.log(JSON.stringify([
+        before,
+        getCachedRecall(scope, "  Fix  the login test ", now + 1000),
+        getCachedRecall([...scope.slice(0, 3), "tag_b"], "Fix the login test", now + 1000) ?? null,
+        getCachedRecall(["https://api.example", "v5", "sm_key_b", "tag_a"], "Fix the login test", now + 1000) ?? null,
+        getCachedRecall(["https://self.hosted", "v5", "sm_key_a", "tag_a"], "Fix the login test", now + 1000) ?? null,
+        getCachedRecall(scope, "fix the login test", now + 1000) ?? null,
+        getCachedRecall(scope, "Fix the login test", now + RECALL_QUERY_WINDOW_MS) ?? null,
+      ]));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const hits = [{ memory: "Login uses a fake clock", title: "auth", filepath: "auth.ts" }];
+    assert.deepEqual(JSON.parse(result.stdout), [null, hits, null, null, null, null, null]);
+    const cacheFile = join(home, ".codex-supermemory", "trackers", "recall-queries.json");
+    assert.doesNotMatch(readFileSync(cacheFile, "utf-8"), /sm_key_a/);
+    if (process.platform !== "win32") assert.equal(statSync(cacheFile).mode & 0o777, 0o600);
   });
 });

@@ -1,12 +1,14 @@
 import { exitHook, isHookExit } from "../services/auth.js";
 import { readFileSync } from "node:fs";
-import { isConfigured, CONFIG } from "../config.js";
+import { isConfigured, CONFIG, getApiVersion, getBaseUrl, getCredentialIdentity } from "../config.js";
 import { getTags } from "../services/tags.js";
 import { log } from "../services/logger.js";
 import { getSeenFacts, addSeenFacts, factKey } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
 import { getHookProfileWithSearchMany } from "../services/hookRecallClient.js";
 import { prepareRecallQuery, shouldRecallPrompt } from "../services/recallPolicy.js";
+import { getSessionSkipReason } from "../services/sessionGate.js";
+import { getCachedRecall, rememberRecall } from "../services/dedupe.js";
 
 const MAX_RESULT_CHARS = 300;
 
@@ -85,6 +87,12 @@ async function main() {
     exitWithContext("");
   }
 
+  const skipReason = getSessionSkipReason(payload);
+  if (skipReason) {
+    log("recall: skipped", { skipReason });
+    exitWithContext("");
+  }
+
   const query = payload.prompt || payload.input || "";
   if (!query.trim()) {
     exitWithContext("");
@@ -111,18 +119,28 @@ async function main() {
 
   if (!shouldRecallPrompt(query)) exitWithContext("");
 
-  try {
-    const profileResult = await getHookProfileWithSearchMany(
-      tags.allReads,
-      prepareRecallQuery(query),
-    );
+  const recallQuery = prepareRecallQuery(query);
 
-    if (!profileResult.success) {
-      exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
+  try {
+    const credential = CONFIG.dedupeRecallQueries ? getCredentialIdentity() : undefined;
+    const recallScope = credential
+      ? [getBaseUrl(), getApiVersion(), credential, ...[...new Set(tags.allReads)].sort()]
+      : undefined;
+    let matches = recallScope ? getCachedRecall(recallScope, recallQuery) : undefined;
+    if (matches) {
+      log("recall: reused cached search", { containerTag: tags.canonical, matchCount: matches.length });
+    } else {
+      const profileResult = await getHookProfileWithSearchMany(tags.allReads, recallQuery);
+
+      if (!profileResult.success) {
+        exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
+      }
+
+      matches = profileResult.searchResults?.results ?? [];
+      if (recallScope) rememberRecall(recallScope, recallQuery, matches);
     }
 
     const seen = getSeenFacts(sessionId);
-    const matches = profileResult.searchResults?.results ?? [];
     const fresh = matches
       .filter((item) => !seen.has(factKey(item.memory)))
       .slice(0, Math.min(CONFIG.maxMemories, 5));

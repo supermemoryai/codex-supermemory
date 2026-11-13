@@ -6,6 +6,7 @@ import { getTags } from "../services/tags.js";
 import { log } from "../services/logger.js";
 import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
 import { getSessionId } from "../services/session.js";
+import { getSessionSkipReason } from "../services/sessionGate.js";
 
 interface CodexStopPayload {
   session_id?: string;
@@ -30,6 +31,12 @@ async function main() {
   try {
     payload = JSON.parse(rawInput) as CodexStopPayload;
   } catch {
+    return;
+  }
+
+  const skipReason = getSessionSkipReason(payload);
+  if (skipReason) {
+    log("flush: skipped", { skipReason });
     return;
   }
 
