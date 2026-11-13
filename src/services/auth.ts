@@ -5,7 +5,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { createServer, type Server } from "node:http";
 import { PLUGIN_VERSION } from "../version.js";
 import { openUrl } from "./openUrl.js";
-import { clearRecallCache } from "./dedupe.js";
+import { clearDedupeIndexes } from "./dedupe.js";
 
 const SUPERMEMORY_DIR = join(homedir(), ".codex", "supermemory");
 export const CREDENTIALS_FILE = join(SUPERMEMORY_DIR, "credentials.json");
@@ -456,7 +456,7 @@ export async function clearCredentials(): Promise<void> {
     }
     writeJson(LOGGED_OUT_FILE, { loggedOutAt: new Date().toISOString() });
     fs.rmSync(CREDENTIALS_FILE, { force: true });
-    clearRecallCache();
+    clearDedupeIndexes();
   }, REFRESH_TIMEOUT);
 }
 

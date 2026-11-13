@@ -1636,7 +1636,40 @@ describe("capture and recall deduplication", () => {
     assert.match(fourth, /2\. \[user\] fix the failing tests/);
     assert.match(fifth, /2\. \[user\] fix the failing tests/);
 
+    const repeat = (id, prompt = longPrompt, reply = `done ${id}`) => {
+      const file = join(home, `${id}.jsonl`);
+      writeFileSync(file, [
+        userItem(prompt, "user"),
+        JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: reply }] } }),
+      ].join("\n"));
+      return [[id, file]];
+    };
+    assert.match(captureSessions(home, repeat("other-key"), { SUPERMEMORY_CODEX_API_KEY: "sm_other" })[0], /Fix the flaky login test/);
+    assert.match(captureSessions(home, repeat("other-url"), { SUPERMEMORY_API_URL: "https://self.hosted.example" })[0], /Fix the flaky login test/);
+    assert.match(captureSessions(home, repeat("same-key"))[0], /\[opening prompt identical to an earlier session\]/);
+
     const indexFile = join(home, ".codex-supermemory", "trackers", "opening-prompts.json");
+    assert.doesNotMatch(readFileSync(indexFile, "utf-8"), /sm_test|sm_other/);
+    if (process.platform !== "win32") assert.equal(statSync(indexFile).mode & 0o777, 0o600);
+
+    const signalHome = makeTmpDir();
+    t.after(() => rmSync(signalHome, { recursive: true, force: true }));
+    mkdirSync(join(signalHome, ".codex"), { recursive: true });
+    writeFileSync(join(signalHome, ".codex", "supermemory.json"), JSON.stringify({ signalExtraction: true }));
+    const signalPrompt = "Please remember that releases go out on Thursdays. " + "Follow the repository checklist before you open a pull request. ".repeat(4);
+    const signalSessions = [
+      [join(signalHome, "s1.jsonl"), "noted the release day"],
+      [join(signalHome, "s2.jsonl"), "second session reply about Thursdays"],
+    ].map(([file, reply], index) => {
+      writeFileSync(file, [
+        userItem(signalPrompt, "user"),
+        JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: reply }] } }),
+      ].join("\n"));
+      return [`signal-${index}`, file];
+    });
+    const [, signalSecond] = captureSessions(signalHome, signalSessions);
+    assert.match(signalSecond, /\[user\] \[opening prompt identical to an earlier session\]/);
+    assert.match(signalSecond, /second session reply about Thursdays/);
     const aged = Object.fromEntries(Object.keys(JSON.parse(readFileSync(indexFile, "utf-8")))
       .map((key) => [key, { at: Date.now() - 25 * 60 * 60 * 1000 }]));
     writeFileSync(indexFile, JSON.stringify(aged));
@@ -1647,6 +1680,13 @@ describe("capture and recall deduplication", () => {
     t.after(() => rmSync(optOutHome, { recursive: true, force: true }));
     const optedOut = captureSessions(optOutHome, sessions.slice(0, 2), { SUPERMEMORY_DEDUPE_OPENING_PROMPT: "false" });
     assert.match(optedOut[1], /Fix the flaky login test/);
+
+    const logout = spawnSync("node", [fileURLToPath(new URL("../dist/cli.js", import.meta.url)), "logout"], {
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: "utf-8",
+    });
+    assert.equal(logout.status, 0, logout.stderr);
+    assert.equal(existsSync(indexFile), false);
   });
 
   test("re-serves a successful recall for the same container and query within ten minutes", (t) => {

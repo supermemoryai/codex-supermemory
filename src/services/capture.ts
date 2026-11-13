@@ -28,7 +28,7 @@ import {
   openingPromptKey,
   rememberOpeningPrompt,
 } from "./dedupe.js";
-import { CONFIG } from "../config.js";
+import { CONFIG, getBaseUrl, getCredentialIdentity } from "../config.js";
 import type { ResolvedTags } from "./tags.js";
 
 export interface CaptureOptions {
@@ -171,8 +171,9 @@ async function captureEntriesLocked(
   const openingPrompt = CONFIG.dedupeOpeningPrompt
     ? entries.find((entry) => entry.role === "user" && entry.prompt)
     : undefined;
-  const openingKey = openingPrompt && signalEntries.includes(openingPrompt)
-    ? openingPromptKey(tags.canonical, openingPrompt.content)
+  const credential = openingPrompt && signalEntries.includes(openingPrompt) ? getCredentialIdentity() : undefined;
+  const openingKey = openingPrompt && credential
+    ? openingPromptKey([getBaseUrl(), credential, tags.canonical], openingPrompt.content)
     : undefined;
   const repeatedOpening = openingKey !== undefined && hasCapturedOpeningPrompt(openingKey);
   const transcript = formatTranscript(

@@ -56,10 +56,10 @@ export function writeJsonIndex<T extends Timestamped>(file: string, index: Recor
   }
 }
 
-/** Key for an opening prompt worth deduplicating, or undefined when it is too short. */
-export function openingPromptKey(containerTag: string, prompt: string): string | undefined {
-  const text = prompt.trim();
-  return text.length >= OPENING_PROMPT_MIN_CHARS ? hashKey(containerTag, text) : undefined;
+/** Key for an opening prompt scoped to backend, credential and container, or undefined when too short. */
+export function openingPromptKey(scope: string[], prompt: string): string | undefined {
+  const text = prompt.trim().replace(/\s+/g, " ");
+  return text.length >= OPENING_PROMPT_MIN_CHARS ? hashKey(...scope, text) : undefined;
 }
 
 export function hasCapturedOpeningPrompt(key: string, now = Date.now()): boolean {
@@ -91,6 +91,7 @@ export function rememberRecall(scope: string[], query: string, results: CachedRe
   writeJsonIndex(RECALL_QUERIES_FILE, index, MAX_RECALL_QUERIES);
 }
 
-export function clearRecallCache(): void {
+export function clearDedupeIndexes(): void {
   rmSync(RECALL_QUERIES_FILE, { force: true });
+  rmSync(OPENING_PROMPTS_FILE, { force: true });
 }
