@@ -620,7 +620,7 @@ export class SupermemoryClient {
       const response = await fetch(`${baseUrl}/ns/${namespace}/document`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${getApiKeyValue()}`,
+          Authorization: `Bearer ${await getAuthToken(undefined, baseUrl)}`,
           "Content-Type": "application/json",
           "x-sm-source": CODEX_SOURCE,
           "x-sm-session": CODEX_SOURCE,
