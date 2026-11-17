@@ -1,12 +1,13 @@
 import Supermemory, { SupermemoryError, type FilterExpression, type RequestOptions } from "supermemory";
-import { getApiKeyValue, getBaseUrl } from "../config.js";
+import { getAuthToken, getBaseUrl } from "../config.js";
 import type { ProfileWithSearchResult, SearchResultItem, MemoryScope } from "./client.js";
 import { memoryText, recallProvenance } from "./resultText.js";
 
 export function createV5Client(fetchImpl?: typeof fetch): Supermemory {
+  const baseUrl = getBaseUrl();
   return new Supermemory({
-    apiKey: getApiKeyValue(),
-    baseUrl: getBaseUrl(),
+    apiKey: () => getAuthToken(undefined, baseUrl),
+    baseUrl,
     headers: { "x-sm-source": "codex" },
     timeoutInSeconds: 60,
     maxRetries: 2,

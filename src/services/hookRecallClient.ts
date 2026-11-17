@@ -1,4 +1,4 @@
-import { CONFIG, getApiKeyValue, getBaseUrl, getApiVersion } from "../config.js";
+import { CONFIG, getAuthToken, getBaseUrl, getApiVersion } from "../config.js";
 import type { ProfileWithSearchResult, SearchResultItem } from "./client.js";
 import { mergeProfileResults } from "./resultMerge.js";
 import { memoryText, recallProvenance } from "./resultText.js";
@@ -80,12 +80,11 @@ async function fetchProfile(
   query: string,
   options: Required<HookRecallOptions>,
 ): Promise<ProfileWithSearchResult> {
-  const apiKey = getApiKeyValue();
-  if (!apiKey) return { success: false, error: "Missing API key", profile: null };
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
+    const apiKey = await getAuthToken(Math.min(options.timeoutMs, 3000));
+    controller.signal.throwIfAborted();
     if (getApiVersion() === "v5") {
       return await readV5Profile(createV5Client(options.fetchImpl), containerTag, query, undefined, {
         timeoutInSeconds: options.timeoutMs / 1000,

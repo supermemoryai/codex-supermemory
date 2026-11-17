@@ -1,3 +1,4 @@
+import { exitHook, isHookExit } from "../services/auth.js";
 import { readFileSync } from "node:fs";
 import { isConfigured, CONFIG } from "../config.js";
 import { getTags } from "../services/tags.js";
@@ -34,7 +35,7 @@ function exitWithContext(additionalContext: string, systemMessage?: string): nev
       })
     );
   }
-  process.exit(0);
+  exitHook(0);
 }
 
 interface RecallItem {
@@ -65,15 +66,15 @@ async function main() {
   try {
     rawInput = readFileSync(0, "utf-8");
   } catch {
-    process.exit(0);
+    exitHook(0);
   }
 
   if (!isConfigured()) {
     // UserPromptSubmit has a 5s backstop and must never launch browser auth.
     // SessionStart owns authentication.
     exitWithContext(
-      "[SUPERMEMORY] Memory is installed but NOT active — missing API key.\n" +
-      "Start a new Codex task to authenticate, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
+      "[SUPERMEMORY] Memory is installed but NOT active — authentication required.\n" +
+      "Run `npx codex-supermemory login`, start a new Codex task to authenticate, or set SUPERMEMORY_CODEX_API_KEY in your shell profile."
     );
   }
 
@@ -148,11 +149,15 @@ async function main() {
 
     exitWithContext("");
   } catch (error) {
+    if (isHookExit(error)) throw error;
     log("recall: error", { error: String(error) });
     exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
   }
 }
 
-main().catch(() => {
-  exitWithContext("");
-});
+main()
+  .catch((error) => {
+    if (isHookExit(error)) return;
+    exitWithContext("");
+  })
+  .catch(() => {});
