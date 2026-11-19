@@ -2,6 +2,7 @@ import { exitHook, isHookExit } from "../services/auth.js";
 import { readFileSync } from "node:fs";
 import { isConfigured, CONFIG } from "../config.js";
 import { getTags } from "../services/tags.js";
+import { getRecallTags } from "../services/tagChecks.js";
 import { log } from "../services/logger.js";
 import { getSeenFacts, addSeenFacts, factKey } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
@@ -113,7 +114,7 @@ async function main() {
 
   try {
     const profileResult = await getHookProfileWithSearchMany(
-      tags.allReads,
+      getRecallTags(tags.canonical, tags.allReads),
       prepareRecallQuery(query),
     );
 

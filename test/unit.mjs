@@ -544,6 +544,36 @@ describe("session recall deduplication", () => {
   });
 });
 
+describe("legacy tag checks", () => {
+  const tagChecksModule = new URL("../dist/services/tagChecks.js", import.meta.url).href;
+
+  test("recall skips only tags SessionStart found empty", (t) => {
+    const homeDir = makeTmpDir();
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const script = `
+      import { getRecallTags, recordTagChecks } from ${JSON.stringify(tagChecksModule)};
+      const reads = ["repo_app__1", "empty", "full", "unchecked"];
+      const out = [getRecallTags("repo_app__1", reads)];
+      recordTagChecks("repo_app__1", { repo_app__1: false, empty: false, full: true });
+      out.push(getRecallTags("repo_app__1", reads), getRecallTags("repo_other__2", reads));
+      recordTagChecks("repo_app__1", { empty: true, full: false });
+      out.push(getRecallTags("repo_app__1", reads));
+      console.log(JSON.stringify(out));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), [
+      ["repo_app__1", "empty", "full", "unchecked"],
+      ["repo_app__1", "full", "unchecked"],
+      ["repo_app__1", "empty", "full", "unchecked"],
+      ["repo_app__1", "empty", "unchecked"],
+    ]);
+  });
+});
+
 describe("direct recall policy", () => {
   const policyModule = new URL("../dist/services/recallPolicy.js", import.meta.url).href;
   const hookClientModule = new URL("../dist/services/hookRecallClient.js", import.meta.url).href;

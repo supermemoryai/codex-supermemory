@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { getAuthToken, CONFIG, PLUGIN_VERSION } from "../config.js";
 import { HOOK_API_TIMEOUT_MS, SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
+import { recordTagChecks } from "../services/tagChecks.js";
+import { mergeProfileResults } from "../services/resultMerge.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
 import { startAuthFlow, isAuthRequired, isLoggedOut, exitHook, isHookExit, AuthError } from "../services/auth.js";
@@ -111,11 +113,19 @@ async function main() {
   log("session-start: begin", { sessionId, tags });
 
   try {
-    const profileResult = await client.getProfileMany(
-      tags.allReads,
-      undefined,
-      { timeoutMs: HOOK_API_TIMEOUT_MS },
+    const readTags = [...new Set(tags.allReads)];
+    const profiles = await Promise.all(
+      readTags.map((tag) =>
+        client.getProfileWithSearch(tag, undefined, undefined, { timeoutMs: HOOK_API_TIMEOUT_MS })
+      ),
     );
+    recordTagChecks(tags.canonical, Object.fromEntries(
+      readTags.flatMap((tag, index) => {
+        const profile = profiles[index].success ? profiles[index].profile : null;
+        return profile ? [[tag, profile.static.length + profile.dynamic.length > 0]] : [];
+      }),
+    ));
+    const profileResult = mergeProfileResults(profiles, CONFIG.maxMemories);
     const seen = getSeenFacts(sessionId);
     const { text, newFacts } = formatCombinedContext(
       {
