@@ -1,10 +1,10 @@
 import { settleAuth } from "../services/auth.js";
 import { readFileSync } from "node:fs";
-import { isConfigured } from "../config.js";
+import { getApiBaseUrl, getApiVersion, isConfigured } from "../config.js";
 import { SupermemoryClient, USER_ENTITY_CONTEXT } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { log } from "../services/logger.js";
-import { resolveTranscriptPath } from "../services/capture.js";
+import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
 import { readRawDelta } from "../services/session-capture.js";
 import { getSessionId } from "../services/session.js";
 
@@ -46,18 +46,37 @@ async function main() {
 
   log("flush: start", { sessionId, transcriptPath });
 
+  const client = new SupermemoryClient();
+
+  // Legacy servers, including self-hosted ones, have no session endpoint, so they keep the client-formatted capture.
+  if (getApiVersion() === "legacy") {
+    const legacy = await captureEntries("flush", client, sessionId, transcriptPath, tags);
+    if (legacy.status === "captured") {
+      process.stdout.write(JSON.stringify({
+        systemMessage: "◪ supermemory · saved this turn",
+      }));
+    }
+    return;
+  }
+
   if (!transcriptPath) {
     return;
   }
 
   // Always send the raw rollout delta; the server adapter turns it into clean
   // conversation text. No gating, signal filtering, or memory shaping here.
-  const session = readRawDelta(transcriptPath, sessionId);
+  const session = readRawDelta(
+    transcriptPath,
+    sessionId,
+    `${getApiBaseUrl()}\n${tags.canonical}`,
+  );
   if (!session) {
     return;
   }
-
-  const client = new SupermemoryClient();
+  if (!session.raw) {
+    session.commit();
+    return;
+  }
   const result = await client.addSession(tags.canonical, session.raw, {
     sessionId,
     generation: session.generation,
