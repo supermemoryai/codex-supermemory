@@ -46,6 +46,30 @@ export function normalizeSearchItem(item: SearchResultItem): SearchResultItem {
   };
 }
 
+export async function searchV5(
+  client: Supermemory,
+  namespace: string,
+  query: string,
+  scope?: MemoryScope,
+  requestOptions?: RequestOptions,
+): Promise<{ results: Array<SearchResultItem & { memory: string }>; total: number; timing?: number }> {
+  const search = await client.search(namespace, {
+    query,
+    filter: scopeFilter(scope),
+    searchMode: "memories",
+    threshold: 0.6,
+    limit: 10,
+    rerank: "none",
+    rewriteQuery: false,
+    include: { documents: false, related: false, forgotten: false },
+  }, requestOptions);
+  const results = search.results.map(normalizeSearchItem).map((item) => ({
+    ...item,
+    memory: memoryText(item),
+  })).filter((item) => item.memory.length > 0);
+  return { results, total: results.length, timing: search.searchTime };
+}
+
 export async function readV5Profile(
   client: Supermemory,
   namespace: string,
@@ -53,30 +77,16 @@ export async function readV5Profile(
   scope?: MemoryScope,
   requestOptions?: RequestOptions,
 ): Promise<ProfileWithSearchResult> {
-  const filter = scopeFilter(scope);
-  const [profile, search] = await Promise.all([
-    client.profile(namespace, { filter }, requestOptions),
-    query ? client.search(namespace, {
-      query,
-      filter,
-      searchMode: "memories",
-      threshold: 0.6,
-      limit: 10,
-      rerank: "none",
-      rewriteQuery: false,
-      include: { documents: false, related: false, forgotten: false },
-    }, requestOptions) : undefined,
+  const [profile, searchResults] = await Promise.all([
+    client.profile(namespace, { filter: scopeFilter(scope) }, requestOptions),
+    query ? searchV5(client, namespace, query, scope, requestOptions) : undefined,
   ]);
-  const results = search?.results.map(normalizeSearchItem).map((item) => ({
-    ...item,
-    memory: memoryText(item),
-  })).filter((item) => item.memory.length > 0);
   return {
     success: true,
     profile: {
       static: profileFacts(profile.profile?.static),
       dynamic: profileFacts(profile.profile?.dynamic),
     },
-    searchResults: results ? { results, total: results.length, timing: search?.searchTime } : undefined,
+    searchResults,
   };
 }

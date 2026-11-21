@@ -43,12 +43,22 @@ const CODEX_PETS_DIR = join(CODEX_DIR, "pets");
 const SUPERMEMORY_PET_DIR = join(CODEX_PETS_DIR, "supermemory");
 const SUPERMEMORY_PET_MARKER = join(SUPERMEMORY_PET_DIR, ".codex-supermemory-owned");
 const SUPERMEMORY_PET_ID = "supermemory";
-// Must cover SELF_HOSTED_HOOK_RECALL_TIMEOUT_MS so Codex does not kill the hook first; see #61.
-const RECALL_TIMEOUT_SECONDS = 60;
+const RECALL_TIMEOUT_SECONDS = 5;
 const RECALL_APPROVE_TIMEOUT_SECONDS = 5;
 const FLUSH_TIMEOUT_SECONDS = 30;
 const SESSION_START_TIMEOUT_SECONDS = 30;
 const SUPERMEMORY_MCP_MATCHER = "^mcp__supermemory__";
+const SUPERMEMORY_MCP_TOOLS = [
+  "search_memory",
+  "get_profile",
+  "add_memory",
+  "forget_memory",
+  "list_memories",
+  "list_documents",
+  "get_document",
+  "list_spaces",
+  "who_am_i",
+];
 
 // Skill metadata — single source of truth for install/uninstall/status.
 const SKILLS: ReadonlyArray<{ name: string; script?: string }> = [
@@ -198,6 +208,8 @@ function mergeConfigToml(enable: boolean, managePet: boolean): boolean {
       envVars.push("SUPERMEMORY_CODEX_API_KEY");
     }
     server.env_vars = envVars;
+
+    if (!Array.isArray(server.enabled_tools)) server.enabled_tools = SUPERMEMORY_MCP_TOOLS;
 
     // stdio entry — these are streamable-HTTP only.
     delete server.url;

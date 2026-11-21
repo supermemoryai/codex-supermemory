@@ -1,23 +1,10 @@
 import { CONFIG, getAuthToken, getBaseUrl, getApiVersion } from "../config.js";
-import type { ProfileWithSearchResult, SearchResultItem } from "./client.js";
-import { mergeProfileResults } from "./resultMerge.js";
-import { memoryText, recallProvenance } from "./resultText.js";
-import { createV5Client, readV5Profile, apiErrorMessage } from "./api.js";
+import type { ProfileWithSearchResult, SearchResponse, SearchResultItem } from "./client.js";
+import { mergeSearchResponses, passesRecallThreshold } from "./resultMerge.js";
+import { memoryText, recallProvenance, RECALL_MAX_RESULTS } from "./resultText.js";
+import { createV5Client, searchV5, apiErrorMessage } from "./api.js";
 
 export const HOOK_RECALL_TIMEOUT_MS = 3000;
-// Self-hosted backends need a longer cap than hosted; see #61.
-export const SELF_HOSTED_HOOK_RECALL_TIMEOUT_MS = 60_000;
-const HOSTED_API_HOSTNAME = "api.supermemory.ai";
-
-export function hookRecallTimeoutMs(baseUrl = getBaseUrl()): number {
-  try {
-    return new URL(baseUrl).hostname.toLowerCase() === HOSTED_API_HOSTNAME
-      ? HOOK_RECALL_TIMEOUT_MS
-      : SELF_HOSTED_HOOK_RECALL_TIMEOUT_MS;
-  } catch {
-    return HOOK_RECALL_TIMEOUT_MS;
-  }
-}
 
 interface HookRecallOptions {
   timeoutMs?: number;
@@ -75,22 +62,25 @@ function normalizeProfileResponse(raw: unknown): ProfileWithSearchResult {
   };
 }
 
-async function fetchProfile(
+async function searchContainer(
   containerTag: string,
   query: string,
   options: Required<HookRecallOptions>,
-): Promise<ProfileWithSearchResult> {
+): Promise<SearchResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
     const apiKey = await getAuthToken(Math.min(options.timeoutMs, 3000));
     controller.signal.throwIfAborted();
     if (getApiVersion() === "v5") {
-      return await readV5Profile(createV5Client(options.fetchImpl), containerTag, query, undefined, {
-        timeoutInSeconds: options.timeoutMs / 1000,
-        maxRetries: 0,
-        abortSignal: controller.signal,
-      });
+      return {
+        success: true,
+        ...(await searchV5(createV5Client(options.fetchImpl), containerTag, query, undefined, {
+          timeoutInSeconds: options.timeoutMs / 1000,
+          maxRetries: 0,
+          abortSignal: controller.signal,
+        })),
+      };
     }
     const response = await options.fetchImpl(`${getBaseUrl().replace(/\/+$/, "")}/v4/profile`, {
       method: "POST",
@@ -103,32 +93,36 @@ async function fetchProfile(
       signal: controller.signal,
     });
     if (!response.ok) {
-      return { success: false, error: `Profile request failed (${response.status})`, profile: null };
+      return { success: false, error: `Profile request failed (${response.status})` };
     }
-    return normalizeProfileResponse(await response.json());
+    const legacy = normalizeProfileResponse(await response.json());
+    return { success: true, ...legacy.searchResults };
   } catch (error) {
-    return {
-      success: false,
-      error: apiErrorMessage(error),
-      profile: null,
-    };
+    return { success: false, error: apiErrorMessage(error) };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-export async function getHookProfileWithSearchMany(
+export async function searchHookMemories(
   containerTags: string[],
   query: string,
   options: HookRecallOptions = {},
-): Promise<ProfileWithSearchResult> {
+): Promise<SearchResponse> {
   const resolved = {
-    timeoutMs: options.timeoutMs ?? hookRecallTimeoutMs(),
+    timeoutMs: options.timeoutMs ?? HOOK_RECALL_TIMEOUT_MS,
     fetchImpl: options.fetchImpl ?? fetch,
   };
   const uniqueTags = [...new Set(containerTags.filter(Boolean))];
-  const results = await Promise.all(
-    uniqueTags.map((containerTag) => fetchProfile(containerTag, query, resolved)),
+  const responses = await Promise.all(
+    uniqueTags.map((containerTag) => searchContainer(containerTag, query, resolved)),
   );
-  return mergeProfileResults(results, CONFIG.maxMemories);
+  return mergeSearchResponses(
+    responses.map((response) => ({
+      ...response,
+      results: response.results?.filter((result) =>
+        passesRecallThreshold(result) && memoryText(result).length > 0),
+    })),
+    Math.min(CONFIG.maxMemories, RECALL_MAX_RESULTS),
+  );
 }

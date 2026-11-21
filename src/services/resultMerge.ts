@@ -36,7 +36,7 @@ function score(result: SearchResultItem): number {
   return -1;
 }
 
-function passesRecallThreshold(result: SearchResultItem): boolean {
+export function passesRecallThreshold(result: SearchResultItem): boolean {
   const relevance = Number.isFinite(result.similarity)
     ? result.similarity as number
     : Number.isFinite(result.score)
