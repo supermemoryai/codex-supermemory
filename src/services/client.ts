@@ -382,6 +382,33 @@ export class SupermemoryClient {
     }
   }
 
+  async hasDocuments(containerTag: string, requestOptions: BoundedRequestOptions): Promise<boolean | null> {
+    try {
+      const { timeoutMs } = requestOptions;
+      const documents = getApiVersion() === "legacy"
+        ? (await withBoundedSdkRequest(
+            (signal) => this.getLegacyClient().documents.list(
+              { containerTags: [containerTag], limit: 1 },
+              { timeout: timeoutMs, maxRetries: 0, signal },
+            ),
+            timeoutMs,
+          )).memories
+        : (await withBoundedSdkRequest(
+            (abortSignal) => this.getClient().list(containerTag, "documents", { limit: 1 }, {
+              timeoutInSeconds: timeoutMs / 1000,
+              maxRetries: 0,
+              abortSignal,
+            }),
+            timeoutMs,
+          )).documents;
+      if (!Array.isArray(documents)) throw new Error("Unexpected document list response");
+      return documents.length > 0;
+    } catch (error) {
+      log("hasDocuments: error", { containerTag, error: apiErrorMessage(error) });
+      return null;
+    }
+  }
+
   async getProfileMany(
     containerTags: string[],
     query?: string,

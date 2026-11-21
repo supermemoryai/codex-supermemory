@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { getAuthToken, CONFIG, PLUGIN_VERSION } from "../config.js";
 import { HOOK_API_TIMEOUT_MS, SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
+import { getSkippableTags, recordTagChecks } from "../services/tagChecks.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
 import { startAuthFlow, isAuthRequired, isLoggedOut, exitHook, isHookExit, AuthError } from "../services/auth.js";
@@ -111,11 +112,17 @@ async function main() {
   log("session-start: begin", { sessionId, tags });
 
   try {
-    const profileResult = await client.getProfileMany(
-      tags.allReads,
-      undefined,
-      { timeoutMs: HOOK_API_TIMEOUT_MS },
-    );
+    const checkTags = getSkippableTags(tags);
+    const [profileResult, documentChecks] = await Promise.all([
+      client.getProfileMany(tags.allReads, undefined, { timeoutMs: HOOK_API_TIMEOUT_MS }),
+      Promise.all(checkTags.map((tag) => client.hasDocuments(tag, { timeoutMs: HOOK_API_TIMEOUT_MS }))),
+    ]);
+    recordTagChecks(tags.canonical, Object.fromEntries(
+      checkTags.flatMap((tag, index) => {
+        const hasDocuments = documentChecks[index];
+        return hasDocuments === null ? [] : [[tag, hasDocuments]];
+      }),
+    ));
     const seen = getSeenFacts(sessionId);
     const { text, newFacts } = formatCombinedContext(
       {
