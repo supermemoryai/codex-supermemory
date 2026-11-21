@@ -114,7 +114,7 @@ async function main() {
 
   try {
     const profileResult = await getHookProfileWithSearchMany(
-      getRecallTags(tags.canonical, tags.allReads),
+      getRecallTags(tags),
       prepareRecallQuery(query),
     );
 

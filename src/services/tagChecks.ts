@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ResolvedTags } from "./tags.js";
 
 const CACHE_DIR = join(homedir(), ".codex-supermemory", "tag-checks");
 
@@ -18,18 +19,23 @@ function loadTagChecks(canonicalTag: string): Record<string, unknown> {
   }
 }
 
-export function recordTagChecks(canonicalTag: string, hasMemories: Record<string, boolean>): void {
-  if (Object.keys(hasMemories).length === 0) return;
+export function recordTagChecks(canonicalTag: string, hasDocuments: Record<string, boolean>): void {
+  if (Object.keys(hasDocuments).length === 0) return;
   try {
     mkdirSync(CACHE_DIR, { recursive: true });
     const file = cacheFile(canonicalTag);
     const tempFile = `${file}.${process.pid}.tmp`;
-    writeFileSync(tempFile, JSON.stringify({ ...loadTagChecks(canonicalTag), ...hasMemories }));
+    writeFileSync(tempFile, JSON.stringify({ ...loadTagChecks(canonicalTag), ...hasDocuments }));
     renameSync(tempFile, file);
   } catch {}
 }
 
-export function getRecallTags(canonicalTag: string, readTags: string[]): string[] {
-  const checks = loadTagChecks(canonicalTag);
-  return readTags.filter((tag) => tag === canonicalTag || checks[tag] !== false);
+export function getSkippableTags(tags: Pick<ResolvedTags, "allReads" | "configuredReads">): string[] {
+  return [...new Set(tags.allReads)].filter((tag) => !tags.configuredReads.includes(tag));
+}
+
+export function getRecallTags(tags: Pick<ResolvedTags, "canonical" | "allReads" | "configuredReads">): string[] {
+  const checks = loadTagChecks(tags.canonical);
+  const skippable = new Set(getSkippableTags(tags));
+  return tags.allReads.filter((tag) => !skippable.has(tag) || checks[tag] !== false);
 }
