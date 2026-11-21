@@ -5,7 +5,8 @@ import { getTags } from "../services/tags.js";
 import { log } from "../services/logger.js";
 import { getSeenFacts, addSeenFacts, factKey } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
-import { getHookProfileWithSearchMany } from "../services/hookRecallClient.js";
+import { searchHookMemories } from "../services/hookRecallClient.js";
+import { memoryText } from "../services/resultText.js";
 import { prepareRecallQuery, shouldRecallPrompt } from "../services/recallPolicy.js";
 
 const MAX_RESULT_CHARS = 300;
@@ -112,17 +113,17 @@ async function main() {
   if (!shouldRecallPrompt(query)) exitWithContext("");
 
   try {
-    const profileResult = await getHookProfileWithSearchMany(
-      tags.allReads,
+    const recall = await searchHookMemories(
+      tags.promptReads,
       prepareRecallQuery(query),
     );
 
-    if (!profileResult.success) {
+    if (!recall.success) {
       exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
     }
 
     const seen = getSeenFacts(sessionId);
-    const matches = profileResult.searchResults?.results ?? [];
+    const matches = (recall.results ?? []).map((item) => ({ ...item, memory: memoryText(item) }));
     const fresh = matches
       .filter((item) => !seen.has(factKey(item.memory)))
       .slice(0, Math.min(CONFIG.maxMemories, 5));

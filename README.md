@@ -86,11 +86,13 @@ Codex, Claude Code, and OpenCode use one container for a repository:
 
 The hash comes from the normalized Git remote, so clones share memory while
 same-named repositories do not collide. Repositories without a remote fall back to
-a local path identity. Codex also reads the previous `user_project_*`,
+a local path identity. Prompt recall searches only the canonical container (plus
+the shared `repo_<project-name>__<remote-hash>` container when an explicit
+override changes the canonical one), so each prompt sends one or two search
+requests. SessionStart still loads profiles from the previous `user_project_*`,
 `repo_<project-name>`, `codex_user_*`, `codex_project_*`,
 `claudecode_project_*`, `opencode_user_*`, and `opencode_project_*`
-containers, so existing memories remain searchable without duplicating or
-migrating them. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
+containers without duplicating or migrating them. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
 path instead of the remote identity.
 
 Explicit `projectContainerTag`/`repoContainerTag` overrides remain the canonical
@@ -119,8 +121,10 @@ version selections fail the operation; a failed v5 request never switches API
 versions or sends data to another host. REST URL selection remains independent
 of the hosted MCP and browser-auth endpoints, including their existing env fields.
 
-The v5 profile has no query; prompt recall runs profile and memory search in
-parallel. Separated search explicitly uses the guide's legacy defaults (memories,
+Prompt recall calls memory search only; it doesn't fetch profiles. It has one
+3-second request budget for every REST URL, hosted or self-hosted, with no
+retries, and Codex stops the hook after 5 seconds. A slow backend means that
+prompt runs without recalled memory. Separated search explicitly uses the guide's legacy defaults (memories,
 0.6 threshold, 10 candidates, no reranking/query rewriting), then preserves the
 local 0.55 floor, cross-namespace deduplication, and top-five/configured cap. The
 SDK search helper retains its existing hybrid mode and configured threshold and
@@ -210,6 +214,16 @@ separate transport credentials without a dedicated MCP-key setting. Preserve
 the installer's existing `command`, `args`, and other fields; edit an existing
 table rather than adding a duplicate TOML table. Reinstall preserves `env` and
 additional `env_vars` entries. Restart Codex after configuration changes.
+
+#### MCP tool allow-list
+
+The installer writes `enabled_tools` on the server table so Codex only shows the
+model the memory tools a CLI can use: `search_memory`, `get_profile`,
+`add_memory`, `forget_memory`, `list_memories`, `list_documents`,
+`get_document`, `list_spaces`, and `who_am_i`. Deprecated camelCase aliases,
+app-only tools, and UI-widget tools stay hidden, which keeps about 1.1k tokens of
+tool schema out of every model call. Reinstall keeps an `enabled_tools` list you
+already set.
 
 #### Disable MCP for REST-hooks-only memory
 
