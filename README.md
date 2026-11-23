@@ -127,7 +127,14 @@ SDK search helper retains its existing hybrid mode and configured threshold and
 limit. Server-side ranking and historical-data availability aren't verified by
 local contract tests. Capture keeps its three-second budget and zero SDK retries,
 uses POST append/diff with the existing session ID, and advances the cursor only
-after valid acceptance. Dynamic processing is asynchronous; acceptance doesn't
+after valid acceptance. On v5, the Stop hook sends the session delta in
+whole-line chunks of at most 256 KB, reading at most 8 MB per turn within a
+25-second budget, and moves the cursor after each accepted chunk. A single
+record over 256 KB keeps its JSON shape with long strings cut to 16k characters.
+A chunk the server rejects with 400, 413, 415, or 422 is skipped, so later turns
+still go out; the hook says so, and the skipped byte ranges stay in the cursor
+file under `~/.codex-supermemory/session/` (the rollout file still holds them).
+Other failures leave the cursor at that chunk for the next turn. Dynamic processing is asynchronous; acceptance doesn't
 prove extraction completion or exactly-once billing after a lost response.
 
 The retained `dist/services/client.js` library exports still have their original
