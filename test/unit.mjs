@@ -349,6 +349,71 @@ describe("cross-container result merging", () => {
   });
 });
 
+describe("v5 session capture", () => {
+  const sessionModule = new URL("../dist/services/session-capture.js", import.meta.url).href;
+  const userRecord = (text) => JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: text } });
+  const replyRecord = (text) => JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [
+    { type: "output_text", text },
+  ] } });
+
+  function deltas(homeDir, steps) {
+    const script = `
+      import { writeFileSync } from "node:fs";
+      import { readRawDelta } from ${JSON.stringify(sessionModule)};
+      const out = [];
+      for (const step of ${JSON.stringify(steps)}) {
+        writeFileSync(step.file, step.lines.map((line) => line + "\\n").join(""));
+        const delta = readRawDelta(step.file, "s1", step.destination);
+        out.push(delta && { raw: delta.raw, offset: delta.offset });
+        delta?.commit();
+      }
+      console.log(JSON.stringify(out));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+
+  test("strips private blocks, drops fully private turns, and keys cursors by destination", (t) => {
+    const homeDir = makeTmpDir();
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const file = join(homeDir, "rollout.jsonl");
+    const first = [userRecord("ship with <private>token abc</private>"), replyRecord("Shipped.")];
+    const second = [...first, userRecord("<private>pin 4321</private>"), replyRecord("Noted 4321."), userRecord("next?"), replyRecord("Done.")];
+    const [a, b, c, d] = deltas(homeDir, [
+      { file, lines: first, destination: "https://a\nns" },
+      { file, lines: second, destination: "https://a\nns" },
+      { file, lines: second, destination: "https://a\nns" },
+      { file, lines: second, destination: "https://b\nns" },
+    ]);
+    assert.match(a.raw, /\[REDACTED\]/);
+    assert.doesNotMatch(a.raw, /token abc/);
+    assert.ok(b.offset > 0);
+    assert.doesNotMatch(b.raw, /4321/);
+    assert.match(b.raw, /Done\./);
+    assert.equal(c, null);
+    assert.equal(d.offset, 0);
+  });
+
+  test("a session captured by the legacy tracker resumes after its last line", (t) => {
+    const homeDir = makeTmpDir();
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    mkdirSync(join(homeDir, ".codex-supermemory", "trackers"), { recursive: true });
+    writeFileSync(join(homeDir, ".codex-supermemory", "trackers", "s1.txt"), "1");
+    const file = join(homeDir, "rollout.jsonl");
+    const [delta] = deltas(homeDir, [{
+      file,
+      lines: [userRecord("old question"), replyRecord("old answer"), userRecord("new question")],
+      destination: "https://a\nns",
+    }]);
+    assert.doesNotMatch(delta.raw, /old/);
+    assert.match(delta.raw, /new question/);
+  });
+});
+
 describe("capture tracker", () => {
   const trackerModule = new URL("../dist/services/tracker.js", import.meta.url).href;
   const captureModule = new URL("../dist/services/capture.js", import.meta.url).href;
