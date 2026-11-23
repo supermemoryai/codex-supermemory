@@ -6,14 +6,14 @@ import { HOOK_API_TIMEOUT_MS, SupermemoryClient } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { formatCombinedContext } from "../services/context.js";
 import { log } from "../services/logger.js";
-import { startAuthFlow, isAuthRequired, isLoggedOut, exitHook, isHookExit, AuthError } from "../services/auth.js";
+import { startBackgroundAuth, isAuthRequired, isLoggedOut, exitHook, isHookExit, AuthError } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
 
 const MARK_TIP_FILE = join(homedir(), ".codex", "supermemory", ".mark-tip-shown");
 const UPDATE_COMMAND = "npx codex-supermemory@latest install";
 const SESSION_START_HOOK_TIMEOUT_MS = 30_000;
-const SESSION_START_AUTH_TIMEOUT_MS = 25_000;
+const SESSION_START_AUTH_TIMEOUT_MS = 20_000;
 
 function getSessionStartAuthTimeoutMs(): number {
   const configured = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
@@ -78,13 +78,17 @@ async function main() {
     try {
       // Transient refresh failures must not launch another browser login.
       if (!isAuthRequired(error) || isLoggedOut()) throw error;
-      await startAuthFlow(getSessionStartAuthTimeoutMs());
+      await startBackgroundAuth(getSessionStartAuthTimeoutMs());
     } catch (authError) {
-      // The refresh still completes in the background for the next hook.
+      // The browser login and any refresh keep running after this hook exits.
       if (authError instanceof AuthError && authError.code === "AUTH_PENDING") {
         exitWithContext(
-          "[SUPERMEMORY] Memory is installed; the Supermemory sign-in is still refreshing. " +
-            "Memories will load on the next prompt.",
+          isAuthRequired(error)
+            ? "[SUPERMEMORY] Finish connecting Supermemory in the browser window (you have 5 minutes). " +
+                "Memory turns on from your next message.\n" +
+                "If the browser did not open, run `npx codex-supermemory login`."
+            : "[SUPERMEMORY] Memory is installed; the Supermemory sign-in is still refreshing. " +
+                "Memories will load on the next prompt.",
         );
       }
       exitWithContext(
