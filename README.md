@@ -275,7 +275,7 @@ Drop this file in to override defaults:
 | `captureSubagents`       | `boolean`  | `false`        | Recall and capture for Codex subagents and internal helper sessions (review, compact, guardian). |
 | `captureHeadless`        | `boolean`  | `false`        | Recall and capture for `codex exec` runs.                                                     |
 | `captureOrchestrated`    | `boolean`  | `true`         | Recall and capture for `codex exec` runs launched by Conductor or Vibe Kanban.               |
-| `dedupeOpeningPrompt`    | `boolean`  | `true`         | Replace an opening prompt of 200+ characters captured for the same container in the last 24 hours with a one-line marker. |
+| `dedupeOpeningPrompt`    | `boolean`  | `true`         | Legacy API capture only: replace an opening prompt of 200+ characters captured for the same container in the last 24 hours with a one-line marker. |
 | `dedupeRecallQueries`    | `boolean`  | `true`         | Reuse the last successful recall for an exact query against the same container in the last 10 minutes. |
 
 Project tags combine the sanitized repository name with a normalized Git-remote
@@ -310,7 +310,8 @@ the previous behaviour for that class.
 Two small local indexes under `~/.codex-supermemory/trackers/` cut repeated traffic.
 When a session's opening prompt is at least 200 characters and matches one captured from
 this machine with the same API URL, credentials and container in the last 24 hours, capture sends
-`[opening prompt identical to an earlier session]` in its place. When the exact same query
+`[opening prompt identical to an earlier session]` in its place. This applies to the legacy
+API capture; the v5 session upload sends the raw rollout and leaves shaping to the server. When the exact same query
 already recalled successfully with the same API URL, credentials and containers in the last
 10 minutes, prompt recall reuses that result instead of calling the API; a failed recall is
 never cached. Both index files are private (`0600`) and logout deletes them. Disable them with `dedupeOpeningPrompt: false` and
