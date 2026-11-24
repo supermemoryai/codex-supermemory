@@ -61,6 +61,7 @@ const libraryEntries = [
   { in: "src/services/tracker.ts", out: "dist/services/tracker.js" },
   { in: "src/services/sessionGate.ts", out: "dist/services/sessionGate.js" },
   { in: "src/services/dedupe.ts", out: "dist/services/dedupe.js" },
+  { in: "src/services/session-capture.ts", out: "dist/services/session-capture.js" },
 ];
 
 await Promise.all(
