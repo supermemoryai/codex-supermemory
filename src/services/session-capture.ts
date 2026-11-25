@@ -18,12 +18,26 @@ import { getLastCapturedIndex } from "./tracker.js";
 
 const SESSION_DIR = join(homedir(), ".codex-supermemory", "session");
 const HEAD_BYTES = 4096;
+const MAX_CHUNK_BYTES = 256 * 1024;
+const MAX_READ_BYTES = 8 * 1024 * 1024;
+const MAX_RECORD_STRING_CHARS = 16 * 1024;
+const MAX_SKIPPED_RANGES = 20;
 
-export interface RawDelta {
+export interface SkippedRange {
+  generation: number;
+  offset: number;
+  end: number;
+  reason: string;
+}
+
+export interface RawChunk {
   raw: string;
   generation: number;
   offset: number;
-  commit: () => void;
+  end: number;
+  oversizedBytes: number;
+  truncatedBytes: number;
+  commit: (skipReason?: string) => void;
 }
 
 interface SessionCursor {
@@ -31,6 +45,7 @@ interface SessionCursor {
   generation: number;
   headHash: string;
   hidden?: boolean;
+  skipped?: SkippedRange[];
 }
 
 interface RolloutRecord {
@@ -54,6 +69,7 @@ function cursorPath(sessionId: string, destination: string): string {
 }
 
 function atomicWriteJson(path: string, value: SessionCursor): void {
+  if (value.skipped?.length === 0) delete value.skipped;
   const tempFile = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     writeFileSync(tempFile, JSON.stringify(value), {
@@ -118,17 +134,26 @@ function redactPrivate(_key: string, value: unknown): unknown {
   return typeof value === "string" ? stripPrivateContent(value) : value;
 }
 
-// Strips <private> blocks and drops every record of a fully private prompt's turn before the bytes leave the machine.
-function filterRecords(lines: string[], hidden: boolean): { kept: string[]; hidden: boolean } {
-  const kept: string[] = [];
-  for (const line of lines) {
-    const record = parseRecord(line);
-    const prompt = promptText(record);
-    if (prompt !== null) hidden = isFullyPrivate(prompt);
-    if (hidden) continue;
-    kept.push(record ? JSON.stringify(record, redactPrivate) : stripPrivateContent(line));
-  }
-  return { kept, hidden };
+function truncateLongStrings(_key: string, value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const text = stripPrivateContent(value);
+  return text.length > MAX_RECORD_STRING_CHARS
+    ? `${text.slice(0, MAX_RECORD_STRING_CHARS)}…[truncated ${text.length - MAX_RECORD_STRING_CHARS} chars]`
+    : text;
+}
+
+// Strips <private> blocks, drops a fully private prompt's turn (null), and cuts long strings in a record too big for one request.
+function filterRecord(line: string, state: { hidden: boolean }): { text: string; truncatedBytes: number } | null {
+  const record = parseRecord(line);
+  const prompt = promptText(record);
+  if (prompt !== null) state.hidden = isFullyPrivate(prompt);
+  if (state.hidden) return null;
+  if (!record) return { text: stripPrivateContent(line), truncatedBytes: 0 };
+  const kept = JSON.stringify(record, redactPrivate);
+  const keptBytes = Buffer.byteLength(kept);
+  if (keptBytes <= MAX_CHUNK_BYTES) return { text: kept, truncatedBytes: 0 };
+  const text = JSON.stringify(record, truncateLongStrings);
+  return { text, truncatedBytes: keptBytes - Buffer.byteLength(text) };
 }
 
 function readCursor(
@@ -143,6 +168,7 @@ function readCursor(
       generation?: unknown;
       headHash?: unknown;
       hidden?: unknown;
+      skipped?: unknown;
     };
     if (
       typeof cursor.offset === "number" &&
@@ -153,6 +179,7 @@ function readCursor(
         generation: cursor.generation,
         headHash: typeof cursor.headHash === "string" ? cursor.headHash : "",
         hidden: cursor.hidden === true,
+        skipped: Array.isArray(cursor.skipped) ? cursor.skipped as SkippedRange[] : [],
       };
     }
   } catch {}
@@ -170,16 +197,23 @@ function hashPrefix(fd: number, len: number): string {
   return createHash("sha256").update(buf).digest("hex");
 }
 
-// Return the rollout bytes appended since the last successful send, cut at the
-// last newline so only whole lines go out. A shrunk or rewritten file bumps the
-// generation and restarts at offset 0. The cursor advances only when commit()
-// runs, so a failed upload re-sends the same bytes on the next call.
-export function readRawDelta(
+function findNewline(fd: number, from: number, size: number): number {
+  const block = Buffer.alloc(64 * 1024);
+  for (let position = from; position < size; position += block.length) {
+    const read = readSync(fd, block, 0, Math.min(block.length, size - position), position);
+    const index = block.subarray(0, read).indexOf(0x0a);
+    if (index !== -1) return position + index;
+  }
+  return -1;
+}
+
+// Splits the bytes appended since the last accepted send into whole-line chunks, reading at most MAX_READ_BYTES per call, so an outage or one huge turn never builds a request the server can't take.
+export function readRawChunks(
   transcriptPath: string,
   sessionId: string,
   destination: string,
-): RawDelta | null {
-  if (!existsSync(transcriptPath)) return null;
+): RawChunk[] {
+  if (!existsSync(transcriptPath)) return [];
   ensureDir();
   const fd = openSync(transcriptPath, "r");
   try {
@@ -187,7 +221,8 @@ export function readRawDelta(
     const prev = readCursor(fd, size, sessionId, destination);
     let offset = prev.offset;
     let generation = prev.generation;
-    let hidden = prev.hidden === true;
+    const state = { hidden: prev.hidden === true };
+    const skipped = [...(prev.skipped ?? [])];
 
     const consumedHead = hashPrefix(fd, Math.min(HEAD_BYTES, prev.offset));
     if (
@@ -196,37 +231,68 @@ export function readRawDelta(
     ) {
       offset = 0;
       generation = prev.generation + 1;
-      hidden = false;
+      state.hidden = false;
     }
 
-    if (size <= offset) return null;
-    const len = size - offset;
+    if (size <= offset) return [];
+    const len = Math.min(size - offset, MAX_READ_BYTES);
     const buf = Buffer.alloc(len);
     readSync(fd, buf, 0, len, offset);
-    const lastNewline = buf.lastIndexOf(0x0a);
-    if (lastNewline === -1) return null;
-    const lines = buf
-      .subarray(0, lastNewline)
-      .toString("utf-8")
-      .split("\n")
-      .filter((line) => line.trim());
-    const filtered = filterRecords(lines, hidden);
-    const nextOffset = offset + lastNewline + 1;
-    const nextHead = hashPrefix(fd, Math.min(HEAD_BYTES, nextOffset));
-    const committedGeneration = generation;
-
-    return {
-      raw: filtered.kept.length > 0 ? `${filtered.kept.join("\n")}\n` : "",
-      generation,
-      offset,
-      commit: () =>
-        atomicWriteJson(cursorPath(sessionId, destination), {
-          offset: nextOffset,
-          generation: committedGeneration,
-          headHash: nextHead,
-          hidden: filtered.hidden,
-        }),
+    const cursorFile = cursorPath(sessionId, destination);
+    const chunks: RawChunk[] = [];
+    const pushChunk = (start: number, end: number, lines: string[], hidden: boolean, truncatedBytes = 0, oversizedBytes = 0) => {
+      const headHash = hashPrefix(fd, Math.min(HEAD_BYTES, end));
+      chunks.push({
+        raw: lines.length > 0 ? `${lines.join("\n")}\n` : "",
+        generation,
+        offset: start,
+        end,
+        oversizedBytes,
+        truncatedBytes,
+        commit: (skipReason) => {
+          if (skipReason) {
+            skipped.push({ generation, offset: start, end, reason: skipReason });
+            skipped.splice(0, Math.max(0, skipped.length - MAX_SKIPPED_RANGES));
+          }
+          atomicWriteJson(cursorFile, { offset: end, generation, headHash, hidden, skipped });
+        },
+      });
     };
+
+    const lastNewline = buf.lastIndexOf(0x0a);
+    if (lastNewline === -1) {
+      if (len < MAX_READ_BYTES) return [];
+      const lineEnd = findNewline(fd, offset + len, size);
+      if (lineEnd !== -1) pushChunk(offset, lineEnd + 1, [], state.hidden, 0, lineEnd + 1 - offset);
+      return chunks;
+    }
+
+    let chunkStart = offset;
+    let chunkLines: string[] = [];
+    let chunkBytes = 0;
+    let chunkTruncated = 0;
+    for (let lineStart = 0; lineStart <= lastNewline;) {
+      const newline = buf.indexOf(0x0a, lineStart);
+      const lineOffset = offset + lineStart;
+      const line = buf.subarray(lineStart, newline).toString("utf-8");
+      lineStart = newline + 1;
+      const hiddenBefore = state.hidden;
+      const kept = line.trim() ? filterRecord(line, state) : null;
+      if (kept === null) continue;
+      const keptBytes = Buffer.byteLength(kept.text) + 1;
+      if (chunkLines.length > 0 && chunkBytes + keptBytes > MAX_CHUNK_BYTES) {
+        pushChunk(chunkStart, lineOffset, chunkLines, hiddenBefore, chunkTruncated);
+        chunkStart = lineOffset;
+        chunkLines = [];
+        chunkBytes = 0;
+        chunkTruncated = 0;
+      }
+      chunkLines.push(kept.text);
+      chunkBytes += keptBytes;
+      chunkTruncated += kept.truncatedBytes;
+    }
+    pushChunk(chunkStart, offset + lastNewline + 1, chunkLines, state.hidden, chunkTruncated);
+    return chunks;
   } finally {
     closeSync(fd);
   }

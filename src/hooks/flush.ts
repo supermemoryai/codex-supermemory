@@ -5,13 +5,19 @@ import { SupermemoryClient, USER_ENTITY_CONTEXT } from "../services/client.js";
 import { getTags } from "../services/tags.js";
 import { log } from "../services/logger.js";
 import { captureEntries, resolveTranscriptPath } from "../services/capture.js";
-import { readRawDelta } from "../services/session-capture.js";
+import { readRawChunks } from "../services/session-capture.js";
 import { getSessionId } from "../services/session.js";
 import { withSessionCaptureLock } from "../services/tracker.js";
 
 // Stop hooks are capped at 30s by Codex; the raw-delta upload outlives the
 // short recall budget without blocking the next session.
 const SESSION_TIMEOUT_MS = 25000;
+const MIN_REQUEST_MS = 1000;
+const REJECTED_STATUSES = new Set([400, 413, 415, 422]);
+
+function formatBytes(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 interface CodexStopPayload {
   session_id?: string;
@@ -68,53 +74,80 @@ async function main() {
   const acquired = await withSessionCaptureLock(sessionId, async () => {
     // Always send the raw rollout delta; the server adapter turns it into clean
     // conversation text. No gating, signal filtering, or memory shaping here.
-    const session = readRawDelta(
+    const chunks = readRawChunks(
       transcriptPath,
       sessionId,
       `${getApiBaseUrl()}\n${tags.canonical}`,
     );
-    if (!session) {
-      return;
-    }
-    if (!session.raw) {
-      session.commit();
-      return;
-    }
-    const result = await client.addSession(tags.canonical, session.raw, {
-      sessionId,
-      generation: session.generation,
-      offset: session.offset,
-      metadata: {
-        type: "conversation",
-        project: tags.projectName,
-        sm_project_id: tags.projectId,
-        sm_scope: "personal",
-        sm_capture_mode: "session_end",
-        timestamp: new Date().toISOString(),
-      },
-      supportingContext: USER_ENTITY_CONTEXT,
-      timeoutMs: SESSION_TIMEOUT_MS,
-    });
-
-    // Advance the cursor only after the bytes are accepted (2xx); a failed send
-    // leaves the cursor so the next Stop re-sends the same delta.
-    if (result.success) {
-      session.commit();
-      log("flush: session sent", {
+    const deadline = Date.now() + SESSION_TIMEOUT_MS;
+    let sent = 0;
+    let skippedBytes = 0;
+    let truncatedBytes = 0;
+    const skipReasons = new Set<string>();
+    for (const chunk of chunks) {
+      if (chunk.oversizedBytes > 0) {
+        const reason = `one rollout line of ${formatBytes(chunk.oversizedBytes)} is too large to send`;
+        chunk.commit(reason);
+        skippedBytes += chunk.oversizedBytes;
+        skipReasons.add("line too large");
+        log("flush: oversized rollout line skipped", { sessionId, offset: chunk.offset, end: chunk.end });
+        continue;
+      }
+      if (!chunk.raw) {
+        chunk.commit();
+        continue;
+      }
+      const remaining = deadline - Date.now();
+      if (remaining < MIN_REQUEST_MS) break;
+      const result = await client.addSession(tags.canonical, chunk.raw, {
         sessionId,
-        bytes: session.raw.length,
-        generation: session.generation,
+        generation: chunk.generation,
+        offset: chunk.offset,
+        metadata: {
+          type: "conversation",
+          project: tags.projectName,
+          sm_project_id: tags.projectId,
+          sm_scope: "personal",
+          sm_capture_mode: "session_end",
+          timestamp: new Date().toISOString(),
+        },
+        supportingContext: USER_ENTITY_CONTEXT,
+        timeoutMs: remaining,
       });
-      process.stdout.write(
-        JSON.stringify({
-          systemMessage: "◪ supermemory · saved this turn",
-        }),
-      );
-    } else {
-      log("flush: session send failed, cursor not advanced", {
+      if (result.success) {
+        chunk.commit();
+        sent++;
+        truncatedBytes += chunk.truncatedBytes;
+        continue;
+      }
+      if (result.status !== undefined && REJECTED_STATUSES.has(result.status)) {
+        const bytes = Buffer.byteLength(chunk.raw);
+        chunk.commit(`server rejected ${formatBytes(bytes)} with HTTP ${result.status}`);
+        skippedBytes += bytes;
+        skipReasons.add(`HTTP ${result.status}`);
+        log("flush: chunk rejected and skipped", { sessionId, offset: chunk.offset, end: chunk.end, status: result.status });
+        continue;
+      }
+      log("flush: session send failed, cursor left at this chunk", {
         sessionId,
+        offset: chunk.offset,
         error: result.error,
       });
+      break;
+    }
+
+    if (sent > 0 || skippedBytes > 0) {
+      log("flush: session sent", { sessionId, chunks: chunks.length, sent, skippedBytes, truncatedBytes });
+      const parts = [
+        sent > 0 ? "saved this turn" : null,
+        truncatedBytes > 0 ? `trimmed ${formatBytes(truncatedBytes)} of oversized tool output` : null,
+        skippedBytes > 0 ? `skipped ${formatBytes(skippedBytes)} of this session (${[...skipReasons].join(", ")}); ranges listed in ~/.codex-supermemory/session` : null,
+      ];
+      process.stdout.write(
+        JSON.stringify({
+          systemMessage: `◪ supermemory · ${parts.filter(Boolean).join(" · ")}`,
+        }),
+      );
     }
   });
   if (!acquired) {

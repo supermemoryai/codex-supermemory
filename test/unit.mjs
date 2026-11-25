@@ -359,13 +359,13 @@ describe("v5 session capture", () => {
   function deltas(homeDir, steps) {
     const script = `
       import { writeFileSync } from "node:fs";
-      import { readRawDelta } from ${JSON.stringify(sessionModule)};
+      import { readRawChunks } from ${JSON.stringify(sessionModule)};
       const out = [];
       for (const step of ${JSON.stringify(steps)}) {
         writeFileSync(step.file, step.lines.map((line) => line + "\\n").join(""));
-        const delta = readRawDelta(step.file, "s1", step.destination);
-        out.push(delta && { raw: delta.raw, offset: delta.offset });
-        delta?.commit();
+        const chunks = readRawChunks(step.file, "s1", step.destination);
+        out.push(chunks.length ? { raw: chunks.map((chunk) => chunk.raw).join(""), offset: chunks[0].offset } : null);
+        for (const chunk of chunks) chunk.commit();
       }
       console.log(JSON.stringify(out));
     `;
@@ -396,6 +396,39 @@ describe("v5 session capture", () => {
     assert.match(b.raw, /Done\./);
     assert.equal(c, null);
     assert.equal(d.offset, 0);
+  });
+
+  test("splits a large delta into capped chunks and resumes after the last committed one", (t) => {
+    const homeDir = makeTmpDir();
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const file = join(homeDir, "rollout.jsonl");
+    const lines = [userRecord("dump the logs"), ...Array.from({ length: 12 }, (_, i) => replyRecord(String(i).repeat(60_000))), replyRecord("y".repeat(400_000))];
+    writeFileSync(file, lines.map((line) => line + "\n").join(""));
+    const script = `
+      import { readRawChunks } from ${JSON.stringify(sessionModule)};
+      const first = readRawChunks(process.argv.at(-1), "s1", "https://a\\nns");
+      first[0].commit();
+      first[1].commit("server rejected with HTTP 413");
+      const second = readRawChunks(process.argv.at(-1), "s1", "https://a\\nns");
+      console.log(JSON.stringify({
+        sizes: first.map((chunk) => Buffer.byteLength(chunk.raw)),
+        contiguous: first.every((chunk, i) => i === 0 || chunk.offset === first[i - 1].end),
+        truncated: first.at(-1).raw.includes("[truncated"),
+        resumeOffset: second[0].offset,
+        expectedOffset: first[1].end,
+      }));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script, file], {
+      env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.ok(output.sizes.length > 2, JSON.stringify(output.sizes));
+    assert.ok(output.sizes.every((size) => size <= 256 * 1024), JSON.stringify(output.sizes));
+    assert.ok(output.contiguous);
+    assert.ok(output.truncated);
+    assert.equal(output.resumeOffset, output.expectedOffset);
   });
 
   test("a session captured by the legacy tracker resumes after its last line", (t) => {
