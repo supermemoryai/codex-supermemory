@@ -7,6 +7,7 @@ import { getSeenFacts, addSeenFacts, factKey } from "../services/factCache.js";
 import { getSessionId } from "../services/session.js";
 import { getHookProfileWithSearchMany } from "../services/hookRecallClient.js";
 import { prepareRecallQuery, shouldRecallPrompt } from "../services/recallPolicy.js";
+import { isOutOfCredits, takeOutOfCreditsNotice } from "../services/outOfCredits.js";
 
 const MAX_RESULT_CHARS = 300;
 
@@ -118,7 +119,9 @@ async function main() {
     );
 
     if (!profileResult.success) {
-      exitWithContext("", "◪ supermemory · recall unavailable; continuing without recalled context");
+      exitWithContext("", isOutOfCredits(profileResult.error)
+        ? takeOutOfCreditsNotice(sessionId)
+        : "◪ supermemory · recall unavailable; continuing without recalled context");
     }
 
     const seen = getSeenFacts(sessionId);

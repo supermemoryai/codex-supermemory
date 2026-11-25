@@ -9,6 +9,7 @@ import { log } from "../services/logger.js";
 import { startAuthFlow, isAuthRequired, isLoggedOut, exitHook, isHookExit, AuthError } from "../services/auth.js";
 import { getSeenFacts, addSeenFacts } from "../services/factCache.js";
 import { checkNpmUpdate, formatUpdateNotice } from "../services/version-check.js";
+import { isOutOfCredits, takeOutOfCreditsNotice } from "../services/outOfCredits.js";
 
 const MARK_TIP_FILE = join(homedir(), ".codex", "supermemory", ".mark-tip-shown");
 const UPDATE_COMMAND = "npx codex-supermemory@latest install";
@@ -133,7 +134,9 @@ async function main() {
         "",
         combineContextParts([
           await updateCheck,
-          "◪ supermemory · profile unavailable; continuing without recalled context",
+          isOutOfCredits(profileResult.error)
+            ? takeOutOfCreditsNotice(sessionId)
+            : "◪ supermemory · profile unavailable; continuing without recalled context",
           markTip(),
         ]),
       );

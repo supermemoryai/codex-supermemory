@@ -1231,6 +1231,39 @@ describe("recall hook output envelope", () => {
     });
     assert.equal(result.status, 0);
   });
+  test("an out-of-credits refusal shows one notice per session and never blocks the prompt", async (t) => {
+    const { createServer } = await import("node:http");
+    const { spawn } = await import("node:child_process");
+    const tmpDir = makeTmpDir();
+    t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+    const server = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(402, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Search query limit reached", details: "You've run out of credits. Top up to continue." }));
+      });
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => server.close());
+    const env = { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir, SUPERMEMORY_CODEX_API_KEY: "sm_test",
+      SUPERMEMORY_API_URL: `http://127.0.0.1:${server.address().port}`, SUPERMEMORY_API_VERSION: "v5" };
+    const run = (prompt) => new Promise((resolve) => {
+      const child = spawn("node", [recallBin], { env });
+      let stdout = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.on("close", (code) => resolve({ code, stdout }));
+      child.stdin.end(JSON.stringify({ session_id: "credits", cwd: tmpDir, prompt }));
+    });
+    const first = await run("how did we set up the database migrations?");
+    const second = await run("and where do the seed scripts live?");
+    assert.equal(first.code, 0);
+    assert.equal(second.code, 0);
+    assert.equal(
+      JSON.parse(first.stdout).systemMessage,
+      "◪ supermemory · recall paused · You've run out of credits. Top up to continue. https://console.supermemory.ai/billing",
+    );
+    assert.equal(second.stdout, "");
+  });
 });
 
 describe("hosted MCP hooks", () => {
