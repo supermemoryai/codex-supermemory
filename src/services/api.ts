@@ -46,16 +46,16 @@ export function normalizeSearchItem(item: SearchResultItem): SearchResultItem {
   };
 }
 
-async function searchV5(
+export async function searchV5(
   client: Supermemory,
   namespace: string,
   query: string,
-  filter: FilterExpression | undefined,
+  scope?: MemoryScope,
   requestOptions?: RequestOptions,
-): Promise<NonNullable<ProfileWithSearchResult["searchResults"]>> {
+): Promise<{ results: Array<SearchResultItem & { memory: string }>; total: number; timing?: number }> {
   const search = await client.search(namespace, {
     query,
-    filter,
+    filter: scopeFilter(scope),
     searchMode: "memories",
     threshold: 0.6,
     limit: 10,
@@ -77,10 +77,9 @@ export async function readV5Profile(
   scope?: MemoryScope,
   requestOptions?: RequestOptions,
 ): Promise<ProfileWithSearchResult> {
-  const filter = scopeFilter(scope);
   const [profile, searchResults] = await Promise.all([
-    client.profile(namespace, { filter }, requestOptions),
-    query ? searchV5(client, namespace, query, filter, requestOptions) : undefined,
+    client.profile(namespace, { filter: scopeFilter(scope) }, requestOptions),
+    query ? searchV5(client, namespace, query, scope, requestOptions) : undefined,
   ]);
   return {
     success: true,
@@ -89,19 +88,5 @@ export async function readV5Profile(
       dynamic: profileFacts(profile.profile?.dynamic),
     },
     searchResults,
-  };
-}
-
-// Prompt recall injects search hits only; the profile was already injected at SessionStart.
-export async function readV5Search(
-  client: Supermemory,
-  namespace: string,
-  query: string,
-  requestOptions?: RequestOptions,
-): Promise<ProfileWithSearchResult> {
-  return {
-    success: true,
-    profile: { static: [], dynamic: [] },
-    searchResults: await searchV5(client, namespace, query, undefined, requestOptions),
   };
 }

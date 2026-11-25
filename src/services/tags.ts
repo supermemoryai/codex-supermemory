@@ -14,7 +14,15 @@ const repoInfoCache = new Map<
   { name: string | null; normalizedRemote: string | null }
 >();
 
+const gitRootCache = new Map<string, string | null>();
+const gitEmailCache = new Map<string, string | null>();
+
 function getGitRoot(directory: string): string | null {
+  if (!gitRootCache.has(directory)) gitRootCache.set(directory, readGitRoot(directory));
+  return gitRootCache.get(directory) ?? null;
+}
+
+function readGitRoot(directory: string): string | null {
   const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
 
   try {
@@ -63,6 +71,11 @@ function getProjectBasePath(directory: string): string {
 }
 
 function getGitEmail(directory: string): string | null {
+  if (!gitEmailCache.has(directory)) gitEmailCache.set(directory, readGitEmail(directory));
+  return gitEmailCache.get(directory) ?? null;
+}
+
+function readGitEmail(directory: string): string | null {
   try {
     const email = execSync("git config user.email", {
       cwd: getProjectBasePath(directory),
@@ -511,6 +524,7 @@ export interface ResolvedTags {
   personalReads: string[];
   projectReads: string[];
   allReads: string[];
+  promptReads: string[];
 }
 
 export function getTags(directory: string): ResolvedTags {
@@ -524,5 +538,6 @@ export function getTags(directory: string): ResolvedTags {
     personalReads: getPersonalReadTags(directory),
     projectReads: getProjectReadTags(directory),
     allReads: getAllReadTags(directory),
+    promptReads: uniqueTags([canonical, getGeneratedProjectTag(directory)]),
   };
 }
