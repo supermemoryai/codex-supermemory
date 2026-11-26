@@ -4,9 +4,10 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { createHash } from "node:crypto";
-import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, readdirSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -607,6 +608,136 @@ describe("session recall deduplication", () => {
     assert.ok(facts.every((fact) => /^sha256:[0-9a-f]{64}$/.test(fact)));
     assert.ok(!facts.some((fact) => fact.includes("fact")));
   });
+});
+
+describe("legacy tag checks", () => {
+  const tagChecksModule = new URL("../dist/services/tagChecks.js", import.meta.url).href;
+
+  test("recall skips only tags SessionStart found empty", (t) => {
+    const homeDir = makeTmpDir();
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const script = `
+      import { getRecallTags, recordTagChecks } from ${JSON.stringify(tagChecksModule)};
+      const reads = ["repo_app__1", "empty", "full", "unchecked"];
+      const tagsFor = (canonical) => ({ canonical, allReads: reads, configuredReads: [canonical] });
+      const out = [getRecallTags(tagsFor("repo_app__1"))];
+      recordTagChecks("repo_app__1", { repo_app__1: false, empty: false, full: true });
+      out.push(getRecallTags(tagsFor("repo_app__1")), getRecallTags(tagsFor("repo_other__2")));
+      recordTagChecks("repo_app__1", { empty: true, full: false });
+      out.push(getRecallTags(tagsFor("repo_app__1")));
+      console.log(JSON.stringify(out));
+    `;
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), [
+      ["repo_app__1", "empty", "full", "unchecked"],
+      ["repo_app__1", "full", "unchecked"],
+      ["repo_app__1", "empty", "full", "unchecked"],
+      ["repo_app__1", "empty", "unchecked"],
+    ]);
+  });
+
+  for (const apiVersion of ["v5", "legacy"]) {
+    test(`SessionStart judges legacy tags by documents and never skips configured tags (${apiVersion})`, async (t) => {
+      const tmpDir = makeTmpDir();
+      t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+      const repoDir = join(tmpDir, "repo");
+      const homeDir = join(tmpDir, "home");
+      mkdirSync(join(repoDir, ".claude", ".supermemory-claude"), { recursive: true });
+      mkdirSync(join(homeDir, ".codex"), { recursive: true });
+      spawnSync("git", ["init"], { cwd: repoDir });
+      spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: repoDir });
+      writeFileSync(
+        join(repoDir, ".claude", ".supermemory-claude", "config.json"),
+        JSON.stringify({ personalContainerTag: "claude_personal" }),
+      );
+      writeFileSync(join(homeDir, ".codex", "supermemory.json"), JSON.stringify({ userContainerTag: "shared_personal" }));
+
+      const listed = [];
+      const server = createServer(async (req, res) => {
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        const { pathname, searchParams } = new URL(req.url, "http://127.0.0.1");
+        const tag = pathname.startsWith("/ns/") && pathname.endsWith("/list/documents")
+          ? decodeURIComponent(pathname.split("/")[2])
+          : pathname === "/v3/documents/list" ? JSON.parse(body).containerTags[0] : null;
+        if (tag !== null) assert.equal(String(searchParams.get("limit") ?? JSON.parse(body).limit), "1");
+        res.setHeader("content-type", "application/json");
+        if (tag === null) return res.end(JSON.stringify({ profile: { static: [], dynamic: [] } }));
+        listed.push(tag);
+        if (tag.startsWith("cursor_")) {
+          res.statusCode = 500;
+          return res.end("{}");
+        }
+        const documents = tag.startsWith("codex_project_") ? [{ id: "doc_1" }] : [];
+        const pagination = { currentPage: 1, totalItems: documents.length, totalPages: 1 };
+        res.end(JSON.stringify({ documents, memories: documents, chunks: [], pagination }));
+      });
+      await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+      t.after(() => server.close());
+
+      const env = {
+        ...process.env,
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        SUPERMEMORY_CODEX_API_KEY: "sm_test",
+        SUPERMEMORY_API_URL: `http://127.0.0.1:${server.address().port}`,
+        SUPERMEMORY_API_VERSION: apiVersion,
+      };
+      const script = `
+        import { getTags } from ${JSON.stringify(new URL("../dist/services/tags.js", import.meta.url).href)};
+        import { getRecallTags, recordTagChecks } from ${JSON.stringify(tagChecksModule)};
+        const tags = getTags(process.argv.at(-1));
+        if (process.argv.at(-2) === "seed") {
+          recordTagChecks(tags.canonical, { [tags.canonical]: false, shared_personal: false, claude_personal: false });
+        } else {
+          console.log(JSON.stringify({ tags, recall: getRecallTags(tags) }));
+        }
+      `;
+      const runNode = (args, input = "") => new Promise((resolve) => {
+        const child = spawn("node", args, { env });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (chunk) => { stdout += chunk; });
+        child.stderr.on("data", (chunk) => { stderr += chunk; });
+        child.on("close", (status) => resolve({ status, stdout, stderr }));
+        child.stdin.end(input);
+      });
+
+      const seeded = await runNode(["--input-type=module", "-e", script, "seed", repoDir]);
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const hook = await runNode(
+        [fileURLToPath(new URL("../dist/hooks/session-start.js", import.meta.url))],
+        JSON.stringify({ session_id: "tag-check-test", cwd: repoDir }),
+      );
+      assert.equal(hook.status, 0, hook.stderr);
+      const after = await runNode(["--input-type=module", "-e", script, "read", repoDir]);
+      assert.equal(after.status, 0, after.stderr);
+      const { tags, recall } = JSON.parse(after.stdout);
+
+      const configured = [tags.canonical, "shared_personal", "claude_personal"];
+      for (const tag of configured) {
+        assert.ok(tags.allReads.includes(tag), tag);
+        assert.ok(recall.includes(tag), `configured tag ${tag} was skipped`);
+        assert.ok(!listed.includes(tag), `configured tag ${tag} was checked`);
+      }
+      const withDocuments = tags.allReads.filter((tag) => tag.startsWith("codex_project_"));
+      const failed = tags.allReads.filter((tag) => tag.startsWith("cursor_"));
+      const empty = tags.allReads.filter((tag) => !configured.includes(tag) && !withDocuments.includes(tag) && !failed.includes(tag));
+      assert.ok(withDocuments.length > 0 && failed.length > 0 && empty.length > 0);
+      assert.deepEqual([...listed].sort(), [...withDocuments, ...failed, ...empty].sort());
+      assert.deepEqual(recall, tags.allReads.filter((tag) => !empty.includes(tag)));
+
+      const checksDir = join(homeDir, ".codex-supermemory", "tag-checks");
+      const checks = JSON.parse(readFileSync(join(checksDir, readdirSync(checksDir)[0]), "utf-8"));
+      assert.ok(failed.every((tag) => !(tag in checks)), "failed checks must record nothing");
+      assert.ok(withDocuments.every((tag) => checks[tag] === true));
+      assert.ok(empty.every((tag) => checks[tag] === false));
+    });
+  }
 });
 
 describe("direct recall policy", () => {

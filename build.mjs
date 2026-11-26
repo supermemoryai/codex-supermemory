@@ -53,6 +53,7 @@ const libraryEntries = [
   { in: "src/services/resultMerge.ts", out: "dist/services/resultMerge.js" },
   { in: "src/services/resultText.ts", out: "dist/services/resultText.js" },
   { in: "src/services/factCache.ts", out: "dist/services/factCache.js" },
+  { in: "src/services/tagChecks.ts", out: "dist/services/tagChecks.js" },
   { in: "src/services/recallPolicy.ts", out: "dist/services/recallPolicy.js" },
   { in: "src/services/hookRecallClient.ts", out: "dist/services/hookRecallClient.js" },
   { in: "src/services/client.ts", out: "dist/services/client.js" },

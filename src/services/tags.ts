@@ -495,6 +495,15 @@ export function getProjectReadTags(directory: string): string[] {
   ]);
 }
 
+export function getConfiguredReadTags(directory: string): string[] {
+  return uniqueTags([
+    getProjectTag(directory),
+    loadClaudeProjectConfig(directory)?.personalContainerTag,
+    CONFIG.userContainerTag,
+    CONFIG.projectContainerTag,
+  ]);
+}
+
 export function getAllReadTags(directory: string): string[] {
   return uniqueTags([
     ...getPersonalReadTags(directory),
@@ -511,6 +520,7 @@ export interface ResolvedTags {
   personalReads: string[];
   projectReads: string[];
   allReads: string[];
+  configuredReads: string[];
 }
 
 export function getTags(directory: string): ResolvedTags {
@@ -524,5 +534,6 @@ export function getTags(directory: string): ResolvedTags {
     personalReads: getPersonalReadTags(directory),
     projectReads: getProjectReadTags(directory),
     allReads: getAllReadTags(directory),
+    configuredReads: getConfiguredReadTags(directory),
   };
 }
